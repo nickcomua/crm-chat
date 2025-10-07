@@ -1,0 +1,2 @@
+[phases.setup]
+nixPkgs = ["...", "pkg-config", "bzip2", "zlib", "openssl", "tdlib"]

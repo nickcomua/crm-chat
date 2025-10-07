@@ -1,0 +1,34 @@
+[package]
+name = "telegram2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full", "macros", "rt-multi-thread"] }
+dotenv = "0.15"
+anyhow = "1.0"
+tdlib-rs = { version = "1.1.0" }
+rayon = "1.11.0"
+futures = "0.3.31"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.0", features = ["derive"] }
+async-trait = "0.1"
+tempfile = "3.0"
+thiserror = "2.0.17"
+fs2 = "0.4"
+async-stream = "0.3"
+surrealdb = {version = "2.3.10"}
+base64 = "0.22.1"
+
+[build-dependencies]
+tdlib-rs = { version = "1.1.0" }
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+panic = 'abort'
+codegen-units = 1

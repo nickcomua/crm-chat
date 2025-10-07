@@ -1,0 +1,12 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    user: root
+    volumes: 
+      - surrealdb-data:/data
+    command: "start --user ${SURREAL_USERNAME} --pass ${SURREAL_PASSWORD} surrealkv:/data/data.db"
+  crm-chat:
+    build: .
+
+volumes:
+  surrealdb-data: {}
