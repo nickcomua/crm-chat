@@ -36,17 +36,13 @@
           inherit src;
           strictDeps = true;
 
-          nativeBuildInputs = [
-            pkgs.pkg-config
-          ];
+          # nativeBuildInputs = [
+          #   pkgs.pkg-config
+          # ];
 
           buildInputs =
             [
               # Add additional build inputs here
-              pkgs.bzip2
-              pkgs.zlib
-              pkgs.openssl
-              pkgs.tdlib
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
               # Additional darwin specific inputs can be set here
@@ -63,7 +59,7 @@
 
         # Build the actual crate itself, reusing the dependency
         # artifacts from above.
-        my-crate = craneLib.buildPackage (
+        chat-scope = craneLib.buildPackage (
           commonArgs
           // {
             inherit cargoArtifacts;
@@ -72,7 +68,7 @@
       in {
         checks = {
           # Build the crate as part of `nix flake check` for convenience
-          inherit my-crate;
+          inherit chat-scope;
 
           # Run clippy (and deny all warnings) on the crate source,
           # again, reusing the dependency artifacts from above.
@@ -80,7 +76,7 @@
           # Note that this is done as a separate derivation so that
           # we can block the CI if there are issues here, but not
           # prevent downstream consumers from building our crate by itself.
-          my-crate-clippy = craneLib.cargoClippy (
+          chat-scope-clippy = craneLib.cargoClippy (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -88,7 +84,7 @@
             }
           );
 
-          my-crate-doc = craneLib.cargoDoc (
+          chat-scope-doc = craneLib.cargoDoc (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -99,30 +95,30 @@
           );
 
           # Check formatting
-          my-crate-fmt = craneLib.cargoFmt {
+          chat-scope-fmt = craneLib.cargoFmt {
             inherit src;
           };
 
-          my-crate-toml-fmt = craneLib.taploFmt {
+          chat-scope-toml-fmt = craneLib.taploFmt {
             src = pkgs.lib.sources.sourceFilesBySuffices src [".toml"];
             # taplo arguments can be further customized below as needed
             # taploExtraArgs = "--config ./taplo.toml";
           };
 
           # Audit dependencies
-          my-crate-audit = craneLib.cargoAudit {
+          chat-scope-audit = craneLib.cargoAudit {
             inherit src advisory-db;
           };
 
           # Audit licenses
-          my-crate-deny = craneLib.cargoDeny {
+          chat-scope-deny = craneLib.cargoDeny {
             inherit src;
           };
 
           # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on `my-crate` if you do not want
+          # Consider setting `doCheck = false` on `chat-scope` if you do not want
           # the tests to run twice
-          my-crate-nextest = craneLib.cargoNextest (
+          chat-scope-nextest = craneLib.cargoNextest (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -134,20 +130,20 @@
         };
 
         packages = {
-          default = my-crate;
+          default = chat-scope;
         };
 
         apps.default = flake-utils.lib.mkApp {
-          drv = my-crate;
+          drv = chat-scope;
         };
 
-        dockerImg = pkgs.dockerTools.streamLayeredImage {
-          name = "chat-crm";
+        chat-scope-img = pkgs.dockerTools.streamLayeredImage {
+          name = "nick395/chat-scope";
           tag = "latest";
-          contents = [my-crate];
+          contents = [chat-scope];
 
           config = {
-            Cmd = ["/bin/telegram2"];
+            Cmd = ["/bin/chat-scope"];
           };
         };
 
@@ -161,13 +157,13 @@
           # Extra inputs can be added here; cargo and rustc are provided by default.
           packages =
             [
-              pkgs.nixd
+              pkgs.nil
               pkgs.alejandra
-              pkgs.pkg-config
-              pkgs.bzip2
-              pkgs.zlib
-              pkgs.openssl
-              pkgs.tdlib
+              # pkgs.pkg-config
+              # pkgs.bzip2
+              # pkgs.zlib
+              # pkgs.openssl
+              # pkgs.tdlib
               pkgs.rust-analyzer
               # pkgs.ripgrep
             ]
