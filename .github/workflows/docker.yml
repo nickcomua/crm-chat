@@ -1,0 +1,36 @@
+name: "docker"
+on:
+  push:
+    branches:
+      - "WIP"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          username: nick395
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: SebRollen/toml-action@v1.2.0
+        id: read_version
+        with:
+          file: "Cargo.toml"
+          field: "package.version"
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: nickcomua
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Build and push Docker image
+        run: | 
+          nix build --accept-flake-config .\#chat-scope-img.x86_64-linux --print-build-logs 
+          ./result | docker image load
+          docker tag nick395/chat-scope:latest nick395/chat-scope:${{ steps.read_version.outputs.value }}-${{ github.run_number }}
+          docker push nick395/chat-scope --all-tags

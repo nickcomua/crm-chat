@@ -6,7 +6,14 @@ services:
       - surrealdb-data:/data
     command: "start --user ${SURREAL_USERNAME} --pass ${SURREAL_PASSWORD} surrealkv:/data/data.db"
   crm-chat:
-    build: .
+    image: nick395/chat-scope:latest
+    environment:
+      - SURREAL_USERNAME=${SURREAL_USERNAME}
+      - SURREAL_PASSWORD=${SURREAL_PASSWORD}
+      - SURREAL_HOST=${SURREAL_HOST}
+      - SURREAL_PORT=${SURREAL_PORT}
+    # volumes:
+      - crm-chat-data:/bin.tgdb # todo
 
 volumes:
   surrealdb-data: {}
