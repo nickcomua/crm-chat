@@ -1,13 +1,13 @@
 use grammers_tl_types as tl;
 use serde::{Deserialize, Serialize};
-use surrealdb_types::{RecordId, SurrealValue};
+use surrealdb::RecordId;
 
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DBMessageContent {
     Telegram(tl::enums::Message),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbMessage {
     pub id: RecordId,
     pub chat_id: RecordId,

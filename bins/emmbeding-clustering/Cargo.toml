@@ -1,0 +1,17 @@
+[package]
+name = "emmbeding-clustering"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+itertools = "0.14.0"
+linfa = "0.8.0"
+linfa-clustering = { version = "0.8.0", features = ["serde"] }
+linfa-nn = { version = "0.8.0", features = ["serde"] }
+ndarray = { version = "0.16.1", features = ["rayon"] }
+qdrant-client = "1.15.0"
+rand = "0.8.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
