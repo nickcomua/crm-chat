@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
 
     let batch_size = 500;
 
-    let n_clusters = 25;
+    let n_clusters = 50;
     let clf = KMeans::params_with_rng(n_clusters, thread_rng()).tolerance(1e-3);
 
     let mut offset = None;

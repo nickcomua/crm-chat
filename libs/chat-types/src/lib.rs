@@ -40,3 +40,9 @@ pub struct DbChat {
 pub struct Record {
     pub id: RecordId,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Relation {
+    pub r#in: RecordId,
+    pub out: RecordId,
+}

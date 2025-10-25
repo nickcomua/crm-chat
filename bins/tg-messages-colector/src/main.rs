@@ -1,11 +1,17 @@
-use anyhow::Result;
-use chat_types::{DBMessageContent, DbChat, DbChatContent, DbMessage, Record, TgChat};
+use anyhow::{Context, Result};
+use chat_types::{DBMessageContent, DbChat, DbChatContent, DbMessage, Record, Relation, TgChat};
 use grammers_client::session::Session;
 use grammers_client::types::{Chat, Message as Msg};
 use grammers_client::{Client, Config, SignInError, Update};
+use rig::client::EmbeddingsClient;
+use rig::embeddings::EmbeddingsBuilder;
+use rig::vector_store::{InsertDocuments, VectorSearchRequest, VectorStoreIndex};
+use rig_surrealdb::SurrealVectorStore;
+use serde::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
 use std::collections::HashSet;
 use std::pin::pin;
+use std::sync::Arc;
 use std::{env, sync::LazyLock};
 use surrealdb::{
     RecordId,
@@ -52,6 +58,71 @@ async fn prompt(message: &str) -> Result<String> {
     Ok(line)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EmbeddedTextDb {
+    embedded_text: String,
+    id: RecordId,
+}
+
+async fn upload_message(
+    id: RecordId,
+    msg: Msg,
+    client_id: String,
+    chat_id: RecordId,
+    vector_store: &SurrealVectorStore<SurrealClient, rig::providers::openai::EmbeddingModel>,
+    model: rig::providers::openai::EmbeddingModel,
+) -> Result<()> {
+    DB.upsert::<Vec<DbMessage>>("message")
+        .content(DbMessage {
+            id: id.clone(),
+            client_id: client_id.clone(),
+            chat_id: chat_id.clone(),
+            content: vec![DBMessageContent::Telegram(msg.raw.clone())],
+            deleted: false,
+        })
+        .await?;
+
+    if msg.text() == "" {
+        return Ok(());
+    }
+
+    let mut exist: Vec<EmbeddedTextDb> = DB
+        .query("SELECT embedded_text FROM documents WHERE embedded_text=$embedded_text")
+        .bind(("embedded_text", msg.text().to_owned()))
+        .await?
+        .take(0)?;
+
+    if exist.len() == 0 {
+        vector_store
+            .insert_documents(
+                EmbeddingsBuilder::new(model.clone())
+                    .documents(vec![msg.text().to_owned()])
+                    .unwrap()
+                    .build()
+                    .await?,
+            )
+            .await?;
+
+        exist = DB
+            .query("SELECT embedded_text, id FROM documents WHERE embedded_text=$embedded_text")
+            .bind(("embedded_text", msg.text().to_owned()))
+            .await?
+            .take(0)?;
+        if exist.len() != 1 {
+            panic!("failed to insert");
+        }
+    }
+
+    DB.insert::<Vec<Relation>>("embeding")
+        .relation(Relation {
+            r#in: id,
+            out: exist.into_iter().next().context("should be one")?.id,
+        })
+        .await?;
+
+    Ok(())
+}
+
 const SESSION_FILE: &str = "dialogs.session";
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -59,6 +130,10 @@ async fn main() -> Result<()> {
         .with_level(log::LevelFilter::Debug)
         .init()
         .unwrap();
+
+    let openai_client = rig::providers::openai::Client::from_env();
+    let model: rig::providers::openai::EmbeddingModel =
+        openai_client.embedding_model(rig::providers::openai::TEXT_EMBEDDING_3_LARGE);
 
     let api_id = env::var("TG_ID").expect("TG_ID invalid").parse().unwrap();
     let api_hash = env::var("TG_HASH").unwrap();
@@ -78,6 +153,13 @@ async fn main() -> Result<()> {
     // Select a namespace + database
     DB.use_ns("tg").use_db("tg").await.expect("db selecting");
     // Create the client object
+    let vector_store: SurrealVectorStore<SurrealClient, rig::providers::openai::EmbeddingModel> =
+        SurrealVectorStore::new(
+            model.clone(),
+            DB.clone(),
+            Some("documents".to_string()),
+            rig_surrealdb::SurrealDistanceFunction::Cosine,
+        );
 
     let client = Client::connect(Config {
         session: Session::load_file_or_create(SESSION_FILE)?,
@@ -177,24 +259,24 @@ async fn main() -> Result<()> {
             if ids.contains(&id) {
                 break;
             }
-
-            let _: Option<Vec<DbMessage>> = DB
-                .upsert("message")
-                .content(DbMessage {
-                    id,
-                    client_id: client_id.clone(),
-                    chat_id: chat_id.clone(),
-                    content: vec![DBMessageContent::Telegram(msg.raw.clone())],
-                    deleted: false,
-                })
-                .await
-                .ok();
-            // .expect("upsert");
+            if let Err(error) = upload_message(
+                id,
+                msg,
+                client_id.clone(),
+                chat_id.clone(),
+                &vector_store,
+                model.clone(),
+            )
+            .await
+            {
+                dbg!(error);
+            }
         }
 
         client.session().save_to_file(SESSION_FILE)?;
     }
 
+    let vector_store_link = Arc::new(vector_store);
     loop {
         let exit = pin!(async { tokio::signal::ctrl_c().await });
         let upd = pin!(async { client.next_update().await });
@@ -205,8 +287,10 @@ async fn main() -> Result<()> {
         };
         let client_id = client_id.clone();
         let handle = client.clone();
+        let vector_store_link = vector_store_link.clone();
+        let model = model.clone();
         tokio::spawn(async move {
-            match handle_update(handle, update, client_id).await {
+            match handle_update(handle, update, client_id, vector_store_link, model).await {
                 Ok(_) => {}
                 Err(e) => eprintln!("Error handling updates!: {e}"),
             }
@@ -223,7 +307,13 @@ async fn main() -> Result<()> {
     // Ok(())
 }
 
-async fn handle_update(_client: Client, update: Update, client_id: String) -> Result<()> {
+async fn handle_update(
+    _client: Client,
+    update: Update,
+    client_id: String,
+    vector_store: Arc<SurrealVectorStore<SurrealClient, rig::providers::openai::EmbeddingModel>>,
+    model: rig::providers::openai::EmbeddingModel,
+) -> Result<()> {
     match update {
         Update::NewMessage(message) if !message.outgoing() => {
             let chat: Chat = message.chat();
@@ -239,17 +329,19 @@ async fn handle_update(_client: Client, update: Update, client_id: String) -> Re
                 "message",
                 format!("{}:{}:{}", client_id.clone(), chat.id(), message.id()),
             );
-            let _: Option<Vec<DbMessage>> = DB
-                .upsert("message")
-                .content(DbMessage {
-                    id,
-                    client_id: client_id.clone(),
-                    chat_id,
-                    content: vec![DBMessageContent::Telegram(raw.raw.clone())],
-                    deleted: false,
-                })
-                .await
-                .ok();
+
+            if let Err(error) = upload_message(
+                id,
+                raw.clone(),
+                client_id,
+                chat_id.clone(),
+                &vector_store,
+                model.clone(),
+            )
+            .await
+            {
+                dbg!(error);
+            }
         }
         Update::MessageDeleted(deleted) => {
             println!("Message deleted: {:?}", deleted);
