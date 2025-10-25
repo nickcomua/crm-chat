@@ -26,6 +26,8 @@ log = "0.4.28"
 tokio-util = { version = "0.7.16", features = ["codec"] }
 tokio-stream = "0.1.17"
 chat-types = { path = "../../libs/chat-types" }
+rig-core = { git = "https://github.com/0xPlaygrounds/rig.git", features = ["derive"]}
+rig-surrealdb = { git = "https://github.com/0xPlaygrounds/rig.git" }
 
 [profile.release]
 lto = true
