@@ -1,24 +1,24 @@
-import { surrealql } from "@surrealdb/surrealdb";
 import { ArrowLeft, Edit, Plus, X } from "lucide-react";
 import { useId, useState } from "react";
 // import { commands, type Chat } from "./bindings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatView } from "./chat";
-import { useLiveQuery } from "./contexts/surreal-provider";
+import { useLiveQuery } from "./hooks/use-live-query";
 import { updateChatName, updateChatPin } from "./services/chat-service";
 
 const CHAT_ID_PREFIX_LENGTH = 6;
 const MAX_SEARCH_RESULTS = 100;
 
-function getFullName(c: Chat): string {
-	return [c.first_name ?? "", c.last_name ?? ""].join(" ").trim();
-}
-
 function chatLabel(c: Chat): string {
-	const full = getFullName(c);
-	if (full) {
-		return full;
+	if (c.pined_name) {
+		return c.pined_name;
+	}
+	if (c.first_name && c.last_name) {
+		return `${c.first_name} ${c.last_name}`;
+	}
+	if (c.first_name) {
+		return c.first_name;
 	}
 	if (c.username) {
 		return `@${c.username}`;
@@ -33,7 +33,7 @@ function suggestDisplayName(c: Chat): string {
 	if (c.username) {
 		return `@${c.username}`;
 	}
-	const full = getFullName(c);
+	const full = chatLabel(c);
 	if (full) {
 		return full;
 	}
@@ -53,22 +53,112 @@ export type Chat = {
 	phone: string | null;
 };
 
+type TelegramPhoto = {
+	Photo: {
+		dc_id: number;
+		has_video: boolean;
+		personal: boolean;
+		photo_id: number;
+		stripped_thumb: string;
+	};
+};
+
+type TelegramUserStatus = {
+	Recently: {
+		by_me: boolean;
+	};
+};
+
+type TelegramUser = {
+	User: {
+		access_hash: number;
+		apply_min_photo: boolean;
+		attach_menu_enabled: boolean;
+		bot: boolean;
+		bot_attach_menu: boolean;
+		bot_business: boolean;
+		bot_can_edit: boolean;
+		bot_chat_history: boolean;
+		bot_forum_view: boolean;
+		bot_has_main_app: boolean;
+		bot_inline_geo: boolean;
+		bot_nochats: boolean;
+		close_friend: boolean;
+		contact: boolean;
+		contact_require_premium: boolean;
+		deleted: boolean;
+		fake: boolean;
+		first_name: string | null;
+		last_name: string | null;
+		phone: string | null;
+		id: number;
+		is_self: boolean;
+		min: boolean;
+		mutual_contact: boolean;
+		photo: TelegramPhoto;
+		premium: boolean;
+		restricted: boolean;
+		scam: boolean;
+		status: TelegramUserStatus;
+		stories_hidden: boolean;
+		stories_unavailable: boolean;
+		support: boolean;
+		username: string;
+		verified: boolean;
+	};
+};
+
+type TelegramContent = {
+	Telegram: {
+		User: TelegramUser;
+	};
+};
+
+export type ChatRow = {
+	client_id: string;
+	content: TelegramContent[];
+	id: { tb: "chat"; id: { String: string } };
+	is_pinned: boolean;
+	pin_name: number;
+	pined_name: string;
+};
+
+// const LIVE_CHATS_QUERY_KEY = "live_chats";
+// const LIVE_CHATS_QUERY =
+// 	"SELECT type::string(id) as id, content[0].Telegram.User.User.username as username, content[0].Telegram.User.User.first_name as first_name, content[0].Telegram.User.User.last_name as last_name, content[0].Telegram.User.User.phone as phone , is_pinned, pined_name FROM chat";
+
 export function App() {
 	// const [chats, setChats] = useState<Chat[]>([]);query
-	const { data: chatsDict } = useLiveQuery<Chat>({
-		query: surrealql`SELECT type::string(id) as id, content[0].Telegram.User.User.username as username, content[0].Telegram.User.User.first_name as first_name, content[0].Telegram.User.User.last_name as last_name, content[0].Telegram.User.User.phone as phone , is_pinned, pined_name FROM chat`,
-		liveQuery: surrealql`LIVE SELECT type::string(id) as id, content[0].Telegram.User.User.username as username, content[0].Telegram.User.User.first_name as first_name, content[0].Telegram.User.User.last_name as last_name, content[0].Telegram.User.User.phone as phone , is_pinned, pined_name FROM chat`,
-		queryKey: ["live", "chats"],
+	console.log("App render");
+	const { data: chatsDictRaw } = useLiveQuery<"chat", ChatRow>({
+		table: "chat",
+		range: null,
+		queryKey: "live_chats",
 	});
-	// console.log('chatsDict', chatsDict)
-	const chats = Object.values(chatsDict ?? {}).map((c) => c!);
+
+	const chatsDict = Object.fromEntries(
+		Object.entries(chatsDictRaw ?? {}).map(([id, c]) => [
+			id,
+			{
+				id,
+				username: c.content[0].Telegram.User?.User?.username,
+				first_name: c.content[0].Telegram.User?.User?.first_name,
+				last_name: c.content[0].Telegram.User?.User?.last_name,
+				phone: c.content[0].Telegram.User?.User?.phone,
+				is_pinned: c.is_pinned,
+				pined_name: c.pined_name,
+			},
+		])
+	);
+	console.log("chatsDict", chatsDict);
+	const chats: Chat[] = Object.values(chatsDict ?? {}).map((c) => c!);
 	const [openChat, setOpenChat] = useState<string | null>(null);
 	const selected = chats.flatMap((s) =>
 		s.is_pinned
 			? [
 					{
 						id: s.id,
-						name: s.pined_name ?? s.username ?? getFullName(s),
+						name: s.pined_name ?? s.username ?? chatLabel(s),
 					},
 				]
 			: []
@@ -90,7 +180,7 @@ export function App() {
 					const hay = [
 						c.id,
 						c.username ? `@${c.username}` : "",
-						getFullName(c),
+						chatLabel(c),
 						c.phone ?? "",
 					]
 						.join(" ")
@@ -153,7 +243,9 @@ export function App() {
 				</main>
 			);
 		}
-		return <ChatView chat={chat} close={() => setOpenChat(null)} />;
+		return (
+			<ChatView chat={chat} close={() => setOpenChat(null)} key={chat.id} />
+		);
 	}
 
 	return (

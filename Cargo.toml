@@ -8,4 +8,5 @@ members = [
     "bins/tg-messages-colector",
     "libs/chat-types",
     "bins/crm-chat-app/src-tauri",
+    "bins/sdb_server"
 ]

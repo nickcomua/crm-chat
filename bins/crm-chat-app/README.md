@@ -2,6 +2,16 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Environment Variables
+
+The following environment variables are required for the Q/A search functionality:
+
+- `VITE_QDRANT_URL` - The URL of your Qdrant instance (e.g., `http://localhost:6333`)
+- `VITE_QDRANT_API_KEY` - The API key for authenticating with Qdrant
+- `VITE_OPENAI_API_KEY` - Your OpenAI API key for embeddings and LLM operations
+
+These variables should be set in your environment or in a `.env` file in the project root.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
