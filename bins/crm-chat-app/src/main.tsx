@@ -10,7 +10,7 @@ const queryClient = new QueryClient();
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>
 		<QueryClientProvider client={queryClient}>
-			<SurrealProvider
+			{/* <SurrealProvider
 				autoConnect
 				endpoint={import.meta.env.VITE_SURREALDB_ENDPOINT}
 				params={{
@@ -21,9 +21,9 @@ createRoot(document.getElementById("root")!).render(
 						password: import.meta.env.VITE_SURREAL_PASSWORD,
 					},
 				}}
-			>
+			> */}
 				<App />
-			</SurrealProvider>
+			{/* </SurrealProvider> */}
 		</QueryClientProvider>
 	</StrictMode>
 );

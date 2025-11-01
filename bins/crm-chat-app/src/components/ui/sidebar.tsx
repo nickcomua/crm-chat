@@ -25,12 +25,43 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
-const ONE_WEEK_IN_SECONDS = 60 * 60 * 24 * 7;
+const SIDEBAR_WIDTH_COOKIE_NAME = "sidebar_width";
+const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const DAYS_PER_WEEK = 7;
+const ONE_WEEK_IN_SECONDS =
+	SECONDS_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY * DAYS_PER_WEEK;
 const SIDEBAR_COOKIE_MAX_AGE = ONE_WEEK_IN_SECONDS;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
+const MIN_SIDEBAR_WIDTH = 200; // in pixels
+const MAX_SIDEBAR_WIDTH = 600; // in pixels
+const DEFAULT_REM_PX = 256; // 16rem = 256px
+const PX_PER_REM = 16;
+
+function getCookieValue(name: string): string | null {
+	if (typeof document === "undefined") {
+		return null;
+	}
+	const value = `; ${document.cookie}`;
+	const parts = value.split(`; ${name}=`);
+	if (parts.length === 2) {
+		return parts.pop()?.split(";").shift() ?? null;
+	}
+	return null;
+}
+
+function parseRem(rem: string): number {
+	const num = Number.parseFloat(rem);
+	return Number.isNaN(num) ? DEFAULT_REM_PX : num * PX_PER_REM;
+}
+
+function remFromPx(px: number): string {
+	return `${px / PX_PER_REM}rem`;
+}
 
 type SidebarContextProps = {
 	state: "expanded" | "collapsed";
@@ -40,6 +71,9 @@ type SidebarContextProps = {
 	setOpenMobile: (open: boolean) => void;
 	isMobile: boolean;
 	toggleSidebar: () => void;
+	width: number;
+	setWidth: (width: number) => void;
+	side: "left" | "right";
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -57,6 +91,7 @@ function SidebarProvider({
 	defaultOpen = true,
 	open: openProp,
 	onOpenChange: setOpenProp,
+	side = "left",
 	className,
 	style,
 	children,
@@ -65,9 +100,39 @@ function SidebarProvider({
 	defaultOpen?: boolean;
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
+	side?: "left" | "right";
 }) {
 	const isMobile = useIsMobile();
 	const [openMobile, setOpenMobile] = React.useState(false);
+
+	// Load saved width from cookie
+	const savedWidth = React.useMemo(() => {
+		const saved = getCookieValue(SIDEBAR_WIDTH_COOKIE_NAME);
+		if (saved) {
+			const px = Number.parseInt(saved, 10);
+			if (
+				!Number.isNaN(px) &&
+				px >= MIN_SIDEBAR_WIDTH &&
+				px <= MAX_SIDEBAR_WIDTH
+			) {
+				return px;
+			}
+		}
+		return parseRem(SIDEBAR_WIDTH);
+	}, []);
+
+	const [width, setWidthState] = React.useState(savedWidth);
+
+	const setWidth = React.useCallback((newWidth: number) => {
+		const clamped = Math.max(
+			MIN_SIDEBAR_WIDTH,
+			Math.min(MAX_SIDEBAR_WIDTH, newWidth)
+		);
+		setWidthState(clamped);
+		// Save to cookie
+		/* biome-ignore lint/suspicious/noDocumentCookie: legacy cookie support */
+		document.cookie = `${SIDEBAR_WIDTH_COOKIE_NAME}=${clamped}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
+	}, []);
 
 	// This is the internal state of the sidebar.
 	// We use openProp and setOpenProp for control from outside the component.
@@ -127,8 +192,21 @@ function SidebarProvider({
 			openMobile,
 			setOpenMobile,
 			toggleSidebar,
+			width,
+			setWidth,
+			side,
 		}),
-		[state, open, setOpen, isMobile, openMobile, toggleSidebar]
+		[
+			state,
+			open,
+			setOpen,
+			isMobile,
+			openMobile,
+			toggleSidebar,
+			width,
+			setWidth,
+			side,
+		]
 	);
 
 	return (
@@ -142,7 +220,7 @@ function SidebarProvider({
 					data-slot="sidebar-wrapper"
 					style={
 						{
-							"--sidebar-width": SIDEBAR_WIDTH,
+							"--sidebar-width": remFromPx(width),
 							"--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
 							...style,
 						} as React.CSSProperties
@@ -263,7 +341,7 @@ function SidebarTrigger({
 	onClick,
 	...props
 }: React.ComponentProps<typeof Button>) {
-	const { toggleSidebar } = useSidebar();
+	const { toggleSidebar, state } = useSidebar();
 
 	return (
 		<Button
@@ -278,32 +356,89 @@ function SidebarTrigger({
 			variant="ghost"
 			{...props}
 		>
-			<PanelLeftIcon />
+			<PanelLeftIcon
+				className={cn(
+					"transition-transform duration-200",
+					state === "collapsed" && "rotate-180"
+				)}
+			/>
 			<span className="sr-only">Toggle Sidebar</span>
 		</Button>
 	);
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
-	const { toggleSidebar } = useSidebar();
+	const { toggleSidebar, setWidth, width, state, isMobile, side } =
+		useSidebar();
+	const [isResizing, setIsResizing] = React.useState(false);
+	const startXRef = React.useRef<number>(0);
+	const startWidthRef = React.useRef<number>(0);
+
+	React.useEffect(() => {
+		if (!isResizing) {
+			return;
+		}
+
+		const handlePointerMove = (e: PointerEvent) => {
+			const deltaX =
+				side === "left"
+					? e.clientX - startXRef.current
+					: startXRef.current - e.clientX;
+			const newWidth = startWidthRef.current + deltaX;
+			setWidth(newWidth);
+		};
+
+		const handlePointerUp = () => {
+			setIsResizing(false);
+		};
+
+		window.addEventListener("pointermove", handlePointerMove);
+		window.addEventListener("pointerup", handlePointerUp);
+
+		return () => {
+			window.removeEventListener("pointermove", handlePointerMove);
+			window.removeEventListener("pointerup", handlePointerUp);
+		};
+	}, [isResizing, side, setWidth]);
+
+	const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+		// Only resize if sidebar is expanded and not in icon mode
+		if (state === "expanded") {
+			e.preventDefault();
+			setIsResizing(true);
+			startXRef.current = e.clientX;
+			startWidthRef.current = width;
+			e.currentTarget.setPointerCapture(e.pointerId);
+		}
+	};
+
+	const handleDoubleClick = () => {
+		toggleSidebar();
+	};
+
+	if (isMobile) {
+		return null;
+	}
 
 	return (
 		<button
-			aria-label="Toggle Sidebar"
+			aria-label="Resize Sidebar"
 			className={cn(
 				"-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex",
-				"in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
-				"[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+				"cursor-col-resize",
 				"group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
 				"[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
 				"[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+				isResizing && "bg-sidebar-border/50 after:bg-sidebar-border",
 				className
 			)}
 			data-sidebar="rail"
 			data-slot="sidebar-rail"
-			onClick={toggleSidebar}
+			onDoubleClick={handleDoubleClick}
+			onPointerDown={handlePointerDown}
 			tabIndex={-1}
-			title="Toggle Sidebar"
+			title="Double-click to toggle, drag to resize"
+			type="button"
 			{...props}
 		/>
 	);

@@ -17,7 +17,6 @@ anyhow = "1.0.100"
 simple_logger = "5.1.0"
 grammers-client = { git = "https://github.com/Lonami/grammers" }
 grammers-session = { git = "https://github.com/Lonami/grammers", features = [
-    "impl-serde",
 ] }
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", features = [
     "impl-serde",
