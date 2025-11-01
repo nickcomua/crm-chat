@@ -12,9 +12,17 @@ pub struct DbMessage {
     pub id: RecordId,
     pub chat_id: RecordId,
     pub client_id: String,
-    pub content: Vec<DBMessageContent>,
+    // pub content: Vec<DBMessageContent>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub out: bool,
     #[serde(default)]
     pub deleted: bool,
+    pub is_question: Option<bool>,
+    pub confidence: Option<f64>,
+    pub answers: Option<Vec<RecordId>>,
+    pub is_answer: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,7 +41,9 @@ pub enum DbChatContent {
 pub struct DbChat {
     pub id: RecordId,
     pub client_id: String,
-   pub content: Vec<DbChatContent>,
+    pub content: Vec<DbChatContent>,
+    pub is_pinned: Option<bool>,
+    pub pined_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

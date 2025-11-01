@@ -61,7 +61,7 @@ impl BoardNoteRepo {
     pub async fn get_by_chat_id(chat_id: String) -> Result<Vec<BoardNote>> {
         let db = db().await;
         let sql = r#"
-            SELECT * FROM boardnote WHERE chat_id = $chat_id
+            SELECT * FROM board_note WHERE chat_id = $chat_id
         "#;
         let mut result = db.query(sql)
             .bind(("chat_id", chat_id))
@@ -73,7 +73,7 @@ impl BoardNoteRepo {
     pub async fn create(create: BoardNoteCreate) -> Result<RecordId> {
         let db = db().await;
         let content = serde_json::to_value(create)?;
-        let mut result = db.query("CREATE boardnote CONTENT $content RETURN id")
+        let mut result = db.query("CREATE board_note CONTENT $content RETURN id")
             .bind(("content", content))
             .await?;
         let ids: Vec<Record> = result.take(0)?;

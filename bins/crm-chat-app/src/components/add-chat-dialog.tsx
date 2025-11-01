@@ -6,6 +6,8 @@ import { suggestDisplayName } from "../lib/utils";
 import { updateChatPin } from "../services/chat-service";
 import type { Chat } from "../types";
 
+const MAX_RESULTS = 100;
+
 type AddChatDialogProps = {
 	chats: Chat[];
 	selectedIds: Set<string>;
@@ -45,7 +47,7 @@ export function AddChatDialog({
 		.toSorted(
 			(a, b) => Number(selectedIds.has(a.id)) - Number(selectedIds.has(b.id))
 		)
-		.slice(0, 100);
+		.slice(0, MAX_RESULTS);
 
 	async function addSelected(chat: Chat, name: string) {
 		await updateChatPin(chat.id, true, name);

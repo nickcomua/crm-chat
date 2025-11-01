@@ -1,9 +1,9 @@
-use std::env;
+use std::{env, sync::Arc};
 
 use surrealdb::{opt::auth::Root, Surreal};
 use tokio::sync::OnceCell;
 
-static DB_ONCE: OnceCell<Surreal<surrealdb::engine::any::Any>> = OnceCell::const_new();
+static DB_ONCE: OnceCell<Arc<Surreal<surrealdb::engine::any::Any>>> = OnceCell::const_new();
 
 pub async fn db() -> &'static Surreal<surrealdb::engine::any::Any> {
     DB_ONCE
@@ -28,7 +28,7 @@ pub async fn db() -> &'static Surreal<surrealdb::engine::any::Any> {
                 .use_db("tg")
                 .await
                 .expect("ns and db should exist");
-            db
+            Arc::new(db)
         })
         .await
 }
