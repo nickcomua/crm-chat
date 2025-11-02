@@ -77,7 +77,13 @@ async fn upload_message(
             id: id.clone(),
             client_id: client_id.clone(),
             chat_id: chat_id.clone(),
-            content: vec![DBMessageContent::Telegram(msg.raw.clone())],
+            // content: vec![DBMessageContent::Telegram(msg.raw.clone())],
+            message: Some(msg.text().to_owned()),
+            out: msg.outgoing(),
+            is_question: None,
+            confidence: None,
+            answers: None,
+            is_answer: None,
             deleted: false,
         })
         .await?;
@@ -229,6 +235,9 @@ async fn main() -> Result<()> {
                     Chat::Group(group) => TgChat::Group(group.raw.clone()),
                     Chat::Channel(channel) => TgChat::Channel(channel.raw.clone()),
                 })],
+                is_pinned: None,
+                pined_name: None,
+                
             })
             .await
             .expect("upsert");

@@ -1,5 +1,4 @@
 [workspace]
-resolver = "3"
 members = [
     "bins/emmbedig-calculator",
     "bins/emmbeding-clustering",
@@ -8,5 +7,9 @@ members = [
     "bins/tg-messages-colector",
     "libs/chat-types",
     "bins/crm-chat-app/src-tauri",
-    "bins/sdb_server"
+    "bins/sdb_server",
+    "libs/sdb_api",
+    "libs/messanger-inteface",
+    "libs/messanger-telegram",
 ]
+resolver = "3"

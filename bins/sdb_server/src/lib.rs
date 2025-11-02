@@ -1,34 +1,464 @@
-use spacetimedb::{ReducerContext, Table};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use spacetimedb::{reducer, Filter, Identity, ReducerContext, Table, Timestamp};
 
-#[spacetimedb::table(name = person)]
-pub struct Person {
-    name: String
+// === Enums ===
+
+#[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
+pub enum ClientKind {
+    Telegram,
 }
 
-#[spacetimedb::reducer(init)]
-pub fn init(_ctx: &ReducerContext) {
-    // Called when the module is initially published
+#[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
+pub enum ChatType {
+    Dialog,
+    Group,
 }
 
-#[spacetimedb::reducer(client_connected)]
-pub fn identity_connected(_ctx: &ReducerContext) {
-    // Called everytime a new client connects
+#[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
+pub enum MediaKind {
+    Photo,
+    Video,
+    Audio,
+    MessageRef,
 }
 
-#[spacetimedb::reducer(client_disconnected)]
-pub fn identity_disconnected(_ctx: &ReducerContext) {
-    // Called everytime a client disconnects
+// === Tables ===
+
+#[spacetimedb::table(name = user, public)]
+pub struct User {
+    #[primary_key]
+    pub id: Identity,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub online: bool,
 }
 
-#[spacetimedb::reducer]
-pub fn add(ctx: &ReducerContext, name: String) {
-    ctx.db.person().insert(Person { name });
+#[spacetimedb::table(name = client, public)]
+pub struct Client {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub kind: ClientKind,
+    #[unique]
+    pub external_id: String,
+    pub active_chats: Vec<u64>,
+    pub session: String,
 }
 
-#[spacetimedb::reducer]
-pub fn say_hello(ctx: &ReducerContext) {
-    for person in ctx.db.person().iter() {
-        log::info!("Hello, {}!", person.name);
+#[spacetimedb::table(name = chat, public)]
+pub struct Chat {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub client_id: u64,
+    #[index(btree)]
+    pub chat_type: ChatType,
+    #[index(btree)]
+    pub external_chat_id: String,
+    pub is_pinned: bool,
+    pub pinned_name: Option<String>,
+    #[index(btree)]
+    pub last_message_ts: u64,
+}
+
+#[spacetimedb::table(name = board, public)]
+pub struct Board {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub title: String,
+    #[index(btree)]
+    pub created_at: u64,
+}
+
+#[spacetimedb::table(name = board_user, public, index(name = board_user_pair, btree(columns = [board_id, user_id])))]
+pub struct BoardUser {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub board_id: u64,
+    #[index(btree)]
+    pub user_id: Identity,
+}
+#[spacetimedb::table(name = note, public)]
+pub struct Note {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub board_id: u64,
+    pub text: Option<String>,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub width: f64,
+    pub height: f64,
+    pub color: Option<String>,
+}
+
+#[spacetimedb::table(name = note_message, public, index(name = note_message_pair, btree(columns = [note_id, message_id])))]
+pub struct NoteMessage {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub note_id: u64,
+    #[index(btree)]
+    pub message_id: u64,
+}
+
+#[spacetimedb::table(name = note_media, public, index(name = note_media_pair, btree(columns = [note_id, media_id])))]
+pub struct NoteMedia {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub note_id: u64,
+    #[index(btree)]
+    pub media_id: u64,
+}
+
+#[spacetimedb::table(name = note_qa, public, index(name = note_qa_pair, btree(columns = [note_id, qa_id])))]
+pub struct NoteQa {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub note_id: u64,
+    #[index(btree)]
+    pub qa_id: u64,
+}
+
+#[spacetimedb::table(name = media, public)]
+pub struct Media {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub client_id: u64,
+    #[index(btree)]
+    pub kind: MediaKind,
+    #[index(btree)]
+    pub url: String,
+}
+
+#[spacetimedb::table(name = message, public, index(name = by_chat_ts, btree(columns = [chat_id, ts])))]
+pub struct Message {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub client_id: u64,
+    #[index(btree)]
+    pub chat_id: u64,
+    pub text: Option<String>,
+    pub out: bool,
+    pub deleted: bool,
+    #[index(btree)]
+    pub ts: u64, // UTC ms since epoch
+    #[index(btree)]
+    pub media_id: Option<u64>,
+}
+
+#[spacetimedb::table(name = qa, public, index(name = qa_pair, btree(columns = [question_message_id, answer_message_id])))]
+pub struct Qa {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub question_message_id: u64,
+    #[index(btree)]
+    pub answer_message_id: u64,
+    #[index(btree)]
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BasicClaims {
+    email: Option<String>,
+    name: Option<String>,
+}
+#[reducer(client_connected)]
+// Called when a client connects to a SpacetimeDB database
+pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {
+    let jwt = ctx
+        .sender_auth()
+        .jwt()
+        .ok_or("Authentication required".to_string())?;
+    log::info!("jwt issuer: {:?}", jwt.issuer());
+    // if jwt.issuer() != "https://noted-rabbit-14.clerk.accounts.dev" {
+    if !["https://noted-rabbit-14.clerk.accounts.dev", "https://auth.spacetimedb.com"].contains(&jwt.issuer()) {
+        return Err("Invalid issuer".to_string());
     }
-    log::info!("Hello, World!");
+
+    let claims: BasicClaims = serde_json::from_slice(jwt.raw_payload().as_bytes())
+        .map_err(|e| format!("Client connected with invalid JWT: {}", e).to_string())?;
+
+    if let Some(user) = ctx.db.user().id().find(ctx.sender) {
+        // If this is a returning user, i.e. we already have a `User` with this `Identity`,
+        // set `online: true`, but leave `name` and `identity` unchanged.
+        ctx.db.user().id().update(User {
+            online: true,
+            updated_at: ctx.timestamp,
+            username: claims.email,
+            display_name: claims.name,
+            ..user
+        });
+    } else {
+        // If this is a new user, create a `User` row for the `Identity`,
+        // which is online, but hasn't set a name.
+        ctx.db.user().insert(User {
+            id: ctx.sender,
+            username: claims.email,
+            display_name: claims.name,
+            created_at: ctx.timestamp,
+            updated_at: ctx.timestamp,
+            online: true,
+        });
+    }
+    Ok(())
 }
+
+#[reducer(client_disconnected)]
+// Called when a client disconnects from SpacetimeDB database
+pub fn identity_disconnected(ctx: &ReducerContext) {
+    if let Some(user) = ctx.db.user().id().find(ctx.sender) {
+        ctx.db.user().id().update(User {
+            online: false,
+            updated_at: ctx.timestamp,
+            ..user
+        });
+    } else {
+        // This branch should be unreachable,
+        // as it doesn't make sense for a client to disconnect without connecting first.
+        log::warn!(
+            "Disconnect event for unknown user with identity {:?}",
+            ctx.sender
+        );
+    }
+}
+
+#[reducer]
+pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String> {
+    if let Some(existing) = ctx.db.client().id().find(client.id) {
+        ctx.db.client().id().update(client);
+    } else {
+        ctx.db.client().insert(client);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String> {
+    ctx.db.client().id().delete(client_id);
+    Ok(())
+}
+
+#[reducer]
+pub fn add_chats(ctx: &ReducerContext, chats: Vec<Chat>) -> Result<(), String> {
+    for chat in chats {
+        ctx.db.chat().insert(chat);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
+    if let Some(existing) = ctx.db.chat().id().find(chat.id) {
+        ctx.db.chat().id().update(chat);
+    } else {
+        ctx.db.chat().insert(chat);
+    }
+    Ok(())
+}
+
+#[reducer]
+pub fn delete_chat(ctx: &ReducerContext, chat_id: u64) -> Result<(), String> {
+    ctx.db.chat().id().delete(chat_id);
+    Ok(())
+}
+
+#[reducer]
+pub fn add_messages(ctx: &ReducerContext, messages: Vec<Message>) -> Result<(), String> {
+    for message in messages {
+        ctx.db.message().insert(message);
+    }
+    Ok(())
+}
+
+ 
+// === Row-Level Security (Client Visibility Filters) ===
+// @todo
+// Users can see themselves
+// #[spacetimedb::client_visibility_filter]
+// pub const USER_FILTER: Filter = Filter::Sql(
+//     "
+//     SELECT u.*
+//     FROM user u
+//     WHERE u.id = :sender",
+// );
+
+// // Users can see other users in shared boards
+// #[spacetimedb::client_visibility_filter]
+// pub const USER_FILTER_SHARED: Filter = Filter::Sql(
+//     "
+//     SELECT u.*
+//     FROM user u
+//     JOIN board_user bu
+//     ON bu.user_id = u.id
+//     JOIN board_user bu2
+//     ON bu2.board_id = bu.board_id
+//     WHERE bu2.user_id = :sender",
+// );
+
+// // Only owners can see their clients
+// #[spacetimedb::client_visibility_filter]
+// pub const CLIENT_FILTER: Filter = Filter::Sql(
+//     "
+//     SELECT c.*
+//     FROM client c
+//     WHERE c.owner_user_id = :sender",
+// );
+
+// // Only owners can see their chats
+// #[spacetimedb::client_visibility_filter]
+// pub const CHAT_FILTER: Filter = Filter::Sql(
+//     "
+//     SELECT ch.*
+//     FROM chat ch
+//     WHERE ch.owner_user_id = :sender",
+// );
+
+// // A board is visible to its members (semijoin)
+// #[spacetimedb::client_visibility_filter]
+// pub const BOARD_FILTER: Filter = Filter::Sql(
+//     "SELECT b.*
+//     FROM board b
+//     JOIN board_user bu
+//     ON bu.board_id = b.id
+//     WHERE bu.user_id = :sender",
+// );
+
+// // Board membership rows: visible to the member
+// #[spacetimedb::client_visibility_filter]
+// pub const BOARD_USER_FILTER_SELF: Filter = Filter::Sql(
+//     "
+//     SELECT bu.*
+//     FROM board_user bu
+//     WHERE bu.user_id = :sender",
+// );
+
+// // Board membership rows: also visible to co-members of the same board
+// #[spacetimedb::client_visibility_filter]
+// pub const BOARD_USER_FILTER_COMEMBERS: Filter = Filter::Sql(
+//     "SELECT bu.*
+//     FROM board_user bu
+//     JOIN board_user bu2
+//     ON bu2.board_id = bu.board_id
+//     WHERE bu2.user_id = :sender",
+// );
+
+// // Notes: owner
+// #[spacetimedb::client_visibility_filter]
+// pub const NOTE_FILTER_OWNER: Filter = Filter::Sql(
+//     "
+//     SELECT n.* FROM note n
+//     WHERE n.owner_user_id = :sender",
+// );
+
+// // Notes: shared via board membership (semijoin)
+// #[spacetimedb::client_visibility_filter]
+// pub const NOTE_FILTER_SHARED: Filter = Filter::Sql(
+//     "
+//     SELECT n.*
+//     FROM note n
+//     JOIN board_note bn
+//     ON bn.note_id = n.id
+//     JOIN board_user bu
+//     ON bu.board_id = bn.board_id
+//     WHERE bu.user_id = :sender",
+// );
+
+// // Messages: owner
+// #[spacetimedb::client_visibility_filter]
+// pub const MESSAGE_FILTER_OWNER: Filter = Filter::Sql(
+//     "
+//     SELECT m.*
+//     FROM message m
+//     WHERE m.owner_user_id = :sender",
+// );
+
+// // Messages: shared via a note linked to a board where sender is a member (semijoin)
+// #[spacetimedb::client_visibility_filter]
+// pub const MESSAGE_FILTER_SHARED: Filter = Filter::Sql(
+//     "
+//     SELECT m.*
+//     FROM message m
+//     JOIN board_message bm
+//     ON bm.message_id = m.id
+//     JOIN board_user bu
+//     ON bu.board_id = bm.board_id
+//     WHERE bu.user_id = :sender",
+// );
+
+// // Media: owner
+// #[spacetimedb::client_visibility_filter]
+// pub const MEDIA_FILTER_OWNER: Filter = Filter::Sql(
+//     "
+//     SELECT me.*
+//     FROM media me
+//     WHERE me.owner_user_id = :sender",
+// );
+
+// // Media: shared via a note linked to a board where sender is a member (semijoin)
+// #[spacetimedb::client_visibility_filter]
+// pub const MEDIA_FILTER_SHARED: Filter = Filter::Sql(
+//     "
+//     SELECT me.*
+//     FROM media me
+//     JOIN board_media bme
+//     ON bme.media_id = me.id
+//     JOIN board_user bu
+//     ON bu.board_id = bme.board_id
+//     WHERE bu.user_id = :sender",
+// );
+
+// // QA: owner
+// #[spacetimedb::client_visibility_filter]
+// pub const QA_FILTER_OWNER: Filter = Filter::Sql(
+//     "
+//     SELECT q.*
+//     FROM qa q
+//     WHERE q.owner_user_id = :sender",
+// );
+
+// // QA: shared via a note linked to a board where sender is a member (semijoin)
+// #[spacetimedb::client_visibility_filter]
+// pub const QA_FILTER_SHARED: Filter = Filter::Sql(
+//     "
+//     SELECT q.*
+//     FROM qa q
+//     JOIN board_qa bq
+//     ON bq.qa_id = q.id
+//     JOIN board_user bu
+//     ON bu.board_id = bq.board_id
+//     WHERE bu.user_id = :sender",
+// );
