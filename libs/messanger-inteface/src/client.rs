@@ -17,6 +17,14 @@ pub trait MessengerClient: Send + Sync {
     /// Check if the client is currently authorized.
     async fn is_authorized(&self) -> Result<bool, MessengerError>;
 
+    async fn login<'callback, F, Fut>(
+        &self,
+        question_callback: F,
+    ) -> Result<(), MessengerError>
+    where
+        F: Send + Sync + Fn(String) -> Fut + 'callback,
+        Fut: std::future::Future<Output = Option<String>> + Send + 'callback;
+
     /// Get the external identifier for the authenticated user/account.
     ///
     /// This should return a platform-specific identifier (e.g., phone number,
@@ -25,6 +33,9 @@ pub trait MessengerClient: Send + Sync {
 
     /// Get a stream of all dialogs/chats.
     async fn iter_dialogs(&self) -> Result<DialogStream, MessengerError>;
+    
+    /// Get the number of messages in a chat.
+    async fn get_messages_count(&self, chat_external_id: &ExternalId) -> Result<usize, MessengerError>;
 
     /// Get a stream of messages for a specific chat.
     async fn iter_messages(

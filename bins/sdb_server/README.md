@@ -25,9 +25,12 @@ erDiagram
   Media ||--o{ Message : usedBy
   Message ||--o{ QA : asQuestion
   Message ||--o{ QA : asAnswer
-  Message ||--o{ Note : annotatedBy
-  Media ||--o{ Note : annotatedBy
-  QA ||--o{ Note : annotatedBy
+  Note ||--o{ NoteMessage : annotatedBy
+  Message ||--o{ NoteMessage : annotatedBy
+  Note ||--o{ NoteQA : annotatedBy
+  QA ||--o{ NoteQA : annotatedBy
+  Note ||--o{ NoteMedia : annotatedBy
+  Media ||--o{ NoteMedia : annotatedBy
 ```
 
 ### Tables

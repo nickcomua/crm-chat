@@ -26,43 +26,14 @@ pub use update::Update;
 
 #[cfg(test)]
 mod tests {
+    use crate::session::JsonSessionStore;
+
     use super::*;
     use async_trait::async_trait;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio_stream::{self as stream, StreamExt};
-
-    // Mock SessionStore implementation for testing
-    struct MockSessionStore {
-        data: Arc<Mutex<Option<JsonValue>>>,
-    }
-
-    impl MockSessionStore {
-        fn new() -> Self {
-            Self {
-                data: Arc::new(Mutex::new(None)),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl SessionStore for MockSessionStore {
-        async fn load(&self) -> Result<Option<JsonValue>, MessengerError> {
-            Ok(self.data.lock().await.clone())
-        }
-
-        async fn save(&self, session: &JsonValue) -> Result<(), MessengerError> {
-            *self.data.lock().await = Some(session.clone());
-            Ok(())
-        }
-
-        async fn delete(&self) -> Result<(), MessengerError> {
-            *self.data.lock().await = None;
-            Ok(())
-        }
-    }
 
     // Mock MessengerClient implementation
     struct MockMessengerClient {
@@ -177,6 +148,14 @@ mod tests {
 
     #[async_trait]
     impl MessengerClient for MockMessengerClient {
+        async fn login<'callback, F, Fut>(&self, _question_callback: F) -> Result<(), MessengerError>
+        where
+            F: Send + Sync + Fn(String) -> Fut + 'callback,
+            Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
+        {
+            Ok(())
+        }
+
         async fn is_authorized(&self) -> Result<bool, MessengerError> {
             Ok(self.authorized)
         }
@@ -189,6 +168,17 @@ mod tests {
             let dialogs = self.dialogs.clone();
             let stream = stream::iter(dialogs.into_iter().map(Ok));
             Ok(Box::pin(stream))
+        }
+
+        async fn get_messages_count(&self, chat_external_id: &ExternalId) -> Result<usize, MessengerError> {
+            let messages = self
+                .messages
+                .lock()
+                .await
+                .values()
+                .filter(|m| &m.chat_external_id == chat_external_id)
+                .count();
+            Ok(messages)
         }
 
         async fn iter_messages(
@@ -332,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_store() {
-        let store = MockSessionStore::new();
+        let store = JsonSessionStore::default();
 
         // Test save and load
         let session_data = serde_json::json!({"token": "test_token"});
