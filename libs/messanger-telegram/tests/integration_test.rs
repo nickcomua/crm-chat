@@ -4,10 +4,11 @@
 //! API calls to Telegram. Set up your test configuration before running these tests.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use messanger_inteface::{AuthConfig, MessengerClient, MessengerClientBuilder, Update};
+use messanger_inteface::{
+    session::JsonSessionStore, AuthConfig, MessengerClient, MessengerClientBuilder, Update,
+};
 use messanger_telegram::TelegramClientBuilder;
 use serde_json::json;
-use std::path::PathBuf;
 use tokio_stream::StreamExt;
 
 /// Test configuration for Telegram clients.
@@ -60,49 +61,6 @@ impl TestConfig {
     }
 }
 
-/// File-based session store for testing.
-#[derive(Clone)]
-struct TestSessionStore {
-    session_file: PathBuf,
-}
-
-impl TestSessionStore {
-    fn new(session_file: impl Into<PathBuf>) -> Self {
-        Self {
-            session_file: session_file.into(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl messanger_inteface::SessionStore for TestSessionStore {
-    async fn load(&self) -> Result<Option<serde_json::Value>, messanger_inteface::MessengerError> {
-        if !self.session_file.exists() {
-            return Ok(None);
-        }
-
-        // Read binary session file
-        let bytes = tokio::fs::read(&self.session_file).await.map_err(|e| {
-            messanger_inteface::MessengerError::Other(format!("Failed to read session file: {}", e))
-        })?;
-
-        // Base64 encode and wrap in JSON with session_data field
-        let session_json = json!({
-            "session_data": STANDARD.encode(&bytes)
-        });
-
-        Ok(Some(session_json))
-    }
-
-    async fn save(&self, _: &serde_json::Value) -> Result<(), messanger_inteface::MessengerError> {
-        Ok(())
-    }
-
-    async fn delete(&self) -> Result<(), messanger_inteface::MessengerError> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn test_client_creation() {
     let configs = TestConfig::from_env();
@@ -114,15 +72,26 @@ async fn test_client_creation() {
     let (config1, config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+
     // Create first client
-    let session_store1 = Box::new(TestSessionStore::new(&config1.session_file));
+    let session_store1 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client1 = builder
         .build(config1.to_auth_config(), Some(session_store1))
         .await
         .expect("Failed to create first client");
 
+    let bytes = tokio::fs::read(&config2.session_file)
+        .await
+        .expect("Failed to read session file");
     // Create second client
-    let session_store2 = Box::new(TestSessionStore::new(&config2.session_file));
+    let session_store2 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client2 = builder
         .build(config2.to_auth_config(), Some(session_store2))
         .await
@@ -144,13 +113,26 @@ async fn test_client_external_ids() {
     let (config1, config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    let session_store1 = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+
+    // Create first client
+    let session_store1 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client1 = builder
         .build(config1.to_auth_config(), Some(session_store1))
         .await
         .expect("Failed to create first client");
 
-    let session_store2 = Box::new(TestSessionStore::new(&config2.session_file));
+    let bytes = tokio::fs::read(&config2.session_file)
+        .await
+        .expect("Failed to read session file");
+    // Create second client
+    let session_store2 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client2 = builder
         .build(config2.to_auth_config(), Some(session_store2))
         .await
@@ -188,7 +170,12 @@ async fn test_iter_dialogs() {
     let (config1, _config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    let session_store = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+    let session_store = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client = builder
         .build(config1.to_auth_config(), Some(session_store))
         .await
@@ -241,7 +228,12 @@ async fn test_iter_messages() {
     let (config1, _config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    let session_store = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+    let session_store = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client = builder
         .build(config1.to_auth_config(), Some(session_store))
         .await
@@ -276,6 +268,7 @@ async fn test_iter_messages() {
         }
     };
 
+    println!("First dialog: {:?}", first_dialog);
     // Get messages for the first dialog
     let mut messages = client
         .iter_messages(&first_dialog.external_id)
@@ -285,7 +278,6 @@ async fn test_iter_messages() {
     let mut message_count = 0;
     while let Some(message_result) = messages.next().await {
         let message = message_result.expect("Failed to get message");
-
         // Verify message structure
         assert!(!message.external_id.is_empty());
         assert_eq!(message.chat_external_id, first_dialog.external_id);
@@ -346,7 +338,12 @@ async fn test_native_chat_access() {
     let (config1, _config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    let session_store = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+    let session_store = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client = builder
         .build(config1.to_auth_config(), Some(session_store))
         .await
@@ -406,7 +403,13 @@ async fn test_native_message_access() {
     let (config1, _config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    let session_store = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+    let session_store = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
+
     let client = builder
         .build(config1.to_auth_config(), Some(session_store))
         .await
@@ -487,15 +490,26 @@ async fn test_send_edit_delete_messages_with_update_stream() {
     let (config1, config2) = configs.unwrap();
     let builder = TelegramClientBuilder::new();
 
-    // Create first client (sender)
-    let session_store1 = Box::new(TestSessionStore::new(&config1.session_file));
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+
+    // Create first client
+    let session_store1 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client1 = builder
         .build(config1.to_auth_config(), Some(session_store1))
         .await
         .expect("Failed to create first client");
 
-    // Create second client (receiver)
-    let session_store2 = Box::new(TestSessionStore::new(&config2.session_file));
+    let bytes = tokio::fs::read(&config2.session_file)
+        .await
+        .expect("Failed to read session file");
+    // Create second client
+    let session_store2 = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
     let client2 = builder
         .build(config2.to_auth_config(), Some(session_store2))
         .await
@@ -705,4 +719,113 @@ async fn test_send_edit_delete_messages_with_update_stream() {
     println!("✓ Received MessageDeleted update: {}", deleted_id);
 
     println!("All updates received successfully!");
+}
+
+#[tokio::test]
+async fn test_get_messages_count() {
+    let configs = TestConfig::from_env();
+    if configs.is_none() {
+        eprintln!("Skipping test: TG_API_ID_1, TG_API_HASH_1, TG_API_ID_2, TG_API_HASH_2 not set");
+        return;
+    }
+
+    let (config1, _config2) = configs.unwrap();
+    let builder = TelegramClientBuilder::new();
+
+    let bytes = tokio::fs::read(&config1.session_file)
+        .await
+        .expect("Failed to read session file");
+    let session_store = Box::new(JsonSessionStore::new(json!({
+        "session_data": STANDARD.encode(&bytes)
+    })));
+    let client = builder
+        .build(config1.to_auth_config(), Some(session_store))
+        .await
+        .expect("Failed to create client");
+
+    // Check authorization
+    let is_authorized = client
+        .is_authorized()
+        .await
+        .expect("Failed to check authorization");
+
+    if !is_authorized {
+        eprintln!("Skipping test: Client is not authorized");
+        return;
+    }
+
+    // Get the user's own ID to find Saved Messages chat
+    let native_client = client.get_native_client().await;
+    let client_lock = native_client.lock().await;
+    let me = client_lock.get_me().await.expect("Failed to get user info");
+    let user_id = me.id();
+    drop(client_lock);
+
+    // Find Saved Messages chat (chat where chat ID equals user ID)
+    let mut dialogs = client
+        .iter_dialogs()
+        .await
+        .expect("Failed to get dialogs stream");
+
+    let saved_messages_chat_id = loop {
+        match dialogs.next().await {
+            Some(Ok(dialog)) => {
+                // Check if this is the Saved Messages chat (chat ID matches user ID)
+                if dialog.external_id == user_id.to_string() {
+                    break dialog.external_id;
+                }
+            }
+            Some(Err(e)) => {
+                panic!("Failed to get dialog: {}", e);
+            }
+            None => {
+                panic!("Saved Messages chat not found. User ID: {}", user_id);
+            }
+        }
+    };
+
+    println!("Found Saved Messages chat: {}", saved_messages_chat_id);
+
+    // Get initial message count
+    let initial_count = client
+        .get_messages_count(&saved_messages_chat_id)
+        .await
+        .expect("Failed to get initial message count");
+
+    println!("Initial message count: {}", initial_count);
+
+    // Send a message to Saved Messages
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let test_message = format!("Test message for count {}", timestamp);
+    let _message_external_id = client
+        .send_message(&saved_messages_chat_id, &test_message)
+        .await
+        .expect("Failed to send message");
+
+    println!("Sent test message: {}", test_message);
+
+    // Wait a bit for the message to be processed
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Get message count again
+    let new_count = client
+        .get_messages_count(&saved_messages_chat_id)
+        .await
+        .expect("Failed to get new message count");
+
+    println!("New message count: {}", new_count);
+
+    // Verify the count increased by 1
+    assert_eq!(
+        new_count,
+        initial_count + 1,
+        "Message count should increase by 1 after sending a message. Initial: {}, New: {}",
+        initial_count,
+        new_count
+    );
+
+    println!("✓ Message count test passed!");
 }

@@ -10,6 +10,6 @@ members = [
     "bins/sdb_server",
     "libs/sdb_api",
     "libs/messanger-inteface",
-    "libs/messanger-telegram",
+    "libs/messanger-telegram", "bins/telegram-subscriber",
 ]
 resolver = "3"
