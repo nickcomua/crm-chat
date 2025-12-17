@@ -758,7 +758,7 @@ async fn test_get_messages_count() {
     let native_client = client.get_native_client().await;
     let client_lock = native_client.lock().await;
     let me = client_lock.get_me().await.expect("Failed to get user info");
-    let user_id = me.id();
+    let user_id = me.raw.id();
     drop(client_lock);
 
     // Find Saved Messages chat (chat where chat ID equals user ID)
