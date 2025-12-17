@@ -4,10 +4,11 @@
 //! trait using the `grammers-client` library.
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use grammers_client::session::Session;
-use grammers_client::types::{Dialog, Message as TgMessage};
-use grammers_client::{Client, SignInError, Update as TgUpdate};
+use grammers_client::types::{Dialog, Peer};
+use grammers_client::{Client, SignInError, Update as TgUpdate, UpdatesConfiguration};
+use grammers_mtsender::SenderPool;
+use grammers_session::storages::SqliteSession;
+use grammers_session::updates::UpdatesLike;
 use messanger_inteface::session::SessionStoreWrapper;
 use messanger_inteface::{
     AuthConfig, ChatSummary, DialogStream, ExternalId, MessageStream, MessageSummary,
@@ -15,13 +16,18 @@ use messanger_inteface::{
     UpdateStream,
 };
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio_stream::{self as stream};
 
 /// Telegram client implementation of the MessengerClient trait.
 pub struct TelegramClient {
     client: Arc<Mutex<Client>>,
+    #[allow(dead_code)]
+    session: Arc<SqliteSession>,
+    api_hash: String,
+    #[allow(dead_code)]
     session_store: Option<Arc<dyn SessionStore + Send + Sync>>,
+    updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
 }
 
 impl TelegramClient {
@@ -38,7 +44,7 @@ impl TelegramClient {
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
-            if &dialog.chat().id().to_string() == chat_external_id {
+            if &dialog.peer().id().to_string() == chat_external_id {
                 found_dialog = Some(dialog);
                 break;
             }
@@ -70,9 +76,12 @@ impl MessengerClient for TelegramClient {
             .ok_or(MessengerError::Authentication(
                 "Failed to get phone number".to_string(),
             ))?;
-        let token = client.request_login_code(&phone).await.map_err(|_| {
-            MessengerError::Authentication("Failed to request login code".to_string())
-        })?;
+        let token = client
+            .request_login_code(&phone, &self.api_hash)
+            .await
+            .map_err(|_| {
+                MessengerError::Authentication("Failed to request login code".to_string())
+            })?;
         let code = prompt("Enter the code you received: ".to_string())
             .await
             .ok_or(MessengerError::Authentication(
@@ -128,15 +137,15 @@ impl MessengerClient for TelegramClient {
             let client = client_arc.lock().await;
             let mut dialogs = client.iter_dialogs();
             while let Ok(Some(dialog)) = dialogs.next().await {
-                let chat = dialog.chat();
+                let chat = dialog.peer();
                 let summary = ChatSummary {
                     external_id: chat.id().to_string(),
                     name: chat.name().map(|s| s.to_string()),
                     chat_type: Some(
                         match chat {
-                            Chat::User(_) => "user",
-                            Chat::Group(_) => "group",
-                            Chat::Channel(_) => "channel",
+                            Peer::User(_) => "user",
+                            Peer::Group(_) => "group",
+                            Peer::Channel(_) => "channel",
                         }
                         .to_string(),
                     ),
@@ -157,7 +166,7 @@ impl MessengerClient for TelegramClient {
         // Assign the lock to a variable so that the value lives long enough
         let client = self.client.clone();
         let client_lock = client.lock().await;
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         let mut messages = client_lock.iter_messages(chat);
         Ok(messages.total().await.map_err(|e| {
             MessengerError::Connection(format!("Failed to get messages count: {}", e))
@@ -168,7 +177,6 @@ impl MessengerClient for TelegramClient {
         &self,
         chat_external_id: &ExternalId,
     ) -> Result<MessageStream, MessengerError> {
-
         let client_arc = self.client.clone();
 
         // Collect all messages - need to find chat within the lock and keep dialog alive
@@ -178,7 +186,7 @@ impl MessengerClient for TelegramClient {
             let dialog = self.get_dialog(chat_external_id).await?;
 
             // Keep dialog alive while we use its chat
-            let chat = dialog.chat();
+            let chat = dialog.peer();
             let mut messages = client.iter_messages(chat);
             while let Ok(Some(msg)) = messages.next().await {
                 let summary = MessageSummary {
@@ -200,45 +208,60 @@ impl MessengerClient for TelegramClient {
     }
 
     async fn iter_updates(&self) -> Result<UpdateStream, MessengerError> {
-        let client_arc = self.client.clone();
+        // Take the updates receiver (can only be done once)
+        let updates_rx = self.updates_rx.lock().await.take().ok_or_else(|| {
+            MessengerError::Connection(
+                "Updates stream already consumed. iter_updates can only be called once."
+                    .to_string(),
+            )
+        })?;
 
-        // Create a stream that continuously polls for updates
-        // We use a custom stream implementation since updates are infinite
-        let stream = futures::stream::unfold(client_arc, |client| async move {
-            let update = {
-                let client_guard = client.lock().await;
-                client_guard.next_update().await
-            };
+        // Create updates configuration
+        let config = UpdatesConfiguration {
+            catch_up: false,
+            update_queue_limit: Some(100),
+        };
 
-            match update {
+        // Get the grammers update stream using stream_updates
+        let client_guard = self.client.lock().await;
+        let grammers_stream = client_guard.stream_updates(updates_rx, config);
+        drop(client_guard);
+
+        // Wrap the grammers UpdateStream (which has .next() method) into a futures Stream
+        let stream = futures::stream::unfold(grammers_stream, |mut stream| async move {
+            match stream.next().await {
                 Ok(update) => {
                     let update_summary = match &update {
                         TgUpdate::NewMessage(message) => {
-                            let chat = message.chat();
-                            let msg: &TgMessage = message;
+                            let chat_id = match message.peer() {
+                                Ok(chat) => chat.id().bare_id(),
+                                Err(e) => e.id.bare_id(),
+                            };
                             Ok(Update::NewMessage(MessageSummary {
-                                external_id: msg.id().to_string(),
-                                chat_external_id: chat.id().to_string(),
-                                text: Some(msg.text().to_string()),
-                                outgoing: msg.outgoing(),
-                                timestamp_ms: Some(msg.date().timestamp_millis() as u64),
-                                media_external_id: msg
+                                external_id: message.id().to_string(),
+                                chat_external_id: chat_id.to_string(),
+                                text: Some(message.text().to_string()),
+                                outgoing: message.outgoing(),
+                                timestamp_ms: Some(message.date().timestamp_millis() as u64),
+                                media_external_id: message
                                     .media()
-                                    .map(|_| format!("media:{}:{}", chat.id(), msg.id())),
+                                    .map(|_| format!("media:{}:{}", chat_id, message.id())),
                             }))
                         }
                         TgUpdate::MessageEdited(message) => {
-                            let chat = message.chat();
-                            let msg: &TgMessage = message;
+                            let chat_id = match message.peer() {
+                                Ok(chat) => chat.id().bare_id(),
+                                Err(e) => e.id.bare_id(),
+                            };
                             Ok(Update::MessageEdited(MessageSummary {
-                                external_id: msg.id().to_string(),
-                                chat_external_id: chat.id().to_string(),
-                                text: Some(msg.text().to_string()),
-                                outgoing: msg.outgoing(),
-                                timestamp_ms: Some(msg.date().timestamp_millis() as u64),
-                                media_external_id: msg
+                                external_id: message.id().to_string(),
+                                chat_external_id: chat_id.to_string(),
+                                text: Some(message.text().to_string()),
+                                outgoing: message.outgoing(),
+                                timestamp_ms: Some(message.date().timestamp_millis() as u64),
+                                media_external_id: message
                                     .media()
-                                    .map(|_| format!("media:{}:{}", chat.id(), msg.id())),
+                                    .map(|_| format!("media:{}:{}", chat_id, message.id())),
                             }))
                         }
                         TgUpdate::MessageDeleted(deleted) => {
@@ -267,14 +290,14 @@ impl MessengerClient for TelegramClient {
                             })
                         }
                     };
-                    Some((update_summary, client))
+                    Some((update_summary, stream))
                 }
                 Err(e) => Some((
                     Err(MessengerError::Connection(format!(
                         "Failed to get update: {}",
                         e
                     ))),
-                    client,
+                    stream,
                 )),
             }
         });
@@ -286,43 +309,23 @@ impl MessengerClient for TelegramClient {
         &self,
         chat_external_id: &ExternalId,
     ) -> Result<NativePayload, MessengerError> {
-        let client = self.client.lock().await;
-        let chat_id: i64 = chat_external_id
-            .parse()
-            .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
+        let dialog = self.get_dialog(chat_external_id).await?;
 
-        let mut dialogs = client.iter_dialogs();
-        let mut found_dialog = None;
-        while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
-                found_dialog = Some(dialog);
-                break;
-            }
-        }
-        if let Some(dialog) = found_dialog {
-            let chat = dialog.chat();
-            // Use grammers-tl-types with serde feature for serialization
-            let payload = match chat {
-                Chat::User(user) => {
-                    // Access the inner TL type for serialization
-                    serde_json::to_value(&user.raw).map_err(|e| {
-                        MessengerError::Serialization(format!("Failed to serialize user: {}", e))
-                    })?
-                }
-                Chat::Group(group) => serde_json::to_value(&group.raw).map_err(|e| {
+        let chat = dialog.peer();
+        // Use grammers-tl-types with serde feature for serialization
+        return Ok(NativePayload {
+            payload: match chat {
+                Peer::User(user) => serde_json::to_value(&user.raw).map_err(|e| {
+                    MessengerError::Serialization(format!("Failed to serialize user: {}", e))
+                })?,
+                Peer::Group(group) => serde_json::to_value(&group.raw).map_err(|e| {
                     MessengerError::Serialization(format!("Failed to serialize group: {}", e))
                 })?,
-                Chat::Channel(channel) => serde_json::to_value(&channel.raw).map_err(|e| {
+                Peer::Channel(channel) => serde_json::to_value(&channel.raw).map_err(|e| {
                     MessengerError::Serialization(format!("Failed to serialize channel: {}", e))
                 })?,
-            };
-            return Ok(NativePayload { payload });
-        }
-
-        Err(MessengerError::NotFound(format!(
-            "Chat not found: {}",
-            chat_external_id
-        )))
+            },
+        });
     }
 
     async fn get_native_message(
@@ -352,7 +355,7 @@ impl MessengerClient for TelegramClient {
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
+            if dialog.peer().id().bare_id() == chat_id {
                 found_dialog = Some(dialog);
                 break;
             }
@@ -361,7 +364,7 @@ impl MessengerClient for TelegramClient {
             .ok_or_else(|| MessengerError::NotFound(format!("Chat not found: {}", chat_id)))?;
 
         // Keep dialog alive while we use its chat
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         let mut messages = client.iter_messages(chat);
         while let Ok(Some(msg)) = messages.next().await {
             if msg.id() == message_id {
@@ -405,7 +408,7 @@ impl MessengerClient for TelegramClient {
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
+            if dialog.peer().id().bare_id() == chat_id {
                 found_dialog = Some(dialog);
                 break;
             }
@@ -414,7 +417,7 @@ impl MessengerClient for TelegramClient {
             .ok_or_else(|| MessengerError::NotFound(format!("Chat not found: {}", chat_id)))?;
 
         // Keep dialog alive while we use its chat
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         let mut messages = client.iter_messages(chat);
         while let Ok(Some(msg)) = messages.next().await {
             if msg.id() == message_id {
@@ -442,31 +445,32 @@ impl MessengerClient for TelegramClient {
     }
 
     async fn save_session(&self) -> Result<(), MessengerError> {
-        if let Some(session_store) = &self.session_store {
-            let client = self.client.lock().await;
-            // Serialize session to bytes via temp file
-            let temp_path =
-                std::env::temp_dir().join(format!("tg_session_save_{}.tmp", std::process::id()));
-            {
-                let session = client.session();
-                session.save_to_file(&temp_path).map_err(|e| {
-                    MessengerError::Session(format!("Failed to save session: {}", e))
-                })?;
-            }
-            let bytes = std::fs::read(&temp_path)
-                .map_err(|e| MessengerError::Io(format!("Failed to read session file: {}", e)))?;
-            let _ = std::fs::remove_file(&temp_path); // Try to clean up
+        Ok(())
+        // if let Some(session_store) = &self.session_store {
+        //     let client = self.client.lock().await;
+        //     // Serialize session to bytes via temp file
+        //     let temp_path =
+        //         std::env::temp_dir().join(format!("tg_session_save_{}.tmp", std::process::id()));
+        //     {
+        //         let session = client.
+        //         session.save_to_file(&temp_path).map_err(|e| {
+        //             MessengerError::Session(format!("Failed to save session: {}", e))
+        //         })?;
+        //     }
+        //     let bytes = std::fs::read(&temp_path)
+        //         .map_err(|e| MessengerError::Io(format!("Failed to read session file: {}", e)))?;
+        //     let _ = std::fs::remove_file(&temp_path); // Try to clean up
 
-            let session_json = serde_json::json!({
-                "session_data": STANDARD.encode(&bytes)
-            });
+        //     let session_json = serde_json::json!({
+        //         "session_data": STANDARD.encode(&bytes)
+        //     });
 
-            session_store.save(&session_json).await?;
-            Ok(())
-        } else {
-            // No session store configured, but this is not an error
-            Ok(())
-        }
+        //     session_store.save(&session_json).await?;
+        //     Ok(())
+        // } else {
+        //     // No session store configured, but this is not an error
+        //     Ok(())
+        // }
     }
 
     async fn load_session(&self) -> Result<(), MessengerError> {
@@ -486,21 +490,10 @@ impl MessengerClient for TelegramClient {
             .parse()
             .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
 
-        // Find the chat
-        let mut dialogs = client.iter_dialogs();
-        let mut found_dialog = None;
-        while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
-                found_dialog = Some(dialog);
-                break;
-            }
-        }
-        let dialog = found_dialog.ok_or_else(|| {
-            MessengerError::NotFound(format!("Chat not found: {}", chat_external_id))
-        })?;
+        let dialog = self.get_dialog(chat_external_id).await?;
 
         // Send the message
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         let message = client
             .send_message(chat, text)
             .await
@@ -517,9 +510,6 @@ impl MessengerClient for TelegramClient {
         new_text: &str,
     ) -> Result<(), MessengerError> {
         let client = self.client.lock().await;
-        let chat_id: i64 = chat_external_id
-            .parse()
-            .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
 
         // Parse message external ID format: "chat_id:message_id" or just "message_id"
         let message_id = if message_external_id.contains(':') {
@@ -540,21 +530,9 @@ impl MessengerClient for TelegramClient {
                 .map_err(|e| MessengerError::Serialization(format!("Invalid message ID: {}", e)))?
         };
 
-        // Find the chat
-        let mut dialogs = client.iter_dialogs();
-        let mut found_dialog = None;
-        while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
-                found_dialog = Some(dialog);
-                break;
-            }
-        }
-        let dialog = found_dialog.ok_or_else(|| {
-            MessengerError::NotFound(format!("Chat not found: {}", chat_external_id))
-        })?;
-
+        let dialog = self.get_dialog(chat_external_id).await?;
         // Edit the message
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         client
             .edit_message(chat, message_id, new_text)
             .await
@@ -569,9 +547,6 @@ impl MessengerClient for TelegramClient {
         message_external_id: &ExternalId,
     ) -> Result<(), MessengerError> {
         let client = self.client.lock().await;
-        let chat_id: i64 = chat_external_id
-            .parse()
-            .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
 
         // Parse message external ID format: "chat_id:message_id" or just "message_id"
         let message_id = if message_external_id.contains(':') {
@@ -592,21 +567,10 @@ impl MessengerClient for TelegramClient {
                 .map_err(|e| MessengerError::Serialization(format!("Invalid message ID: {}", e)))?
         };
 
-        // Find the chat
-        let mut dialogs = client.iter_dialogs();
-        let mut found_dialog = None;
-        while let Ok(Some(dialog)) = dialogs.next().await {
-            if dialog.chat().id() == chat_id {
-                found_dialog = Some(dialog);
-                break;
-            }
-        }
-        let dialog = found_dialog.ok_or_else(|| {
-            MessengerError::NotFound(format!("Chat not found: {}", chat_external_id))
-        })?;
+        let dialog = self.get_dialog(chat_external_id).await?;
 
         // Delete the message
-        let chat = dialog.chat();
+        let chat = dialog.peer();
         client
             .delete_messages(chat, &[message_id])
             .await
@@ -642,45 +606,54 @@ impl MessengerClientBuilder for TelegramClientBuilder {
                 MessengerError::Authentication("Missing api_id in credentials".to_string())
             })? as i32;
 
-        let api_hash = auth_config
-            .credentials
-            .get("api_hash")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                MessengerError::Authentication("Missing api_hash in credentials".to_string())
-            })?
-            .to_string();
+        // let api_hash = auth_config
+        //     .credentials
+        //     .get("api_hash")
+        //     .and_then(|v| v.as_str())
+        //     .ok_or_else(|| {
+        //         MessengerError::Authentication("Missing api_hash in credentials".to_string())
+        //     })?
+        //     .to_string();
 
         // Create or load session
         let session = if let Some(store) = &session_store {
             if let Some(session_json) = store.load().await? {
-                let session_data = session_json
-                    .get("session_data")
+                let session_file = session_json
+                    .get("session_file")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        MessengerError::Serialization("Missing session_data field".to_string())
+                        MessengerError::Serialization("Missing session_file field".to_string())
                     })?;
+                // let session_data = session_json
+                //     .get("session_data")
+                //     .and_then(|v| v.as_str())
+                //     .ok_or_else(|| {
+                //         MessengerError::Serialization("Missing session_data field".to_string())
+                //     })?;
 
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(session_data)
-                    .map_err(|e| {
-                        MessengerError::Serialization(format!("Failed to decode session: {}", e))
-                    })?;
+                // let bytes = base64::engine::general_purpose::STANDARD
+                //     .decode(session_data)
+                //     .map_err(|e| {
+                //         MessengerError::Serialization(format!("Failed to decode session: {}", e))
+                //     })?;
 
                 // Save bytes to temp file and load from file
-                let temp_path = std::env::temp_dir()
-                    .join(format!("tg_session_build_{}.tmp", std::process::id()));
-                std::fs::write(&temp_path, &bytes).map_err(|e| {
-                    MessengerError::Io(format!("Failed to write session file: {}", e))
+                // let temp_path = std::env::temp_dir()
+                //     .join(format!("tg_session_build_{}.tmp", std::process::id()));
+                // std::fs::write(&temp_path, &bytes).map_err(|e| {
+                //     MessengerError::Io(format!("Failed to write session file: {}", e))
+                // })?;
+                // let session = Session::load_file_or_create(&temp_path).map_err(|e| {
+                //     let _ = std::fs::remove_file(&temp_path); // Try to clean up
+                //     MessengerError::Session(format!("Failed to load session: {}", e))
+                // })?;
+                let session = SqliteSession::open(&session_file).map_err(|e| {
+                    MessengerError::Session(format!("Failed to open session: {}", e))
                 })?;
-                let session = Session::load_file_or_create(&temp_path).map_err(|e| {
-                    let _ = std::fs::remove_file(&temp_path); // Try to clean up
-                    MessengerError::Session(format!("Failed to load session: {}", e))
-                })?;
-                if !session.signed_in() {
-                    return Err(MessengerError::Session("Session not signed in".to_string()));
-                }
-                let _ = std::fs::remove_file(&temp_path); // Try to clean up
+                // if !session.signed_in() {
+                //     return Err(MessengerError::Session("Session not signed in".to_string()));
+                // }
+                // let _ = std::fs::remove_file(&temp_path); // Try to clean up
                 session
             } else {
                 return Err(MessengerError::Session("Session not found".to_string()));
@@ -691,15 +664,17 @@ impl MessengerClientBuilder for TelegramClientBuilder {
             ));
         };
 
-        // Create client
-        let client = Client::connect(Config {
-            session,
-            api_id,
-            api_hash,
-            params: Default::default(),
-        })
-        .await
-        .map_err(|e| MessengerError::Connection(format!("Failed to connect: {}", e)))?;
+        let session = Arc::new(session);
+        let mut pool = SenderPool::new(session.clone(), api_id);
+
+        // Extract the updates receiver before creating the client
+        // We need to replace it with a dummy channel since Client::new needs to borrow the pool
+        let (dummy_tx, dummy_rx) = mpsc::unbounded_channel();
+        let updates_rx = std::mem::replace(&mut pool.updates, dummy_rx);
+        drop(dummy_tx); // Close the dummy channel immediately
+        let updates_rx = Arc::new(Mutex::new(Some(updates_rx)));
+
+        let client = Client::new(&pool);
 
         // Store the session store if provided
         let stored_session_store = session_store
@@ -707,9 +682,20 @@ impl MessengerClientBuilder for TelegramClientBuilder {
         client.is_authorized().await.map_err(|e| {
             MessengerError::Connection(format!("Failed to check authorization: {}", e))
         })?;
+        let api_hash = auth_config
+            .credentials
+            .get("api_hash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                MessengerError::Authentication("Missing api_hash in credentials".to_string())
+            })?
+            .to_string();
         Ok(TelegramClient {
             client: Arc::new(Mutex::new(client)),
+            session: session,
+            api_hash: api_hash,
             session_store: stored_session_store,
+            updates_rx,
         })
     }
 }

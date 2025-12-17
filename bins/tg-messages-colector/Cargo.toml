@@ -1,0 +1,36 @@
+[package]
+name = "tg-messages-colector"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.48.0", features = ["full", "macros", "rt-multi-thread"] }
+# anyhow = "1.0"
+# rayon = "1.11.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1.89"
+# thiserror = "2.0.17"
+surrealdb = { version = "2.3.10" }
+base64 = "0.22.1"
+anyhow = "1.0.100"
+simple_logger = "5.1.0"
+grammers-client = { git = "https://github.com/Lonami/grammers" }
+grammers-session = { git = "https://github.com/Lonami/grammers", features = [
+] }
+grammers-tl-types = { git = "https://github.com/Lonami/grammers", features = [
+    "impl-serde",
+] }
+log = "0.4.28"
+tokio-util = { version = "0.7.16", features = ["codec"] }
+tokio-stream = "0.1.17"
+chat-types = { path = "../../libs/chat-types" }
+rig-core = { git = "https://github.com/0xPlaygrounds/rig.git", features = ["derive"]}
+rig-surrealdb = { git = "https://github.com/0xPlaygrounds/rig.git" }
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+panic = 'abort'
+codegen-units = 1

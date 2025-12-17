@@ -17,6 +17,7 @@ thiserror = "2"
 base64 = "0.22"
 grammers-client = { git = "https://github.com/Lonami/grammers" }
 grammers-session = { git = "https://github.com/Lonami/grammers" }
+grammers-mtsender = { git = "https://github.com/Lonami/grammers" }
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", features = [
     "impl-serde",
 ] }
