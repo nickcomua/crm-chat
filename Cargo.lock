@@ -3933,6 +3933,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "grammers-client",
+ "grammers-mtsender",
  "grammers-session",
  "grammers-tl-types",
  "messanger-inteface",
