@@ -21,10 +21,13 @@
     flake-utils,
     advisory-db,
     ...
-  }:
+  } @ inputs:
     flake-utils.lib.eachDefaultSystem (
       system: let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
 
         inherit (pkgs) lib;
 
@@ -36,13 +39,20 @@
           inherit src;
           strictDeps = true;
 
-          # nativeBuildInputs = [
-          #   pkgs.pkg-config
-          # ];
+          nativeBuildInputs = [
+            pkgs.pkg-config
+            pkgs.gtk4.dev
+            pkgs.gtk3.dev
+            pkgs.llvmPackages.libclang
+          ];
 
           buildInputs =
             [
               # Add additional build inputs here
+              pkgs.gtk3
+              pkgs.webkitgtk_4_1
+              pkgs.libsoup_3
+              pkgs.cairo
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
               # Additional darwin specific inputs can be set here
@@ -148,31 +158,28 @@
         };
 
         devShells.default = craneLib.devShell {
-          # Inherit inputs from checks.
-          checks = self.checks.${system};
+          
+           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          # Automatically inherit any build inputs from `my-crate`
+          inputsFrom = [ chat-scope ];
 
-          # Additional dev-shell environment variables can be set directly
-          # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
+          # Extra inputs (only used for interactive development)
+          # can be added here; cargo and rustc are provided by default.
+          packages = with pkgs; [
+            cargo-audit
+            cargo-watch
 
-          # Extra inputs can be added here; cargo and rustc are provided by default.
-          packages =
-            [
-              pkgs.nil
-              pkgs.alejandra
-              # pkgs.pkg-config
-              # pkgs.bzip2
-              # pkgs.zlib
-              # pkgs.openssl
-              # pkgs.tdlib
-              pkgs.rust-analyzer
-              # pkgs.ripgrep
-            ]
-            ++ lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.libiconv
-            ];
-
-          # Make sure rust-src is available for rust-analyzer
-          RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
+            openssl
+            gtk3.dev
+            gtk4.dev
+            webkitgtk_4_1
+            spacetimedb
+            pkg-config
+            llvmPackages.libclang
+            libsoup_3
+            cairo
+          ];
         };
       }
     );
