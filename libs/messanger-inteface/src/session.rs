@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::Mutex;
 

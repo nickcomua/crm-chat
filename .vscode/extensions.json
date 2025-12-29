@@ -1,6 +1,13 @@
 {
     "recommendations": [
         "bierner.markdown-mermaid",
-        "tamasfe.even-better-toml"
+        "tamasfe.even-better-toml",
+        "fill-labs.dependi",
+        "mkhl.direnv",
+        "rust-lang.rust-analyzer",
+        "tauri-apps.tauri-vscode",
+        "visualjj.visualjj",
+        "biomejs.biome",
+        "jnoortheen.nix-ide"
     ]
 }
