@@ -1,51 +1,91 @@
-use sdb_api::module_bindings::{Client, ClientKind, ClientTableAccess, DbConnection, SubscriptionEventContext};
-use spacetimedb_sdk::{DbContext, Table};
+//! Telegram subscriber service for CRM Chat.
+//!
+//! This service subscribes to SpacetimeDB client events and manages Telegram
+//! client authentication. Once authenticated, clients can be used to read and
+//! write messages via the messanger-telegram library.
 
-fn connect_to_db(token: String, module_name: String, uri: String) -> DbConnection {
-    DbConnection::builder()
-        // Register our `on_connect` callback, which will save our auth token.
-        // .on_connect(on_connected)
-        // // Register our `on_connect_error` callback, which will print a message, then exit the process.
-        // .on_connect_error(on_connect_error)
-        // // Our `on_disconnect` callback, which will print a message, then exit the process.
-        // .on_disconnect(on_disconnected)
-        // If the user has previously connected, we'll have saved a token in the `on_connect` callback.
-        // In that case, we'll load it and pass it to `with_token`,
-        // so we can re-authenticate as the same `Identity`.
-        .with_token(Some(token))
-        // Set the database name we chose when we called `spacetime publish`.
-        .with_module_name(module_name)
-        // Set the URI of the SpacetimeDB host that's running our database.
-        .with_uri(uri)
-        // Finalize configuration and connect!
-        .build()
-        .expect("Failed to connect")
-}
+mod auth;
+mod config;
+mod db;
+mod session;
 
-fn on_subscription_applied(ctx: &SubscriptionEventContext) {
-    ctx.db.client().iter().for_each(|client| {
-        println!("client: {:?}", client);
-    });
-}
+use anyhow::Result;
+use config::{TelegramConfig, get_session_dir};
+use db::{ClientEvent, process_client};
+use sdb_api::module_bindings::{
+    ClientTableAccess, DbConnection, ErrorContext, SubscriptionEventContext,
+};
+use session::new_active_sessions;
+use spacetimedb_sdk::{DbContext, Error, Table, TableWithPrimaryKey};
+use std::env;
+use tokio::sync::mpsc;
 
-async fn run_client(client: &Client){
-    if client.kind != ClientKind::Telegram {
-        println!("not a telegram client: {:?}", client);
-        return;
+fn on_sub_applied(ctx: &SubscriptionEventContext) {
+    let clients: Vec<_> = ctx.db.client().iter().collect();
+    println!("Subscription applied. Found {} clients.", clients.len());
+    for client in &clients {
+        println!("  Client {}: {:?}", client.id, client.status);
     }
-    messanger_telegram::GrammersSessionStore::new(Session::new())
 }
 
+fn on_sub_error(_ctx: &ErrorContext, err: Error) {
+    eprintln!("Subscription failed: {}", err);
+    std::process::exit(1);
+}
 
-async fn spawn_telegram_subscriber(ctx: &DbConnection) {
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = TelegramConfig::from_env()?;
+    let sessions = new_active_sessions();
+    let (tx, mut rx) = mpsc::unbounded_channel::<ClientEvent>();
 
-    ctx.db.client().on_insert(|ctx,client | {
-        // println!("client: {:?}", ctx.event.);
+    let conn = DbConnection::builder()
+        .with_module_name(env!("VITE_SPACETIMEDB_MODULE"))
+        .with_uri(env!("VITE_SPACETIMEDB_HOST"))
+        .with_token(env!("DIRTY_TOKEN").into())
+        .build()
+        .expect("Failed to connect");
+
+    // Set up callbacks that send events to the channel
+    let tx_insert = tx.clone();
+    conn.db.client().on_insert(move |_ctx, row| {
+        if let Err(e) = tx_insert.send(ClientEvent::Insert(row.clone())) {
+            eprintln!("Failed to send insert event: {}", e);
+        }
     });
 
-    ctx.subscription_builder()
-        .on_applied(on_subscription_applied)
-        .subscribe(["select * from client"]);
-}
+    let tx_update = tx.clone();
+    conn.db.client().on_update(move |_ctx, old, new| {
+        if let Err(e) = tx_update.send(ClientEvent::Update {
+            _old: old.clone(),
+            new: new.clone(),
+        }) {
+            eprintln!("Failed to send update event: {}", e);
+        }
+    });
 
-fn main() {}
+    conn.subscription_builder()
+        .on_applied(on_sub_applied)
+        .on_error(on_sub_error)
+        .subscribe(["SELECT * FROM client", "SELECT * FROM user"]);
+
+    conn.run_threaded();
+
+    println!("Telegram subscriber started. Press Ctrl+C to exit.");
+    println!("Session files stored in: {:?}", get_session_dir());
+
+    // Process events in the main async loop
+    loop {
+        tokio::select! {
+            Some(event) = rx.recv() => {
+                process_client(&conn, event.client(), sessions.clone(), &config).await;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                println!("Shutting down...");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}

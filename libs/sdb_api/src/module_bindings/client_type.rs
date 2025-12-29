@@ -5,6 +5,7 @@
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 use super::client_kind_type::ClientKind;
+use super::client_status_type::ClientStatus;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
@@ -14,6 +15,7 @@ pub struct Client {
     pub kind: ClientKind,
     pub external_id: String,
     pub active_chats: Vec<u64>,
+    pub status: ClientStatus,
     pub session: String,
 }
 

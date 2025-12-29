@@ -8,9 +8,18 @@
 
     flake-utils.url = "github:numtide/flake-utils";
 
+    # spacetimedb.url = "github:clockworklabs/SpacetimeDB/refs/tags/v1.11.1";
+
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
+    };
+
+    # Child flakes
+    crm-chat-web = {
+      url = "path:./bins/crm-chat-web";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
     };
   };
 
@@ -20,6 +29,7 @@
     crane,
     flake-utils,
     advisory-db,
+    crm-chat-web,
     ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -141,39 +151,49 @@
 
         packages = {
           default = chat-scope;
-        };
+          chat-scope-img = pkgs.dockerTools.streamLayeredImage {
+            name = "nick395/chat-scope";
+            tag = "latest";
+            contents = [chat-scope];
 
-        apps.default = flake-utils.lib.mkApp {
-          drv = chat-scope;
-        };
-
-        chat-scope-img = pkgs.dockerTools.streamLayeredImage {
-          name = "nick395/chat-scope";
-          tag = "latest";
-          contents = [chat-scope];
-
-          config = {
-            Cmd = ["/bin/chat-scope"];
+            config = {
+              Cmd = ["/bin/chat-scope"];
+            };
           };
         };
 
+        apps.default = {
+          type = "app";
+          program = "${chat-scope}/bin/crm-chat";
+          meta.description = "CRM Chat application";
+        };
+
         devShells.default = craneLib.devShell {
-          
-           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          # Automatically inherit any build inputs from `my-crate`
-          inputsFrom = [ chat-scope ];
+
+          shellHook = ''
+            export PATH="$HOME/.local/bin:$PATH"
+            export PATH=/home/nick/.opencode/bin:$PATH
+          '';
+          
+          # Inherit from chat-scope and all child flake dev shells
+          inputsFrom = [
+            chat-scope
+            crm-chat-web.devShells.${system}.default
+          ];
 
           # Extra inputs (only used for interactive development)
           # can be added here; cargo and rustc are provided by default.
           packages = with pkgs; [
             cargo-audit
             cargo-watch
-
             openssl
             gtk3.dev
             gtk4.dev
             webkitgtk_4_1
+            biome
+            # spacetimedb.packages.${system}.spacetime
             spacetimedb
             pkg-config
             llvmPackages.libclang
