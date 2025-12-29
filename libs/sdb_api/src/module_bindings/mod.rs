@@ -6,80 +6,34 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-pub mod add_chats_reducer;
-pub mod add_messages_reducer;
-pub mod board_table;
-pub mod board_type;
-pub mod board_user_table;
-pub mod board_user_type;
-pub mod chat_table;
-pub mod chat_type;
-pub mod chat_type_type;
 pub mod client_connected_reducer;
 pub mod client_kind_type;
+pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
-pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
 pub mod identity_disconnected_reducer;
-pub mod media_kind_type;
-pub mod media_table;
-pub mod media_type;
-pub mod message_table;
-pub mod message_type;
-pub mod note_media_table;
-pub mod note_media_type;
-pub mod note_message_table;
-pub mod note_message_type;
-pub mod note_qa_table;
-pub mod note_qa_type;
-pub mod note_table;
-pub mod note_type;
-pub mod qa_table;
-pub mod qa_type;
-pub mod upsert_chat_reducer;
+pub mod robot_table;
+pub mod robot_type;
 pub mod upsert_client_reducer;
 pub mod user_table;
 pub mod user_type;
 
-pub use add_chats_reducer::{add_chats, set_flags_for_add_chats, AddChatsCallbackId};
-pub use add_messages_reducer::{add_messages, set_flags_for_add_messages, AddMessagesCallbackId};
-pub use board_table::*;
-pub use board_type::Board;
-pub use board_user_table::*;
-pub use board_user_type::BoardUser;
-pub use chat_table::*;
-pub use chat_type::Chat;
-pub use chat_type_type::ChatType;
 pub use client_connected_reducer::{
     client_connected, set_flags_for_client_connected, ClientConnectedCallbackId,
 };
 pub use client_kind_type::ClientKind;
+pub use client_status_type::ClientStatus;
 pub use client_table::*;
 pub use client_type::Client;
-pub use delete_chat_reducer::{delete_chat, set_flags_for_delete_chat, DeleteChatCallbackId};
 pub use delete_client_reducer::{
     delete_client, set_flags_for_delete_client, DeleteClientCallbackId,
 };
 pub use identity_disconnected_reducer::{
     identity_disconnected, set_flags_for_identity_disconnected, IdentityDisconnectedCallbackId,
 };
-pub use media_kind_type::MediaKind;
-pub use media_table::*;
-pub use media_type::Media;
-pub use message_table::*;
-pub use message_type::Message;
-pub use note_media_table::*;
-pub use note_media_type::NoteMedia;
-pub use note_message_table::*;
-pub use note_message_type::NoteMessage;
-pub use note_qa_table::*;
-pub use note_qa_type::NoteQa;
-pub use note_table::*;
-pub use note_type::Note;
-pub use qa_table::*;
-pub use qa_type::Qa;
-pub use upsert_chat_reducer::{set_flags_for_upsert_chat, upsert_chat, UpsertChatCallbackId};
+pub use robot_table::*;
+pub use robot_type::Robot;
 pub use upsert_client_reducer::{
     set_flags_for_upsert_client, upsert_client, UpsertClientCallbackId,
 };
@@ -94,13 +48,9 @@ pub use user_type::User;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-    AddChats { chats: Vec<Chat> },
-    AddMessages { messages: Vec<Message> },
     ClientConnected,
-    DeleteChat { chat_id: u64 },
     DeleteClient { client_id: u64 },
     IdentityDisconnected,
-    UpsertChat { chat: Chat },
     UpsertClient { client: Client },
 }
 
@@ -111,13 +61,9 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-            Reducer::AddChats { .. } => "add_chats",
-            Reducer::AddMessages { .. } => "add_messages",
             Reducer::ClientConnected => "client_connected",
-            Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
             Reducer::IdentityDisconnected => "identity_disconnected",
-            Reducer::UpsertChat { .. } => "upsert_chat",
             Reducer::UpsertClient { .. } => "upsert_client",
             _ => unreachable!(),
         }
@@ -127,31 +73,10 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
     type Error = __sdk::Error;
     fn try_from(value: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> __sdk::Result<Self> {
         match &value.reducer_name[..] {
-            "add_chats" => Ok(
-                __sdk::parse_reducer_args::<add_chats_reducer::AddChatsArgs>(
-                    "add_chats",
-                    &value.args,
-                )?
-                .into(),
-            ),
-            "add_messages" => Ok(
-                __sdk::parse_reducer_args::<add_messages_reducer::AddMessagesArgs>(
-                    "add_messages",
-                    &value.args,
-                )?
-                .into(),
-            ),
             "client_connected" => Ok(__sdk::parse_reducer_args::<
                 client_connected_reducer::ClientConnectedArgs,
             >("client_connected", &value.args)?
             .into()),
-            "delete_chat" => Ok(
-                __sdk::parse_reducer_args::<delete_chat_reducer::DeleteChatArgs>(
-                    "delete_chat",
-                    &value.args,
-                )?
-                .into(),
-            ),
             "delete_client" => Ok(__sdk::parse_reducer_args::<
                 delete_client_reducer::DeleteClientArgs,
             >("delete_client", &value.args)?
@@ -160,13 +85,6 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 identity_disconnected_reducer::IdentityDisconnectedArgs,
             >("identity_disconnected", &value.args)?
             .into()),
-            "upsert_chat" => Ok(
-                __sdk::parse_reducer_args::<upsert_chat_reducer::UpsertChatArgs>(
-                    "upsert_chat",
-                    &value.args,
-                )?
-                .into(),
-            ),
             "upsert_client" => Ok(__sdk::parse_reducer_args::<
                 upsert_client_reducer::UpsertClientArgs,
             >("upsert_client", &value.args)?
@@ -185,17 +103,8 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-    board: __sdk::TableUpdate<Board>,
-    board_user: __sdk::TableUpdate<BoardUser>,
-    chat: __sdk::TableUpdate<Chat>,
     client: __sdk::TableUpdate<Client>,
-    media: __sdk::TableUpdate<Media>,
-    message: __sdk::TableUpdate<Message>,
-    note: __sdk::TableUpdate<Note>,
-    note_media: __sdk::TableUpdate<NoteMedia>,
-    note_message: __sdk::TableUpdate<NoteMessage>,
-    note_qa: __sdk::TableUpdate<NoteQa>,
-    qa: __sdk::TableUpdate<Qa>,
+    robot: __sdk::TableUpdate<Robot>,
     user: __sdk::TableUpdate<User>,
 }
 
@@ -205,39 +114,12 @@ impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
         let mut db_update = DbUpdate::default();
         for table_update in raw.tables {
             match &table_update.table_name[..] {
-                "board" => db_update
-                    .board
-                    .append(board_table::parse_table_update(table_update)?),
-                "board_user" => db_update
-                    .board_user
-                    .append(board_user_table::parse_table_update(table_update)?),
-                "chat" => db_update
-                    .chat
-                    .append(chat_table::parse_table_update(table_update)?),
                 "client" => db_update
                     .client
                     .append(client_table::parse_table_update(table_update)?),
-                "media" => db_update
-                    .media
-                    .append(media_table::parse_table_update(table_update)?),
-                "message" => db_update
-                    .message
-                    .append(message_table::parse_table_update(table_update)?),
-                "note" => db_update
-                    .note
-                    .append(note_table::parse_table_update(table_update)?),
-                "note_media" => db_update
-                    .note_media
-                    .append(note_media_table::parse_table_update(table_update)?),
-                "note_message" => db_update
-                    .note_message
-                    .append(note_message_table::parse_table_update(table_update)?),
-                "note_qa" => db_update
-                    .note_qa
-                    .append(note_qa_table::parse_table_update(table_update)?),
-                "qa" => db_update
-                    .qa
-                    .append(qa_table::parse_table_update(table_update)?),
+                "robot" => db_update
+                    .robot
+                    .append(robot_table::parse_table_update(table_update)?),
                 "user" => db_update
                     .user
                     .append(user_table::parse_table_update(table_update)?),
@@ -267,38 +149,11 @@ impl __sdk::DbUpdate for DbUpdate {
     ) -> AppliedDiff<'_> {
         let mut diff = AppliedDiff::default();
 
-        diff.board = cache
-            .apply_diff_to_table::<Board>("board", &self.board)
-            .with_updates_by_pk(|row| &row.id);
-        diff.board_user = cache
-            .apply_diff_to_table::<BoardUser>("board_user", &self.board_user)
-            .with_updates_by_pk(|row| &row.id);
-        diff.chat = cache
-            .apply_diff_to_table::<Chat>("chat", &self.chat)
-            .with_updates_by_pk(|row| &row.id);
         diff.client = cache
             .apply_diff_to_table::<Client>("client", &self.client)
             .with_updates_by_pk(|row| &row.id);
-        diff.media = cache
-            .apply_diff_to_table::<Media>("media", &self.media)
-            .with_updates_by_pk(|row| &row.id);
-        diff.message = cache
-            .apply_diff_to_table::<Message>("message", &self.message)
-            .with_updates_by_pk(|row| &row.id);
-        diff.note = cache
-            .apply_diff_to_table::<Note>("note", &self.note)
-            .with_updates_by_pk(|row| &row.id);
-        diff.note_media = cache
-            .apply_diff_to_table::<NoteMedia>("note_media", &self.note_media)
-            .with_updates_by_pk(|row| &row.id);
-        diff.note_message = cache
-            .apply_diff_to_table::<NoteMessage>("note_message", &self.note_message)
-            .with_updates_by_pk(|row| &row.id);
-        diff.note_qa = cache
-            .apply_diff_to_table::<NoteQa>("note_qa", &self.note_qa)
-            .with_updates_by_pk(|row| &row.id);
-        diff.qa = cache
-            .apply_diff_to_table::<Qa>("qa", &self.qa)
+        diff.robot = cache
+            .apply_diff_to_table::<Robot>("robot", &self.robot)
             .with_updates_by_pk(|row| &row.id);
         diff.user = cache
             .apply_diff_to_table::<User>("user", &self.user)
@@ -312,17 +167,8 @@ impl __sdk::DbUpdate for DbUpdate {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-    board: __sdk::TableAppliedDiff<'r, Board>,
-    board_user: __sdk::TableAppliedDiff<'r, BoardUser>,
-    chat: __sdk::TableAppliedDiff<'r, Chat>,
     client: __sdk::TableAppliedDiff<'r, Client>,
-    media: __sdk::TableAppliedDiff<'r, Media>,
-    message: __sdk::TableAppliedDiff<'r, Message>,
-    note: __sdk::TableAppliedDiff<'r, Note>,
-    note_media: __sdk::TableAppliedDiff<'r, NoteMedia>,
-    note_message: __sdk::TableAppliedDiff<'r, NoteMessage>,
-    note_qa: __sdk::TableAppliedDiff<'r, NoteQa>,
-    qa: __sdk::TableAppliedDiff<'r, Qa>,
+    robot: __sdk::TableAppliedDiff<'r, Robot>,
     user: __sdk::TableAppliedDiff<'r, User>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
@@ -337,21 +183,8 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         event: &EventContext,
         callbacks: &mut __sdk::DbCallbacks<RemoteModule>,
     ) {
-        callbacks.invoke_table_row_callbacks::<Board>("board", &self.board, event);
-        callbacks.invoke_table_row_callbacks::<BoardUser>("board_user", &self.board_user, event);
-        callbacks.invoke_table_row_callbacks::<Chat>("chat", &self.chat, event);
         callbacks.invoke_table_row_callbacks::<Client>("client", &self.client, event);
-        callbacks.invoke_table_row_callbacks::<Media>("media", &self.media, event);
-        callbacks.invoke_table_row_callbacks::<Message>("message", &self.message, event);
-        callbacks.invoke_table_row_callbacks::<Note>("note", &self.note, event);
-        callbacks.invoke_table_row_callbacks::<NoteMedia>("note_media", &self.note_media, event);
-        callbacks.invoke_table_row_callbacks::<NoteMessage>(
-            "note_message",
-            &self.note_message,
-            event,
-        );
-        callbacks.invoke_table_row_callbacks::<NoteQa>("note_qa", &self.note_qa, event);
-        callbacks.invoke_table_row_callbacks::<Qa>("qa", &self.qa, event);
+        callbacks.invoke_table_row_callbacks::<Robot>("robot", &self.robot, event);
         callbacks.invoke_table_row_callbacks::<User>("user", &self.user, event);
     }
 }
@@ -1072,17 +905,8 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type SubscriptionHandle = SubscriptionHandle;
 
     fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-        board_table::register_table(client_cache);
-        board_user_table::register_table(client_cache);
-        chat_table::register_table(client_cache);
         client_table::register_table(client_cache);
-        media_table::register_table(client_cache);
-        message_table::register_table(client_cache);
-        note_table::register_table(client_cache);
-        note_media_table::register_table(client_cache);
-        note_message_table::register_table(client_cache);
-        note_qa_table::register_table(client_cache);
-        qa_table::register_table(client_cache);
+        robot_table::register_table(client_cache);
         user_table::register_table(client_cache);
     }
 }

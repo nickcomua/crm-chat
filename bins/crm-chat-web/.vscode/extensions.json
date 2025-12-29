@@ -1,5 +1,3 @@
 {
-    "recommendations": [
-        "mkhl.direnv"
-    ]
+  "recommendations": ["biomejs.biome"]
 }

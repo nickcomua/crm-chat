@@ -1,6 +1,7 @@
-use anyhow::Result;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use spacetimedb::{reducer, Filter, Identity, ReducerContext, Table, Timestamp};
+use spacetimedb::{reducer, Identity, ReducerContext, Table, Timestamp};
 
 // === Enums ===
 
@@ -36,166 +37,186 @@ pub struct User {
     pub online: bool,
 }
 
-#[spacetimedb::table(name = client, public)]
+#[spacetimedb::table(name = robot, public)]
+pub struct Robot {
+    #[primary_key]
+    pub id: Identity,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub online: bool,
+}
+
+#[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
+pub enum ClientStatus {
+    WaitingPhone(Option<String>),
+    WaitingCode(Option<String>),
+    WaitingPassword(Option<String>),
+    Connected,
+}
+
+#[spacetimedb::table(name = client, public, index(name = user_client_pair, btree(columns = [owner_user_id, external_id])))]
+#[derive(Debug)]
 pub struct Client {
     #[primary_key]
     #[auto_inc]
     pub id: u64,
-    #[index(btree)]
     pub owner_user_id: Identity,
     #[index(btree)]
     pub kind: ClientKind,
-    #[unique]
     pub external_id: String,
     pub active_chats: Vec<u64>,
+    pub status: ClientStatus,
     pub session: String,
 }
 
-#[spacetimedb::table(name = chat, public)]
-pub struct Chat {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub owner_user_id: Identity,
-    #[index(btree)]
-    pub client_id: u64,
-    #[index(btree)]
-    pub chat_type: ChatType,
-    #[index(btree)]
-    pub external_chat_id: String,
-    pub is_pinned: bool,
-    pub pinned_name: Option<String>,
-    #[index(btree)]
-    pub last_message_ts: u64,
-}
+// #[spacetimedb::table(name = chat, public)]
+// pub struct Chat {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub owner_user_id: Identity,
+//     #[index(btree)]
+//     pub client_id: u64,
+//     #[index(btree)]
+//     pub chat_type: ChatType,
+//     #[index(btree)]
+//     pub external_chat_id: String,
+//     pub is_pinned: bool,
+//     pub pinned_name: Option<String>,
+//     #[index(btree)]
+//     pub last_message_ts: u64,
+// }
 
-#[spacetimedb::table(name = board, public)]
-pub struct Board {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    pub title: String,
-    #[index(btree)]
-    pub created_at: u64,
-}
+// #[spacetimedb::table(name = board, public)]
+// pub struct Board {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     pub title: String,
+//     #[index(btree)]
+//     pub created_at: u64,
+// }
 
-#[spacetimedb::table(name = board_user, public, index(name = board_user_pair, btree(columns = [board_id, user_id])))]
-pub struct BoardUser {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub board_id: u64,
-    #[index(btree)]
-    pub user_id: Identity,
-}
-#[spacetimedb::table(name = note, public)]
-pub struct Note {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub owner_user_id: Identity,
-    #[index(btree)]
-    pub board_id: u64,
-    pub text: Option<String>,
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub width: f64,
-    pub height: f64,
-    pub color: Option<String>,
-}
+// #[spacetimedb::table(name = board_user, public, index(name = board_user_pair, btree(columns = [board_id, user_id])))]
+// pub struct BoardUser {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub board_id: u64,
+//     #[index(btree)]
+//     pub user_id: Identity,
+// }
+// #[spacetimedb::table(name = note, public)]
+// pub struct Note {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub owner_user_id: Identity,
+//     #[index(btree)]
+//     pub board_id: u64,
+//     pub text: Option<String>,
+//     pub x: f64,
+//     pub y: f64,
+//     pub z: f64,
+//     pub width: f64,
+//     pub height: f64,
+//     pub color: Option<String>,
+// }
 
-#[spacetimedb::table(name = note_message, public, index(name = note_message_pair, btree(columns = [note_id, message_id])))]
-pub struct NoteMessage {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub note_id: u64,
-    #[index(btree)]
-    pub message_id: u64,
-}
+// #[spacetimedb::table(name = note_message, public, index(name = note_message_pair, btree(columns = [note_id, message_id])))]
+// pub struct NoteMessage {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub note_id: u64,
+//     #[index(btree)]
+//     pub message_id: u64,
+// }
 
-#[spacetimedb::table(name = note_media, public, index(name = note_media_pair, btree(columns = [note_id, media_id])))]
-pub struct NoteMedia {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub note_id: u64,
-    #[index(btree)]
-    pub media_id: u64,
-}
+// #[spacetimedb::table(name = note_media, public, index(name = note_media_pair, btree(columns = [note_id, media_id])))]
+// pub struct NoteMedia {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub note_id: u64,
+//     #[index(btree)]
+//     pub media_id: u64,
+// }
 
-#[spacetimedb::table(name = note_qa, public, index(name = note_qa_pair, btree(columns = [note_id, qa_id])))]
-pub struct NoteQa {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub note_id: u64,
-    #[index(btree)]
-    pub qa_id: u64,
-}
+// #[spacetimedb::table(name = note_qa, public, index(name = note_qa_pair, btree(columns = [note_id, qa_id])))]
+// pub struct NoteQa {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub note_id: u64,
+//     #[index(btree)]
+//     pub qa_id: u64,
+// }
 
-#[spacetimedb::table(name = media, public)]
-pub struct Media {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub owner_user_id: Identity,
-    #[index(btree)]
-    pub client_id: u64,
-    #[index(btree)]
-    pub kind: MediaKind,
-    #[index(btree)]
-    pub url: String,
-}
+// #[spacetimedb::table(name = media, public)]
+// pub struct Media {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub owner_user_id: Identity,
+//     #[index(btree)]
+//     pub client_id: u64,
+//     #[index(btree)]
+//     pub kind: MediaKind,
+//     #[index(btree)]
+//     pub url: String,
+// }
 
-#[spacetimedb::table(name = message, public, index(name = by_chat_ts, btree(columns = [chat_id, ts])))]
-pub struct Message {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub owner_user_id: Identity,
-    #[index(btree)]
-    pub client_id: u64,
-    #[index(btree)]
-    pub chat_id: u64,
-    pub text: Option<String>,
-    pub out: bool,
-    pub deleted: bool,
-    #[index(btree)]
-    pub ts: u64, // UTC ms since epoch
-    #[index(btree)]
-    pub media_id: Option<u64>,
-}
+// #[spacetimedb::table(name = message, public, index(name = by_chat_ts, btree(columns = [chat_id, ts])))]
+// pub struct Message {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub owner_user_id: Identity,
+//     #[index(btree)]
+//     pub client_id: u64,
+//     #[index(btree)]
+//     pub chat_id: u64,
+//     pub text: Option<String>,
+//     pub out: bool,
+//     pub deleted: bool,
+//     #[index(btree)]
+//     pub ts: u64, // UTC ms since epoch
+//     #[index(btree)]
+//     pub media_id: Option<u64>,
+// }
 
-#[spacetimedb::table(name = qa, public, index(name = qa_pair, btree(columns = [question_message_id, answer_message_id])))]
-pub struct Qa {
-    #[primary_key]
-    #[auto_inc]
-    pub id: u64,
-    #[index(btree)]
-    pub owner_user_id: Identity,
-    #[index(btree)]
-    pub question_message_id: u64,
-    #[index(btree)]
-    pub answer_message_id: u64,
-    #[index(btree)]
-    pub confidence: Option<f64>,
-}
+// #[spacetimedb::table(name = qa, public, index(name = qa_pair, btree(columns = [question_message_id, answer_message_id])))]
+// pub struct Qa {
+//     #[primary_key]
+//     #[auto_inc]
+//     pub id: u64,
+//     #[index(btree)]
+//     pub owner_user_id: Identity,
+//     #[index(btree)]
+//     pub question_message_id: u64,
+//     #[index(btree)]
+//     pub answer_message_id: u64,
+//     #[index(btree)]
+//     pub confidence: Option<f64>,
+// }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BasicClaims {
     email: Option<String>,
     name: Option<String>,
 }
+
+const DIRTY_TOKEN_ISSUER: &str = env!("DIRTY_TOKEN");
+
 #[reducer(client_connected)]
 // Called when a client connects to a SpacetimeDB database
 pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {
@@ -203,9 +224,38 @@ pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {
         .sender_auth()
         .jwt()
         .ok_or("Authentication required".to_string())?;
-    log::info!("jwt issuer: {:?}", jwt.issuer());
+    log::info!("trying to loggin identity: {:?}", ctx.sender);
     // if jwt.issuer() != "https://noted-rabbit-14.clerk.accounts.dev" {
-    if !["https://noted-rabbit-14.clerk.accounts.dev", "https://auth.spacetimedb.com"].contains(&jwt.issuer()) {
+    if &jwt.issuer() == &"localhost" {
+        if ctx.sender
+            != Identity::from_str(env!("DIRTY_IDENTITY")).expect("Invalid identity env")
+        {
+            return Err("Invalid identity".to_string());
+        }
+        log::info!("robot connected! TODO add auth");
+        if let Some(robot) = ctx.db.robot().id().find(ctx.sender) {
+            ctx.db.robot().id().update(Robot {
+                id: ctx.sender,
+                online: true,
+                updated_at: ctx.timestamp,
+                ..robot
+            });
+        } else {
+            ctx.db.robot().insert(Robot {
+                id: ctx.sender,
+                online: true,
+                updated_at: ctx.timestamp,
+                created_at: ctx.timestamp,
+            });
+        }
+        return Ok(());
+    }
+    if ![
+        "https://noted-rabbit-14.clerk.accounts.dev",
+        "https://auth.spacetimedb.com",
+    ]
+    .contains(&jwt.issuer())
+    {
         return Err("Invalid issuer".to_string());
     }
 
@@ -247,20 +297,64 @@ pub fn identity_disconnected(ctx: &ReducerContext) {
             ..user
         });
     } else {
-        // This branch should be unreachable,
-        // as it doesn't make sense for a client to disconnect without connecting first.
-        log::warn!(
-            "Disconnect event for unknown user with identity {:?}",
-            ctx.sender
-        );
+        if let Some(robot) = ctx.db.robot().id().find(ctx.sender) {
+            ctx.db.robot().id().update(Robot {
+                id: ctx.sender,
+                online: false,
+                updated_at: ctx.timestamp,
+                ..robot
+            });
+        } else {
+            // This branch should be unreachable,
+            // as it doesn't make sense for a client to disconnect without connecting first.
+            log::warn!(
+                "Disconnect event for unknown user with identity {:?}",
+                ctx.sender
+            );
+        }
     }
+}
+
+fn validate_phone(phone: String) -> Result<(), String> {
+    if !phonelib::is_valid_phone_number(phone.clone()) {
+        return Err("invalid phone number".to_string());
+    }
+    if let Some(normalize_phone) = phonelib::normalize_phone_number(phone.clone()) {
+        if normalize_phone != phone {
+            return Err("phone number format is invalid".to_string());
+        }
+    } else {
+        return Err("error normalizing phone".to_string());
+    };
+    Ok(())
 }
 
 #[reducer]
 pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String> {
-    if let Some(existing) = ctx.db.client().id().find(client.id) {
-        ctx.db.client().id().update(client);
+    validate_phone(client.external_id.clone())?;
+    if let ClientStatus::WaitingPhone(Some(phone)) = &client.status {
+        validate_phone(phone.clone())?;
+    }
+    if let ClientStatus::WaitingCode(Some(code)) = &client.status {
+        // should be 5 numbers
+        if !(code.len() == 5 && code.chars().all(|c| c.is_ascii_digit())) {
+            return Err("auth code is invalid".to_string());
+        }
+    }
+    if let Some(existing) = ctx
+        .db
+        .client()
+        .user_client_pair()
+        .filter((&client.owner_user_id.clone(), &client.external_id.clone()))
+        .next()
+    {
+        log::info!("Updating client: {:?}", client);
+        ctx.db.client().id().update(Client {
+            id: existing.id,
+            ..client
+        });
     } else {
+        log::info!("Inserting client: {:?}", client);
         ctx.db.client().insert(client);
     }
     Ok(())
@@ -272,39 +366,38 @@ pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String>
     Ok(())
 }
 
-#[reducer]
-pub fn add_chats(ctx: &ReducerContext, chats: Vec<Chat>) -> Result<(), String> {
-    for chat in chats {
-        ctx.db.chat().insert(chat);
-    }
-    Ok(())
-}
+// #[reducer]
+// pub fn add_chats(ctx: &ReducerContext, chats: Vec<Chat>) -> Result<(), String> {
+//     for chat in chats {
+//         ctx.db.chat().insert(chat);
+//     }
+//     Ok(())
+// }
 
-#[reducer]
-pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
-    if let Some(existing) = ctx.db.chat().id().find(chat.id) {
-        ctx.db.chat().id().update(chat);
-    } else {
-        ctx.db.chat().insert(chat);
-    }
-    Ok(())
-}
+// #[reducer]
+// pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
+//     if let Some(existing) = ctx.db.chat().id().find(chat.id) {
+//         ctx.db.chat().id().update(chat);
+//     } else {
+//         ctx.db.chat().insert(chat);
+//     }
+//     Ok(())
+// }
 
-#[reducer]
-pub fn delete_chat(ctx: &ReducerContext, chat_id: u64) -> Result<(), String> {
-    ctx.db.chat().id().delete(chat_id);
-    Ok(())
-}
+// #[reducer]
+// pub fn delete_chat(ctx: &ReducerContext, chat_id: u64) -> Result<(), String> {
+//     ctx.db.chat().id().delete(chat_id);
+//     Ok(())
+// }
 
-#[reducer]
-pub fn add_messages(ctx: &ReducerContext, messages: Vec<Message>) -> Result<(), String> {
-    for message in messages {
-        ctx.db.message().insert(message);
-    }
-    Ok(())
-}
+// #[reducer]
+// pub fn add_messages(ctx: &ReducerContext, messages: Vec<Message>) -> Result<(), String> {
+//     for message in messages {
+//         ctx.db.message().insert(message);
+//     }
+//     Ok(())
+// }
 
- 
 // === Row-Level Security (Client Visibility Filters) ===
 // @todo
 // Users can see themselves
