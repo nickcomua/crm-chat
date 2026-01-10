@@ -215,8 +215,6 @@ struct BasicClaims {
     name: Option<String>,
 }
 
-const DIRTY_TOKEN_ISSUER: &str = env!("DIRTY_TOKEN");
-
 #[reducer(client_connected)]
 // Called when a client connects to a SpacetimeDB database
 pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {

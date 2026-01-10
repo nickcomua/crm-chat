@@ -25,3 +25,4 @@ grammers-tl-types = { git = "https://github.com/Lonami/grammers", features = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+serial_test = "3"
