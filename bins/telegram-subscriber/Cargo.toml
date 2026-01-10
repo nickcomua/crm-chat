@@ -14,7 +14,7 @@ serde_json = "1.0.145"
 reqwest = { version = "0.12", features = ["json"] }
 jsonwebtoken = "9.3"
 chrono = { version = "0.4", features = ["serde"] }
-grammers-client = { git = "https://github.com/Lonami/grammers" }
-grammers-session = { git = "https://github.com/Lonami/grammers" }
-grammers-mtsender = { git = "https://github.com/Lonami/grammers" }
+grammers-client = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
+grammers-session = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
+grammers-mtsender = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
 dirs = "6"

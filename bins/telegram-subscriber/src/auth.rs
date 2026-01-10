@@ -1,11 +1,11 @@
 //! Authentication handlers for Telegram login flow.
 
-use crate::config::{get_session_path, TelegramConfig};
+use crate::config::{TelegramConfig, get_session_path};
 use crate::session::{ActiveSessions, LoginSession};
 use grammers_client::{Client, SignInError};
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
-use sdb_api::module_bindings::{upsert_client, Client as DbClient, ClientStatus, DbConnection};
+use sdb_api::module_bindings::{Client as DbClient, ClientStatus, DbConnection, upsert_client};
 use spacetimedb_sdk::DbContext;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -101,7 +101,10 @@ pub async fn handle_waiting_phone(
             c
         }
         Err(e) => {
-            eprintln!("handle_waiting_phone: Failed to create Telegram client: {}", e);
+            eprintln!(
+                "handle_waiting_phone: Failed to create Telegram client: {}",
+                e
+            );
             return;
         }
     };
@@ -264,7 +267,11 @@ pub async fn handle_waiting_password(
     // Check if we have an active session with a password token
     if let Some(session) = sessions_guard.get_mut(&client.id) {
         if let Some(password_token) = session.password_token.take() {
-            match session.client.check_password(password_token, password).await {
+            match session
+                .client
+                .check_password(password_token, password)
+                .await
+            {
                 Ok(_user) => {
                     println!("Client {} password verified, connected", client.id);
                     drop(sessions_guard);

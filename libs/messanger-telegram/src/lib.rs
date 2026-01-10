@@ -4,8 +4,12 @@
 //! trait using the `grammers-client` library.
 
 use async_trait::async_trait;
-use grammers_client::types::{Dialog, Peer};
-use grammers_client::{Client, SignInError, Update as TgUpdate, UpdatesConfiguration};
+use grammers_client::{
+    client::UpdatesConfiguration,
+    peer::{Dialog, Peer},
+    update::Update as TgUpdate,
+    Client, SignInError,
+};
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 use grammers_session::updates::UpdatesLike;
@@ -52,7 +56,7 @@ impl TelegramClient {
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
-            if &dialog.peer().id().to_string() == chat_external_id {
+            if &dialog.peer().id().bare_id().to_string() == chat_external_id {
                 found_dialog = Some(dialog);
                 break;
             }
@@ -121,7 +125,12 @@ impl MessengerClient for TelegramClient {
                     })?;
             }
             Ok(_) => (),
-            Err(e) => panic!("{}", e),
+            Err(e) => {
+                return Err(MessengerError::Authentication(format!(
+                    "Sign in failed: {}",
+                    e
+                )))
+            }
         };
         Ok(())
     }
@@ -151,7 +160,7 @@ impl MessengerClient for TelegramClient {
             while let Ok(Some(dialog)) = dialogs.next().await {
                 let chat = dialog.peer();
                 let summary = ChatSummary {
-                    external_id: chat.id().to_string(),
+                    external_id: chat.id().bare_id().to_string(),
                     name: chat.name().map(|s| s.to_string()),
                     chat_type: Some(
                         match chat {
@@ -179,7 +188,13 @@ impl MessengerClient for TelegramClient {
         let client = self.client.clone();
         let client_lock = client.lock().await;
         let chat = dialog.peer();
-        let mut messages = client_lock.iter_messages(chat);
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+        let mut messages = client_lock.iter_messages(chat_ref);
         Ok(messages.total().await.map_err(|e| {
             MessengerError::Connection(format!("Failed to get messages count: {}", e))
         })?)
@@ -199,17 +214,23 @@ impl MessengerClient for TelegramClient {
 
             // Keep dialog alive while we use its chat
             let chat = dialog.peer();
-            let mut messages = client.iter_messages(chat);
+            let chat_ref = chat.to_ref().ok_or_else(|| {
+                MessengerError::NotFound(format!(
+                    "Could not get reference for chat: {}",
+                    chat.id().bare_id()
+                ))
+            })?;
+            let mut messages = client.iter_messages(chat_ref);
             while let Ok(Some(msg)) = messages.next().await {
                 let summary = MessageSummary {
                     external_id: msg.id().to_string(),
-                    chat_external_id: chat.id().to_string(),
+                    chat_external_id: chat.id().bare_id().to_string(),
                     text: Some(msg.text().to_string()),
                     outgoing: msg.outgoing(),
                     timestamp_ms: Some(msg.date().timestamp_millis() as u64),
                     media_external_id: msg
                         .media()
-                        .map(|_| format!("media:{}:{}", chat.id(), msg.id())),
+                        .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
                 };
                 messages_vec.push(Ok(summary));
             }
@@ -246,8 +267,8 @@ impl MessengerClient for TelegramClient {
                     let update_summary = match &update {
                         TgUpdate::NewMessage(message) => {
                             let chat_id = match message.peer() {
-                                Ok(chat) => chat.id().bare_id(),
-                                Err(e) => e.id.bare_id(),
+                                Some(chat) => chat.id().bare_id(),
+                                None => message.peer_id().bare_id(),
                             };
                             Ok(Update::NewMessage(MessageSummary {
                                 external_id: message.id().to_string(),
@@ -262,8 +283,8 @@ impl MessengerClient for TelegramClient {
                         }
                         TgUpdate::MessageEdited(message) => {
                             let chat_id = match message.peer() {
-                                Ok(chat) => chat.id().bare_id(),
-                                Err(e) => e.id.bare_id(),
+                                Some(chat) => chat.id().bare_id(),
+                                None => message.peer_id().bare_id(),
                             };
                             Ok(Update::MessageEdited(MessageSummary {
                                 external_id: message.id().to_string(),
@@ -377,7 +398,13 @@ impl MessengerClient for TelegramClient {
 
         // Keep dialog alive while we use its chat
         let chat = dialog.peer();
-        let mut messages = client.iter_messages(chat);
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+        let mut messages = client.iter_messages(chat_ref);
         while let Ok(Some(msg)) = messages.next().await {
             if msg.id() == message_id {
                 let payload = serde_json::to_value(&msg.raw).map_err(|e| {
@@ -430,7 +457,13 @@ impl MessengerClient for TelegramClient {
 
         // Keep dialog alive while we use its chat
         let chat = dialog.peer();
-        let mut messages = client.iter_messages(chat);
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+        let mut messages = client.iter_messages(chat_ref);
         while let Ok(Some(msg)) = messages.next().await {
             if msg.id() == message_id {
                 if let Some(_media) = msg.media() {
@@ -503,11 +536,17 @@ impl MessengerClient for TelegramClient {
             .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
 
         let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
+        let chat = dialog.peer();
 
         // Send the message
-        let chat = dialog.peer();
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
         let message = client
-            .send_message(chat, text)
+            .send_message(chat_ref, text)
             .await
             .map_err(|e| MessengerError::Connection(format!("Failed to send message: {}", e)))?;
 
@@ -543,10 +582,16 @@ impl MessengerClient for TelegramClient {
         };
 
         let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
-        // Edit the message
         let chat = dialog.peer();
+        // Edit the message
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
         client
-            .edit_message(chat, message_id, new_text)
+            .edit_message(chat_ref, message_id, new_text)
             .await
             .map_err(|e| MessengerError::Connection(format!("Failed to edit message: {}", e)))?;
 
@@ -580,11 +625,17 @@ impl MessengerClient for TelegramClient {
         };
 
         let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
+        let chat = dialog.peer();
 
         // Delete the message
-        let chat = dialog.peer();
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
         client
-            .delete_messages(chat, &[message_id])
+            .delete_messages(chat_ref, &[message_id])
             .await
             .map_err(|e| MessengerError::Connection(format!("Failed to delete message: {}", e)))?;
 
@@ -659,7 +710,7 @@ impl MessengerClientBuilder for TelegramClientBuilder {
                 //     let _ = std::fs::remove_file(&temp_path); // Try to clean up
                 //     MessengerError::Session(format!("Failed to load session: {}", e))
                 // })?;
-                let session = SqliteSession::open(&session_file).map_err(|e| {
+                let session = SqliteSession::open(session_file).map_err(|e| {
                     MessengerError::Session(format!("Failed to open session: {}", e))
                 })?;
                 // if !session.signed_in() {
@@ -705,8 +756,8 @@ impl MessengerClientBuilder for TelegramClientBuilder {
             .to_string();
         Ok(TelegramClient {
             client: Arc::new(Mutex::new(client)),
-            session: session,
-            api_hash: api_hash,
+            session,
+            api_hash,
             session_store: stored_session_store,
             updates_rx,
             pool_runner_handle,
