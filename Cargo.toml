@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    # "bins/questions-extractor",
     "bins/sdb_server",
     "libs/sdb_api",
     "libs/messanger-inteface",

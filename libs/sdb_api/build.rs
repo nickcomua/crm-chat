@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -28,6 +29,14 @@ fn main() {
     let out_dir_str = out_dir.to_string_lossy().to_string();
     let project_dir_str = project_dir.to_string_lossy().to_string();
 
+    // Use a temporary target directory for the spacetime extraction build
+    // to avoid deadlocking with the main cargo build which holds the lock on target/
+    let temp_dir = tempfile::Builder::new()
+        .prefix("spacetime_target_")
+        .tempdir()
+        .expect("creating spacetime temp target");
+    let temp_target = temp_dir.path();
+
     let status = Command::new("spacetime")
         .args([
             "generate",
@@ -38,6 +47,7 @@ fn main() {
             "--project-path",
             &project_dir_str,
         ])
+        .env("CARGO_TARGET_DIR", temp_target)
         .current_dir(&crate_dir)
         .status();
 

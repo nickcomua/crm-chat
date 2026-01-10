@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 spacetimedb-sdk = "1.10.*"
 hex = "0.4"
+
+[build-dependencies]
+tempfile = "3"

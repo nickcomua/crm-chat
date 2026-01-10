@@ -15,10 +15,10 @@ tokio-stream = "0.1"
 futures = "0.3"
 thiserror = "2"
 base64 = "0.22"
-grammers-client = { git = "https://github.com/Lonami/grammers" }
-grammers-session = { git = "https://github.com/Lonami/grammers" }
-grammers-mtsender = { git = "https://github.com/Lonami/grammers" }
-grammers-tl-types = { git = "https://github.com/Lonami/grammers", features = [
+grammers-client = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
+grammers-session = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
+grammers-mtsender = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e" }
+grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = [
     "impl-serde",
 ] }
 
