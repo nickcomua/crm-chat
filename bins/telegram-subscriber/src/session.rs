@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub type LoginToken = grammers_client::types::LoginToken;
-pub type PasswordToken = grammers_client::types::PasswordToken;
+pub type LoginToken = grammers_client::client::LoginToken;
+pub type PasswordToken = grammers_client::client::PasswordToken;
 
 /// Holds an active Telegram login session during authentication flow.
 pub struct LoginSession {

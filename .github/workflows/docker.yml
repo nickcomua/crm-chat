@@ -2,7 +2,7 @@ name: "docker"
 on:
   push:
     branches:
-      - "WIP"
+      - "ci"
 
 permissions:
   contents: read
@@ -14,6 +14,8 @@ jobs:
       SSH_AUTH_SOCK: /tmp/ssh_agent.sock
     steps:
       - uses: actions/checkout@v5
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@v1.3.1
       - uses: docker/login-action@v3
         with:
           username: nick395
@@ -22,15 +24,84 @@ jobs:
         id: read_version
         with:
           file: "Cargo.toml"
-          field: "package.version"
+          field: "workspace.package.version"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-platforms = aarch64-linux
+            extra-system-features = nixos-test benchmark big-parallel kvm
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: cachix/cachix-action@v16
         with:
           name: nickcomua
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - name: Build and push Docker image
-        run: | 
-          nix build --accept-flake-config .\#chat-scope-img.x86_64-linux --print-build-logs 
+
+      - name: Build and push telegram-subscriber (multi-arch)
+        run: |
+          set -e
+          VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
+
+          # Build x86_64-linux
+          nix build --accept-flake-config .#packages.x86_64-linux.telegram-subscriber-img --print-build-logs
           ./result | docker image load
-          docker tag nick395/chat-scope:latest nick395/chat-scope:${{ steps.read_version.outputs.value }}-${{ github.run_number }}
-          docker push nick395/chat-scope --all-tags
+          docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-amd64
+          docker push nick395/telegram-subscriber:${VERSION_TAG}-amd64
+
+          # Build aarch64-linux
+          nix build --accept-flake-config .#packages.aarch64-linux.telegram-subscriber-img --print-build-logs
+          ./result | docker image load
+          docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-arm64
+          docker push nick395/telegram-subscriber:${VERSION_TAG}-arm64
+
+          # Create and push manifest
+          docker manifest create --amend nick395/telegram-subscriber:latest \
+            nick395/telegram-subscriber:${VERSION_TAG}-amd64 \
+            nick395/telegram-subscriber:${VERSION_TAG}-arm64
+          docker manifest create --amend nick395/telegram-subscriber:${VERSION_TAG} \
+            nick395/telegram-subscriber:${VERSION_TAG}-amd64 \
+            nick395/telegram-subscriber:${VERSION_TAG}-arm64
+
+          docker manifest push nick395/telegram-subscriber:latest
+          docker manifest push nick395/telegram-subscriber:${VERSION_TAG}
+
+      - name: Build and push crm-chat-web (multi-arch)
+        run: |
+          set -e
+          VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
+
+          # Build x86_64-linux
+          nix build --impure --accept-flake-config --print-build-logs \
+            --argstr VITE_CLERK_PUBLISHABLE_KEY "${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
+            --argstr VITE_SPACETIMEDB_HOST "${{ vars.VITE_SPACETIMEDB_HOST }}" \
+            --argstr VITE_SPACETIMEDB_MODULE "${{ vars.VITE_SPACETIMEDB_MODULE }}" \
+            --expr 'args: (builtins.getFlake "path:.").packages.x86_64-linux.crm-chat-web-img.override args'
+          ./result | docker image load
+          docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-amd64
+          docker push nick395/crm-chat-web:${VERSION_TAG}-amd64
+
+          # Build aarch64-linux
+          nix build --impure --accept-flake-config --print-build-logs \
+            --argstr VITE_CLERK_PUBLISHABLE_KEY "${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
+            --argstr VITE_SPACETIMEDB_HOST "${{ vars.VITE_SPACETIMEDB_HOST }}" \
+            --argstr VITE_SPACETIMEDB_MODULE "${{ vars.VITE_SPACETIMEDB_MODULE }}" \
+            --expr 'args: (builtins.getFlake "path:.").packages.aarch64-linux.crm-chat-web-img.override args'
+          ./result | docker image load
+          docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-arm64
+          docker push nick395/crm-chat-web:${VERSION_TAG}-arm64
+
+          # Create and push manifest
+          docker manifest create --amend nick395/crm-chat-web:latest \
+            nick395/crm-chat-web:${VERSION_TAG}-amd64 \
+            nick395/crm-chat-web:${VERSION_TAG}-arm64
+          docker manifest create --amend nick395/crm-chat-web:${VERSION_TAG} \
+            nick395/crm-chat-web:${VERSION_TAG}-amd64 \
+            nick395/crm-chat-web:${VERSION_TAG}-arm64
+
+          docker manifest push nick395/crm-chat-web:latest
+          docker manifest push nick395/crm-chat-web:${VERSION_TAG}

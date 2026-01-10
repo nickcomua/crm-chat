@@ -42,7 +42,7 @@ impl SessionStore for JsonSessionStore {
 
     async fn save(&self, session: &JsonValue) -> Result<(), MessengerError> {
         *self.data.lock().await = Some(session.clone());
-        Ok(())  
+        Ok(())
     }
 
     async fn delete(&self) -> Result<(), MessengerError> {

@@ -8,17 +8,17 @@
 
     flake-utils.url = "github:numtide/flake-utils";
 
-    # spacetimedb.url = "github:clockworklabs/SpacetimeDB/refs/tags/v1.11.1";
+    # spacetimedb.url = "github:clockworklabs/SpacetimeDB/refs/tags/v1.10.0";
 
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
     };
 
-    sccache = {
-      url = "github:mozilla/sccache";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    # sccache = {
+    #   url = "github:mozilla/sccache";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
 
     # Child flakes
     crm-chat-web = {
@@ -34,8 +34,9 @@
     crane,
     flake-utils,
     advisory-db,
-    sccache,
+    # sccache,
     crm-chat-web,
+    # spacetimedb,
     ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -43,11 +44,17 @@
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
-          overlays = [ sccache.overlays.default ];
+          # overlays = [ sccache.overlays.default ];
         };
 
-        inherit (pkgs) lib;
+        # spacetimedbPkg =
+        #   if pkgs.stdenv.isDarwin
+        #   then import ./nix/spacetimedb.nix {inherit pkgs system;}
+        #   else spacetimedb.packages.${system}.spacetime;
 
+        spacetimedbPkg = import ./nix/spacetimedb.nix {inherit pkgs system;};
+
+        inherit (pkgs) lib;
         craneLib = crane.mkLib pkgs;
         src = craneLib.cleanCargoSource ./.;
 
@@ -61,153 +68,178 @@
             pkgs.gtk4.dev
             pkgs.gtk3.dev
             pkgs.llvmPackages.libclang
+            pkgs.lld
+            spacetimedbPkg
           ];
 
           buildInputs =
             [
+              pkgs.openssl
               # Add additional build inputs here
               pkgs.gtk3
-              pkgs.webkitgtk_4_1
+              # pkgs.webkitgtk_4_1
               pkgs.libsoup_3
               pkgs.cairo
-              pkgs.sccache
+              pkgs.lld
+              pkgs.sqlite
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
               # Additional darwin specific inputs can be set here
               pkgs.libiconv
             ];
 
-          # Additional environment variables can be set directly
-          RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
+          SPACETIMEDB_NIX_BUILD_GIT_COMMIT = self.rev or "development";
+          XDG_CONFIG_HOME = "/tmp/config";
+          XDG_DATA_HOME = "/tmp/data";
         };
 
-        # Build *just* the cargo dependencies, so we can reuse
-        # all of that work (e.g. via cachix) when running in CI
+        # Dependency caching is disabled only for Darwin-to-Linux remote builds
+        # to avoid a known source builder permission bug in crane.
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        # cargoArtifacts = null;
 
-        # Build the actual crate itself, reusing the dependency
-        # artifacts from above.
-        chat-scope = craneLib.buildPackage (
+        # Build telegram-subscriber binary
+        telegram-subscriber = craneLib.buildPackage (
           commonArgs
           // {
             inherit cargoArtifacts;
+            cargoExtraArgs = "-p telegram-subscriber";
           }
         );
+
+        # Build crm-chat-web static files
+        crm-chat-web = (pkgs.lib.makeOverridable (
+          {
+            VITE_CLERK_PUBLISHABLE_KEY ? "",
+            VITE_SPACETIMEDB_HOST ? "",
+            VITE_SPACETIMEDB_MODULE ? "",
+            ...
+          }:
+            pkgs.stdenv.mkDerivation {
+              name = "crm-chat-web";
+              src = ./bins/crm-chat-web;
+              nativeBuildInputs = [pkgs.bun];
+
+              # Pass variables to build environment
+              inherit VITE_CLERK_PUBLISHABLE_KEY VITE_SPACETIMEDB_HOST VITE_SPACETIMEDB_MODULE;
+
+              buildPhase = ''
+                export HOME=$(mktemp -d)
+
+                # Inject variables (must be set via --argstr or environment)
+                export VITE_CLERK_PUBLISHABLE_KEY="${VITE_CLERK_PUBLISHABLE_KEY}"
+                export VITE_SPACETIMEDB_HOST="${VITE_SPACETIMEDB_HOST}"
+                export VITE_SPACETIMEDB_MODULE="${VITE_SPACETIMEDB_MODULE}"
+
+                bun install --frozen-lockfile
+                bun run build
+              '';
+
+              installPhase = ''
+                mkdir -p $out
+                cp -r dist/* $out/
+              '';
+            }
+        )) {};
+
+        # nginx config for serving crm-chat-web
+        nginxConf = pkgs.writeText "nginx.conf" ''
+          worker_processes 1;
+          error_log /dev/stderr;
+          pid /tmp/nginx.pid;
+          events { worker_connections 1024; }
+          http {
+            include ${pkgs.nginx}/conf/mime.types;
+            default_type application/octet-stream;
+            access_log /dev/stdout;
+            sendfile on;
+            keepalive_timeout 65;
+            server {
+              listen 80;
+              root /var/www;
+              index index.html;
+              location / {
+                try_files $uri $uri/ /index.html;
+              }
+            }
+          }
+        '';
+
       in {
-        checks = {
-          # Build the crate as part of `nix flake check` for convenience
-          inherit chat-scope;
-
-          # Run clippy (and deny all warnings) on the crate source,
-          # again, reusing the dependency artifacts from above.
-          #
-          # Note that this is done as a separate derivation so that
-          # we can block the CI if there are issues here, but not
-          # prevent downstream consumers from building our crate by itself.
-          chat-scope-clippy = craneLib.cargoClippy (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-            }
-          );
-
-          chat-scope-doc = craneLib.cargoDoc (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              # This can be commented out or tweaked as necessary, e.g. set to
-              # `--deny rustdoc::broken-intra-doc-links` to only enforce that lint
-              env.RUSTDOCFLAGS = "--deny warnings";
-            }
-          );
-
-          # Check formatting
-          chat-scope-fmt = craneLib.cargoFmt {
-            inherit src;
-          };
-
-          chat-scope-toml-fmt = craneLib.taploFmt {
-            src = pkgs.lib.sources.sourceFilesBySuffices src [".toml"];
-            # taplo arguments can be further customized below as needed
-            # taploExtraArgs = "--config ./taplo.toml";
-          };
-
-          # Audit dependencies
-          chat-scope-audit = craneLib.cargoAudit {
-            inherit src advisory-db;
-          };
-
-          # Audit licenses
-          chat-scope-deny = craneLib.cargoDeny {
-            inherit src;
-          };
-
-          # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on `chat-scope` if you do not want
-          # the tests to run twice
-          chat-scope-nextest = craneLib.cargoNextest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              partitions = 1;
-              partitionType = "count";
-              cargoNextestPartitionsExtraArgs = "--no-tests=pass";
-            }
-          );
-        };
-
         packages = {
-          default = chat-scope;
-          chat-scope-img = pkgs.dockerTools.streamLayeredImage {
-            name = "nick395/chat-scope";
+          default = telegram-subscriber;
+          inherit telegram-subscriber crm-chat-web spacetimedbPkg;
+          spacetimedb = spacetimedbPkg;
+
+          telegram-subscriber-img = pkgs.dockerTools.streamLayeredImage {
+            name = "nick395/telegram-subscriber";
             tag = "latest";
-            contents = [chat-scope];
+            contents = [telegram-subscriber pkgs.cacert];
 
             config = {
-              Cmd = ["/bin/chat-scope"];
+              Cmd = ["/bin/telegram-subscriber"];
             };
           };
-        };
 
-        apps.default = {
-          type = "app";
-          program = "${chat-scope}/bin/crm-chat";
-          meta.description = "CRM Chat application";
+          crm-chat-web-img = (pkgs.lib.makeOverridable ({ ... } @ args:
+            pkgs.dockerTools.streamLayeredImage {
+              name = "nick395/crm-chat-web";
+              tag = "latest";
+              contents = [
+                pkgs.nginx
+                pkgs.fakeNss
+                (pkgs.writeTextDir "etc/nginx/nginx.conf" (builtins.readFile nginxConf))
+                (pkgs.runCommand "www" {} ''
+                  mkdir -p $out/var/www
+                  cp -r ${(crm-chat-web.override args)}/* $out/var/www/
+                '')
+              ];
+
+              config = {
+                Cmd = ["${pkgs.nginx}/bin/nginx" "-c" "/etc/nginx/nginx.conf" "-g" "daemon off;"];
+                ExposedPorts = {
+                  "80/tcp" = {};
+                };
+              };
+            }
+          )) {};
         };
 
         devShells.default = craneLib.devShell {
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
-
+          SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
-            export PATH=/home/nick/.opencode/bin:$PATH
+            export PATH="$HOME/.opencode/bin:$PATH"
           '';
           
-          # Inherit from chat-scope and all child flake dev shells
-          inputsFrom = [
-            chat-scope
-            crm-chat-web.devShells.${system}.default
-          ];
+          # Inherit from all child flake dev shells
+          # inputsFrom = [
+          #   crm-chat-web.devShells.${system}.default
+          # ];
 
           # Extra inputs (only used for interactive development)
           # can be added here; cargo and rustc are provided by default.
           packages = with pkgs; [
             cargo-audit
             cargo-watch
-            openssl
-            gtk3.dev
-            gtk4.dev
-            webkitgtk_4_1
+            gtk3
+            gtk4
+            # webkitgtk_4_1
             biome
-            # spacetimedb.packages.${system}.spacetime
-            spacetimedb
+            # spacetimedb - temporarily removed due to hash mismatch in nixpkgs
+            # Install via: brew install clockworklabs/tap/spacetime
             pkg-config
             llvmPackages.libclang
             libsoup_3
+            pkgs.lld
             cairo
+            sqlite
+            pkgs.sccache
+          ] ++ [
+            spacetimedbPkg
           ];
         };
       }

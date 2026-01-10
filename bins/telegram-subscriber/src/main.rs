@@ -40,9 +40,13 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<ClientEvent>();
 
     let conn = DbConnection::builder()
-        .with_module_name(env!("VITE_SPACETIMEDB_MODULE"))
-        .with_uri(env!("VITE_SPACETIMEDB_HOST"))
-        .with_token(env!("DIRTY_TOKEN").into())
+        .with_module_name(
+            env::var("VITE_SPACETIMEDB_MODULE").expect("VITE_SPACETIMEDB_MODULE must be set"),
+        )
+        .with_uri(env::var("VITE_SPACETIMEDB_HOST").expect("VITE_SPACETIMEDB_HOST must be set"))
+        .with_token(Some(
+            env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set"),
+        ))
         .build()
         .expect("Failed to connect");
 

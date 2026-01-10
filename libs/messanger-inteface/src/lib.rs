@@ -148,7 +148,10 @@ mod tests {
 
     #[async_trait]
     impl MessengerClient for MockMessengerClient {
-        async fn login<'callback, F, Fut>(&self, _question_callback: F) -> Result<(), MessengerError>
+        async fn login<'callback, F, Fut>(
+            &self,
+            _question_callback: F,
+        ) -> Result<(), MessengerError>
         where
             F: Send + Sync + Fn(String) -> Fut + 'callback,
             Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
@@ -170,7 +173,10 @@ mod tests {
             Ok(Box::pin(stream))
         }
 
-        async fn get_messages_count(&self, chat_external_id: &ExternalId) -> Result<usize, MessengerError> {
+        async fn get_messages_count(
+            &self,
+            chat_external_id: &ExternalId,
+        ) -> Result<usize, MessengerError> {
             let messages = self
                 .messages
                 .lock()

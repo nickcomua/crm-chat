@@ -43,7 +43,10 @@ pub async fn process_client(
             handle_waiting_phone(conn, client, phone, sessions, config).await;
         }
         ClientStatus::WaitingCode(Some(code)) => {
-            println!("Client {}({}) verifying code", client.id, client.external_id);
+            println!(
+                "Client {}({}) verifying code",
+                client.id, client.external_id
+            );
             handle_waiting_code(conn, client, code, sessions).await;
         }
         ClientStatus::WaitingPassword(Some(password)) => {

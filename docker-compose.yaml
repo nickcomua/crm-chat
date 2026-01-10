@@ -1,0 +1,52 @@
+services:
+  spacetimedb:
+    image: clockworklabs/spacetime:v1.10.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - spacetimedb-data:/stdb
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/v1/ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    command: [ "start" ]
+
+  spacetimedb-deploy:
+    image: clockworklabs/spacetime:v1.10.0
+    depends_on:
+      spacetimedb:
+        condition: service_healthy
+    volumes:
+      - ./bins/sdb_server:/module-src:ro
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - |
+        cp -r /module-src /tmp/module
+        spacetime server add docker --url http://spacetimedb:3000 --default || true
+        spacetime publish --server docker --project-path /tmp/module crm-chat --yes || spacetime publish --server docker --project-path /tmp/module crm-chat --clear-database --yes
+    restart: "no"
+
+  # telegram-subscriber:
+  #   image: nick395/telegram-subscriber:latest
+  #   depends_on:
+  #     spacetimedb-deploy:
+  #       condition: service_completed_successfully
+  #   environment:
+  #     - SPACETIMEDB_URI=http://spacetimedb:3000
+  #     - SPACETIMEDB_MODULE=crm-chat
+  #     - TG_ID=${TG_ID}
+  #     - TG_HASH=${TG_HASH}
+  #     # Add additional TG_API_ID_*, TG_API_HASH_*, TG_SESSION_FILE_* as needed
+
+  # crm-chat-web:
+  #   image: nick395/crm-chat-web:latest
+  #   ports:
+  #     - "8080:80"
+  #   depends_on:
+  #     spacetimedb-deploy:
+  #       condition: service_completed_successfully
+
+volumes:
+  spacetimedb-data: {}
