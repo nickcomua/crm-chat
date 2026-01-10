@@ -19,6 +19,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::{self as stream};
 
+use tokio::task::JoinHandle;
+
 /// Telegram client implementation of the MessengerClient trait.
 pub struct TelegramClient {
     client: Arc<Mutex<Client>>,
@@ -28,6 +30,8 @@ pub struct TelegramClient {
     #[allow(dead_code)]
     session_store: Option<Arc<dyn SessionStore + Send + Sync>>,
     updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
+    #[allow(dead_code)]
+    pool_runner_handle: JoinHandle<()>,
 }
 
 impl TelegramClient {
@@ -39,8 +43,12 @@ impl TelegramClient {
 }
 
 impl TelegramClient {
-    async fn get_dialog(&self, chat_external_id: &ExternalId) -> Result<Dialog, MessengerError> {
-        let client = self.client.lock().await;
+    /// Find a dialog by external ID using an already-locked client.
+    /// This is used internally to avoid deadlocks when the caller already holds the lock.
+    async fn find_dialog_with_client(
+        client: &Client,
+        chat_external_id: &ExternalId,
+    ) -> Result<Dialog, MessengerError> {
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
@@ -49,10 +57,14 @@ impl TelegramClient {
                 break;
             }
         }
-        let dialog = found_dialog.ok_or_else(|| {
+        found_dialog.ok_or_else(|| {
             MessengerError::NotFound(format!("Chat not found: {}", chat_external_id))
-        })?;
-        Ok(dialog)
+        })
+    }
+
+    async fn get_dialog(&self, chat_external_id: &ExternalId) -> Result<Dialog, MessengerError> {
+        let client = self.client.lock().await;
+        Self::find_dialog_with_client(&client, chat_external_id).await
     }
 }
 
@@ -183,7 +195,7 @@ impl MessengerClient for TelegramClient {
         let mut messages_vec = Vec::new();
         {
             let client = client_arc.lock().await;
-            let dialog = self.get_dialog(chat_external_id).await?;
+            let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
 
             // Keep dialog alive while we use its chat
             let chat = dialog.peer();
@@ -490,7 +502,7 @@ impl MessengerClient for TelegramClient {
             .parse()
             .map_err(|e| MessengerError::Serialization(format!("Invalid chat ID: {}", e)))?;
 
-        let dialog = self.get_dialog(chat_external_id).await?;
+        let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
 
         // Send the message
         let chat = dialog.peer();
@@ -530,7 +542,7 @@ impl MessengerClient for TelegramClient {
                 .map_err(|e| MessengerError::Serialization(format!("Invalid message ID: {}", e)))?
         };
 
-        let dialog = self.get_dialog(chat_external_id).await?;
+        let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
         // Edit the message
         let chat = dialog.peer();
         client
@@ -567,7 +579,7 @@ impl MessengerClient for TelegramClient {
                 .map_err(|e| MessengerError::Serialization(format!("Invalid message ID: {}", e)))?
         };
 
-        let dialog = self.get_dialog(chat_external_id).await?;
+        let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
 
         // Delete the message
         let chat = dialog.peer();
@@ -675,6 +687,7 @@ impl MessengerClientBuilder for TelegramClientBuilder {
         let updates_rx = Arc::new(Mutex::new(Some(updates_rx)));
 
         let client = Client::new(&pool);
+        let pool_runner_handle = tokio::spawn(pool.runner.run());
 
         // Store the session store if provided
         let stored_session_store = session_store
@@ -696,6 +709,7 @@ impl MessengerClientBuilder for TelegramClientBuilder {
             api_hash: api_hash,
             session_store: stored_session_store,
             updates_rx,
+            pool_runner_handle,
         })
     }
 }
