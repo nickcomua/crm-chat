@@ -15,6 +15,11 @@
       flake = false;
     };
 
+    sccache = {
+      url = "github:mozilla/sccache";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Child flakes
     crm-chat-web = {
       url = "path:./bins/crm-chat-web";
@@ -29,6 +34,7 @@
     crane,
     flake-utils,
     advisory-db,
+    sccache,
     crm-chat-web,
     ...
   } @ inputs:
@@ -37,6 +43,7 @@
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
+          overlays = [ sccache.overlays.default ];
         };
 
         inherit (pkgs) lib;
@@ -63,6 +70,7 @@
               pkgs.webkitgtk_4_1
               pkgs.libsoup_3
               pkgs.cairo
+              pkgs.sccache
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
               # Additional darwin specific inputs can be set here
@@ -70,7 +78,7 @@
             ];
 
           # Additional environment variables can be set directly
-          # MY_CUSTOM_VAR = "some value";
+          RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
         };
 
         # Build *just* the cargo dependencies, so we can reuse
@@ -171,6 +179,7 @@
         devShells.default = craneLib.devShell {
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
 
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
