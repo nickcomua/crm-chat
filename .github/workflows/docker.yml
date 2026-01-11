@@ -14,8 +14,7 @@ jobs:
       SSH_AUTH_SOCK: /tmp/ssh_agent.sock
     steps:
       - uses: actions/checkout@v5
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@v1.3.1
+      # - uses: jlumbroso/free-disk-space@v1.3.1
       - uses: docker/login-action@v3
         with:
           username: nick395
@@ -36,7 +35,7 @@ jobs:
           extra_nix_config: |
             extra-platforms = aarch64-linux
             extra-system-features = nixos-test benchmark big-parallel kvm
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: cachix/cachix-action@v16
         with:
           name: nickcomua
