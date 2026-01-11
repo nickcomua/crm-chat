@@ -104,6 +104,7 @@
           // {
             inherit cargoArtifacts;
             cargoExtraArgs = "-p telegram-subscriber";
+            DIRTY_IDENTITY = "github-actions[bot]";
           }
         );
 
@@ -117,7 +118,7 @@
           }:
             pkgs.stdenv.mkDerivation {
               name = "crm-chat-web";
-              src = ./bins/crm-chat-web;
+              src = pkgs.lib.cleanSource ./bins/crm-chat-web;
               nativeBuildInputs = [pkgs.bun];
 
               # Pass variables to build environment
@@ -126,7 +127,7 @@
               buildPhase = ''
                 export HOME=$(mktemp -d)
 
-                # Inject variables (must be set via --argstr or environment)
+                # Inject variables (already inherited as env vars, but explicit here for clarity)
                 export VITE_CLERK_PUBLISHABLE_KEY="${VITE_CLERK_PUBLISHABLE_KEY}"
                 export VITE_SPACETIMEDB_HOST="${VITE_SPACETIMEDB_HOST}"
                 export VITE_SPACETIMEDB_MODULE="${VITE_SPACETIMEDB_MODULE}"
@@ -143,7 +144,7 @@
         )) {};
 
         # nginx config for serving crm-chat-web
-        nginxConf = pkgs.writeText "nginx.conf" ''
+        nginxConfContent = ''
           worker_processes 1;
           error_log /dev/stderr;
           pid /tmp/nginx.pid;
@@ -181,14 +182,14 @@
             };
           };
 
-          crm-chat-web-img = (pkgs.lib.makeOverridable ({ ... } @ args:
+          crm-chat-web-img = (pkgs.lib.makeOverridable (args:
             pkgs.dockerTools.streamLayeredImage {
               name = "nick395/crm-chat-web";
               tag = "latest";
               contents = [
                 pkgs.nginx
                 pkgs.fakeNss
-                (pkgs.writeTextDir "etc/nginx/nginx.conf" (builtins.readFile nginxConf))
+                (pkgs.writeTextDir "etc/nginx/nginx.conf" nginxConfContent)
                 (pkgs.runCommand "www" {} ''
                   mkdir -p $out/var/www
                   cp -r ${(crm-chat-web.override args)}/* $out/var/www/
