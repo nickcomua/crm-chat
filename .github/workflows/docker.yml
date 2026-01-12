@@ -41,6 +41,9 @@ jobs:
           name: nickcomua
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
+      - name: Nix flake check
+        run: nix flake check --accept-flake-config
+
       - name: Build and push telegram-subscriber (multi-arch)
         run: |
           set -e
@@ -48,13 +51,13 @@ jobs:
 
           # Build x86_64-linux
           nix build --accept-flake-config .#packages.x86_64-linux.telegram-subscriber-img --print-build-logs
-          ./result | docker image load
+          docker load < ./result
           docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-amd64
           docker push nick395/telegram-subscriber:${VERSION_TAG}-amd64
 
           # Build aarch64-linux
           nix build --accept-flake-config .#packages.aarch64-linux.telegram-subscriber-img --print-build-logs
-          ./result | docker image load
+          docker load < ./result
           docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-arm64
           docker push nick395/telegram-subscriber:${VERSION_TAG}-arm64
 
@@ -75,22 +78,14 @@ jobs:
           VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
 
           # Build x86_64-linux
-          nix build --impure --accept-flake-config --print-build-logs \
-            --argstr VITE_CLERK_PUBLISHABLE_KEY "${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
-            --argstr VITE_SPACETIMEDB_HOST "${{ vars.VITE_SPACETIMEDB_HOST }}" \
-            --argstr VITE_SPACETIMEDB_MODULE "${{ vars.VITE_SPACETIMEDB_MODULE }}" \
-            --expr 'args: (builtins.getFlake "path:.").packages.x86_64-linux.crm-chat-web-img.override args'
-          ./result | docker image load
+          nix build --accept-flake-config .#packages.x86_64-linux.crm-chat-web-img --print-build-logs
+          docker load < ./result
           docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-amd64
           docker push nick395/crm-chat-web:${VERSION_TAG}-amd64
 
           # Build aarch64-linux
-          nix build --impure --accept-flake-config --print-build-logs \
-            --argstr VITE_CLERK_PUBLISHABLE_KEY "${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}" \
-            --argstr VITE_SPACETIMEDB_HOST "${{ vars.VITE_SPACETIMEDB_HOST }}" \
-            --argstr VITE_SPACETIMEDB_MODULE "${{ vars.VITE_SPACETIMEDB_MODULE }}" \
-            --expr 'args: (builtins.getFlake "path:.").packages.aarch64-linux.crm-chat-web-img.override args'
-          ./result | docker image load
+          nix build --accept-flake-config .#packages.aarch64-linux.crm-chat-web-img --print-build-logs
+          docker load < ./result
           docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-arm64
           docker push nick395/crm-chat-web:${VERSION_TAG}-arm64
 

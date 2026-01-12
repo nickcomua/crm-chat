@@ -26,7 +26,7 @@ fn update_client_status(conn: &DbConnection, client: &DbClient, status: ClientSt
     let updated_client = DbClient {
         id: client.id,
         owner_user_id: client.owner_user_id,
-        kind: client.kind.clone(),
+        kind: client.kind,
         external_id: client.external_id.clone(),
         active_chats: client.active_chats.clone(),
         status,
@@ -48,7 +48,7 @@ fn update_client_with_session(
     let updated_client = DbClient {
         id: client.id,
         owner_user_id: client.owner_user_id,
-        kind: client.kind.clone(),
+        kind: client.kind,
         external_id: client.external_id.clone(),
         active_chats: client.active_chats.clone(),
         status,
@@ -110,6 +110,8 @@ pub async fn handle_waiting_phone(
     };
 
     // Start the sender pool runner
+    // TODO fix this warning
+    #[allow(clippy::let_underscore_future)]
     let _ = tokio::spawn(pool.runner.run());
 
     // Check authorization with timeout
@@ -265,25 +267,25 @@ pub async fn handle_waiting_password(
     let mut sessions_guard = sessions.lock().await;
 
     // Check if we have an active session with a password token
-    if let Some(session) = sessions_guard.get_mut(&client.id) {
-        if let Some(password_token) = session.password_token.take() {
-            match session
-                .client
-                .check_password(password_token, password)
-                .await
-            {
-                Ok(_user) => {
-                    println!("Client {} password verified, connected", client.id);
-                    drop(sessions_guard);
-                    update_client_status(conn, client, ClientStatus::Connected);
-                    return;
-                }
-                Err(e) => {
-                    eprintln!("Failed to check password: {}", e);
-                    drop(sessions_guard);
-                    update_client_status(conn, client, ClientStatus::WaitingPassword(None));
-                    return;
-                }
+    if let Some(session) = sessions_guard.get_mut(&client.id)
+        && let Some(password_token) = session.password_token.take()
+    {
+        match session
+            .client
+            .check_password(password_token, password)
+            .await
+        {
+            Ok(_user) => {
+                println!("Client {} password verified, connected", client.id);
+                drop(sessions_guard);
+                update_client_status(conn, client, ClientStatus::Connected);
+                return;
+            }
+            Err(e) => {
+                eprintln!("Failed to check password: {}", e);
+                drop(sessions_guard);
+                update_client_status(conn, client, ClientStatus::WaitingPassword(None));
+                return;
             }
         }
     }

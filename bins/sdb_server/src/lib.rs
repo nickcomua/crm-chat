@@ -224,9 +224,15 @@ pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {
         .ok_or("Authentication required".to_string())?;
     log::info!("trying to loggin identity: {:?}", ctx.sender);
     // if jwt.issuer() != "https://noted-rabbit-14.clerk.accounts.dev" {
-    if &jwt.issuer() == &"localhost" {
+    if jwt.issuer() == "localhost" {
         if ctx.sender
-            != Identity::from_str(env!("DIRTY_IDENTITY")).expect("Invalid identity env")
+            != Identity::from_str(
+                #[allow(clippy::option_env_unwrap)]
+                // DIRTY_IDENTITY env should be in a build time. option_env only for ci
+                option_env!("DIRTY_IDENTITY")
+                    .expect("DIRTY_IDENTITY env should be in a build time. option_env only for ci"),
+            )
+            .expect("Invalid identity env")
         {
             return Err("Invalid identity".to_string());
         }
@@ -294,22 +300,20 @@ pub fn identity_disconnected(ctx: &ReducerContext) {
             updated_at: ctx.timestamp,
             ..user
         });
+    } else if let Some(robot) = ctx.db.robot().id().find(ctx.sender) {
+        ctx.db.robot().id().update(Robot {
+            id: ctx.sender,
+            online: false,
+            updated_at: ctx.timestamp,
+            ..robot
+        });
     } else {
-        if let Some(robot) = ctx.db.robot().id().find(ctx.sender) {
-            ctx.db.robot().id().update(Robot {
-                id: ctx.sender,
-                online: false,
-                updated_at: ctx.timestamp,
-                ..robot
-            });
-        } else {
-            // This branch should be unreachable,
-            // as it doesn't make sense for a client to disconnect without connecting first.
-            log::warn!(
-                "Disconnect event for unknown user with identity {:?}",
-                ctx.sender
-            );
-        }
+        // This branch should be unreachable,
+        // as it doesn't make sense for a client to disconnect without connecting first.
+        log::warn!(
+            "Disconnect event for unknown user with identity {:?}",
+            ctx.sender
+        );
     }
 }
 
