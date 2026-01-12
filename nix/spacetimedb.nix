@@ -55,6 +55,9 @@ pkgs.stdenv.mkDerivation {
       cp spacetime $out/bin/spacetime
     elif [ -f spacetimedb-cli ]; then
       cp spacetimedb-cli $out/bin/spacetime
+    else
+      echo "ERROR: No spacetime CLI binary found in archive"
+      exit 1
     fi
 
     if [ -f spacetimedb-standalone ]; then
@@ -66,7 +69,7 @@ pkgs.stdenv.mkDerivation {
   meta = with pkgs.lib; {
     description = "SpacetimeDB CLI";
     homepage = "https://spacetimedb.com";
-    license = licenses.bsl11;
+    # license = licenses.bsl11;
     platforms = [ "aarch64-darwin" "x86_64-darwin" "x86_64-linux" "aarch64-linux" ];
   };
 }

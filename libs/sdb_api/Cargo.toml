@@ -2,10 +2,12 @@
 name = "sdb_api"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
-spacetimedb-sdk = "1.10.*"
+hack = { version = "0.1", path = "../hack" }
 hex = "0.4"
+spacetimedb-sdk = "1.10.*"
 
 [build-dependencies]
 tempfile = "3"

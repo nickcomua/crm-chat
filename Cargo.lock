@@ -893,6 +893,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "hack"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bitflags",
+ "chrono",
+ "digest",
+ "form_urlencoded",
+ "futures-channel",
+ "futures-core",
+ "futures-sink",
+ "getrandom 0.2.16",
+ "getrandom 0.3.4",
+ "hashbrown 0.16.1",
+ "libc",
+ "memchr",
+ "num-traits",
+ "once_cell",
+ "percent-encoding",
+ "proc-macro2",
+ "quote",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "serde_core",
+ "serde_json",
+ "smallvec",
+ "spacetimedb-lib",
+ "spacetimedb-sats",
+ "syn",
+ "tokio",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1397,6 +1430,7 @@ dependencies = [
  "async-trait",
  "erased-serde",
  "futures",
+ "hack",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -1415,6 +1449,7 @@ dependencies = [
  "grammers-mtsender",
  "grammers-session",
  "grammers-tl-types",
+ "hack",
  "messanger-inteface",
  "serde",
  "serde_json",
@@ -2222,9 +2257,22 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sdb_api"
 version = "0.1.0"
 dependencies = [
+ "hack",
  "hex",
  "spacetimedb-sdk",
  "tempfile",
+]
+
+[[package]]
+name = "sdb_server"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "log",
+ "phonelib",
+ "serde",
+ "serde_json",
+ "spacetimedb",
 ]
 
 [[package]]
@@ -2476,18 +2524,6 @@ checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "spacetime-module"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "log",
- "phonelib",
- "serde",
- "serde_json",
- "spacetimedb",
 ]
 
 [[package]]
@@ -2791,6 +2827,7 @@ dependencies = [
  "grammers-client",
  "grammers-mtsender",
  "grammers-session",
+ "hack",
  "jsonwebtoken",
  "messanger-telegram",
  "reqwest",

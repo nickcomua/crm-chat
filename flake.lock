@@ -31,7 +31,7 @@
         "type": "github"
       }
     },
-    "crm-chat-web": {
+    "crm-chat-web-app": {
       "inputs": {
         "flake-utils": [
           "flake-utils"
@@ -88,7 +88,7 @@
       "inputs": {
         "advisory-db": "advisory-db",
         "crane": "crane",
-        "crm-chat-web": "crm-chat-web",
+        "crm-chat-web-app": "crm-chat-web-app",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }
