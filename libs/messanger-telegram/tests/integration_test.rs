@@ -806,7 +806,7 @@ async fn test_get_messages_count() {
             delta, initial_count, new_count
         );
         assert!(
-            new_count >= initial_count + 1,
+            new_count > initial_count,
             "Expected Saved Messages count to increase by at least 1 after sending a test message"
         );
 

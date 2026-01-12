@@ -358,12 +358,7 @@ mod tests {
             },
         ];
 
-        let mut stream = stream::iter(
-            chats
-                .clone()
-                .into_iter()
-                .map(|c| Ok::<_, MessengerError>(c)),
-        );
+        let mut stream = stream::iter(chats.clone().into_iter().map(Ok::<_, MessengerError>));
         assert_eq!(stream.next().await.unwrap().unwrap(), chats[0]);
         assert_eq!(stream.next().await.unwrap().unwrap(), chats[1]);
         assert!(stream.next().await.is_none());
@@ -390,12 +385,7 @@ mod tests {
             },
         ];
 
-        let mut stream = stream::iter(
-            messages
-                .clone()
-                .into_iter()
-                .map(|m| Ok::<_, MessengerError>(m)),
-        );
+        let mut stream = stream::iter(messages.clone().into_iter().map(Ok::<_, MessengerError>));
         assert_eq!(stream.next().await.unwrap().unwrap(), messages[0]);
         assert_eq!(stream.next().await.unwrap().unwrap(), messages[1]);
         assert!(stream.next().await.is_none());

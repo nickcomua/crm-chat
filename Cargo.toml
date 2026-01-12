@@ -1,10 +1,11 @@
 [workspace]
 members = [
-    "bins/sdb_server",
-    "libs/sdb_api",
-    "libs/messanger-inteface",
-    "libs/messanger-telegram",
-    "bins/telegram-subscriber",
+  "bins/sdb_server",
+  "libs/hack",
+  "libs/sdb_api",
+  "libs/messanger-inteface",
+  "libs/messanger-telegram",
+  "bins/telegram-subscriber",
 ]
 resolver = "3"
 

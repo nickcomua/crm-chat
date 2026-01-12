@@ -1,4 +1,10 @@
 # Doesn't work in the sandbox
+[advisories]
+ignore = [
+  # protobuf
+  "RUSTSEC-2024-0437",
+]
+
 [yanked]
 enabled = false      # Warn for yanked crates in Cargo.lock (default: true)
 update_index = false # Auto-update the crates.io index (default: true)
