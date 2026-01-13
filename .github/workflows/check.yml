@@ -1,0 +1,29 @@
+name: "check"
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-platforms = aarch64-linux
+            extra-system-features = nixos-test benchmark big-parallel kvm
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: nickcomua
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Nix flake check
+        run: nix flake check --accept-flake-config
