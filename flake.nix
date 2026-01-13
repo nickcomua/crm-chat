@@ -8,6 +8,11 @@
 
     flake-utils.url = "github:numtide/flake-utils";
 
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # spacetimedb.url = "github:clockworklabs/SpacetimeDB/refs/tags/v1.10.0";
 
     advisory-db = {
@@ -33,6 +38,7 @@
     nixpkgs,
     crane,
     flake-utils,
+    fenix,
     advisory-db,
     # sccache,
     crm-chat-web-app,
@@ -56,7 +62,20 @@
         spacetimedbPkg = import ./nix/spacetimedb.nix {inherit pkgs system;};
 
         inherit (pkgs) lib;
-        craneLib = crane.mkLib pkgs;
+
+        # Use fenix to get a complete Rust toolchain with clippy and rustfmt
+        rustToolchain = fenix.packages.${system}.combine [
+          (fenix.packages.${system}.latest.withComponents [
+            "cargo"
+            "clippy"
+            "rust-src"
+            "rustc"
+            "rustfmt"
+          ])
+          fenix.packages.${system}.targets.wasm32-unknown-unknown.latest.rust-std
+        ];
+
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         src = craneLib.cleanCargoSource ./.;
 
         # Common arguments can be set here to avoid repeating them later
@@ -118,7 +137,7 @@
               (craneLib.fileset.commonCargoSources ./bins/sdb_server)
               (craneLib.fileset.commonCargoSources ./libs/sdb_api)
 
-              (craneLib.fileset.commonCargoSources ./libs/messanger-inteface)
+              (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
               (craneLib.fileset.commonCargoSources crate)
             ];
@@ -229,13 +248,14 @@
         };
 
         devShells.default = craneLib.devShell {
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
+          SCCACHE_CACHE_SIZE="20G";
           SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
             export PATH="$HOME/.opencode/bin:$PATH"
+            export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
           '';
           checks = self.checks.${system};
           # Inherit from all child flake dev shells
@@ -244,8 +264,10 @@
           ];
 
           # Extra inputs (only used for interactive development)
-          # can be added here; cargo and rustc are provided by default.
+          # cargo, rustc, clippy, rustfmt are provided by the fenix toolchain
           packages = with pkgs; [
+            openssl
+
             taplo
             cargo-hakari
             cargo-audit

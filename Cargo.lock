@@ -900,6 +900,7 @@ dependencies = [
  "bitflags",
  "chrono",
  "digest",
+ "errno",
  "form_urlencoded",
  "futures-channel",
  "futures-core",
@@ -1424,7 +1425,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
-name = "messanger-inteface"
+name = "messanger-interface"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -1450,7 +1451,7 @@ dependencies = [
  "grammers-session",
  "grammers-tl-types",
  "hack",
- "messanger-inteface",
+ "messanger-interface",
  "serde",
  "serde_json",
  "serial_test",
@@ -2824,11 +2825,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "futures",
  "grammers-client",
  "grammers-mtsender",
  "grammers-session",
  "hack",
  "jsonwebtoken",
+ "messanger-interface",
  "messanger-telegram",
  "reqwest",
  "sdb_api",
@@ -2836,6 +2839,7 @@ dependencies = [
  "serde_json",
  "spacetimedb-sdk",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

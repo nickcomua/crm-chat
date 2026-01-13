@@ -70,7 +70,9 @@ fn main() {
         .collect();
 
     if !rs_files.is_empty() {
-        let fmt_status = Command::new("rustfmt")
+        // Use RUSTFMT env var if set (for Nix compatibility), otherwise fall back to PATH
+        let rustfmt_cmd = env::var("RUSTFMT").unwrap_or_else(|_| "rustfmt".to_string());
+        let fmt_status = Command::new(&rustfmt_cmd)
             .arg("--edition")
             .arg("2024")
             .args(&rs_files)

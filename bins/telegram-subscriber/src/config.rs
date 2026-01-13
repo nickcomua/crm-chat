@@ -34,11 +34,13 @@ pub fn get_session_dir() -> PathBuf {
 }
 
 /// Get the session file path for a given phone number.
-pub fn get_session_path(phone: &str) -> PathBuf {
+pub fn get_session_path(phone: &str, owner_id: &str) -> PathBuf {
     // Sanitize phone number for use in filename
     let sanitized: String = phone
         .chars()
         .filter(|c| c.is_ascii_digit() || *c == '+')
         .collect();
-    get_session_dir().join(format!("{}.session", sanitized))
+    let dir = get_session_dir().join(owner_id);
+    std::fs::create_dir_all(&dir).ok();
+    dir.join(format!("{}.session", sanitized))
 }

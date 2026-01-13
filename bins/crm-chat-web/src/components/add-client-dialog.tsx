@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, Loader2, Phone, Shield } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import type React from "react";
+import { useEffect, useState } from "react";
 import type { Infer } from "spacetimedb";
 import type { Client, DbConnection } from "../lib/spacetime";
 import { Button } from "./ui/button";
@@ -15,6 +16,7 @@ import { Label } from "./ui/label";
 
 type ClientType = Infer<typeof Client>;
 const PHONE_REGEX = /^\+?[1-9]\d{1,14}$/;
+const CODE_REGEX = /^\d{5}$/;
 
 function normalizePhone(raw: string): string {
   const digits = raw.replace(/\D/g, "");
@@ -26,7 +28,7 @@ function isValidPhone(normalized: string): boolean {
 }
 
 function isValidCode(code: string): boolean {
-  return /^\d{5}$/.test(code);
+  return CODE_REGEX.test(code);
 }
 
 type Step = "phone" | "code" | "password" | "complete" | "waiting";
@@ -111,20 +113,40 @@ export function AddClientDialog({
   const [clientId, setClientId] = useState<bigint | null>(null);
   // Track if we just submitted phone and are waiting for backend to process
   const [waitingForBackend, setWaitingForBackend] = useState(false);
+  // Track if we just completed the flow (to show success before closing)
+  const [justCompleted, setJustCompleted] = useState(false);
 
   // Derive step from pending client status
   const derivedStep = getStepFromStatus(pendingClient);
 
-  // If we're waiting for backend after phone submission, show waiting step
-  // This handles the case where pendingClient hasn't updated yet
-  const step = waitingForBackend && derivedStep === "phone" ? "waiting" : derivedStep;
+  // Determine the current step to display
+  // - If we just completed, show complete step even if pendingClient becomes null
+  // - If we're waiting for backend after phone submission, show waiting step
+  // - Otherwise use the derived step from client status
+  const getDisplayStep = (): Step => {
+    if (justCompleted) {
+      return "complete";
+    }
+    if (waitingForBackend && derivedStep === "phone") {
+      return "waiting";
+    }
+    return derivedStep;
+  };
+  const step = getDisplayStep();
 
   // Reset waitingForBackend when we get a response (step changes from what we were waiting for)
-  React.useEffect(() => {
+  useEffect(() => {
     if (waitingForBackend && derivedStep !== "phone") {
       setWaitingForBackend(false);
     }
   }, [derivedStep, waitingForBackend]);
+
+  // Detect when client becomes connected and show completion state
+  useEffect(() => {
+    if (derivedStep === "complete" && !justCompleted && clientId !== null) {
+      setJustCompleted(true);
+    }
+  }, [derivedStep, justCompleted, clientId]);
 
   // Store the client ID when we have a pending client
   useEffect(() => {
@@ -145,6 +167,7 @@ export function AddClientDialog({
     setError(null);
     setClientId(null);
     setWaitingForBackend(false);
+    setJustCompleted(false);
   };
 
   const handleClose = () => {
@@ -156,7 +179,9 @@ export function AddClientDialog({
     setError(null);
     const normalized = normalizePhone(phone);
     if (!isValidPhone(normalized)) {
-      setError("Please enter a valid phone number with country code (e.g. +1... )");
+      setError(
+        "Please enter a valid phone number with country code (e.g. +1... )"
+      );
       return;
     }
 
@@ -308,7 +333,8 @@ export function AddClientDialog({
           {step === "waiting" && (
             <WaitingStep
               message={
-                getWaitingMessage(pendingClient) || "Sending verification code..."
+                getWaitingMessage(pendingClient) ||
+                "Sending verification code..."
               }
             />
           )}
