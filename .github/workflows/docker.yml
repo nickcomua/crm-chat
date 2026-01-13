@@ -2,7 +2,7 @@ name: "docker"
 on:
   push:
     branches:
-      - "ci"
+      - "main"
 
 permissions:
   contents: read
@@ -40,9 +40,6 @@ jobs:
         with:
           name: nickcomua
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-
-      - name: Nix flake check
-        run: nix flake check --accept-flake-config
 
       - name: Build and push telegram-subscriber (multi-arch)
         run: |
