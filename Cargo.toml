@@ -3,7 +3,7 @@ members = [
   "bins/sdb_server",
   "libs/hack",
   "libs/sdb_api",
-  "libs/messanger-inteface",
+  "libs/messanger-interface",
   "libs/messanger-telegram",
   "bins/telegram-subscriber",
 ]

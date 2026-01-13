@@ -66,27 +66,28 @@ pub struct Client {
     pub external_id: String,
     pub active_chats: Vec<u64>,
     pub status: ClientStatus,
-    pub session: String,
+    pub session: String, // #todo remove or change it now it is just ignored
 }
 
-// #[spacetimedb::table(name = chat, public)]
-// pub struct Chat {
-//     #[primary_key]
-//     #[auto_inc]
-//     pub id: u64,
-//     #[index(btree)]
-//     pub owner_user_id: Identity,
-//     #[index(btree)]
-//     pub client_id: u64,
-//     #[index(btree)]
-//     pub chat_type: ChatType,
-//     #[index(btree)]
-//     pub external_chat_id: String,
-//     pub is_pinned: bool,
-//     pub pinned_name: Option<String>,
-//     #[index(btree)]
-//     pub last_message_ts: u64,
-// }
+#[spacetimedb::table(name = chat, public)]
+#[derive(Debug, Clone)]
+pub struct Chat {
+    #[primary_key]
+    // #[auto_inc]
+    pub id: String,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub client_id: u64,
+    #[index(btree)]
+    pub chat_type: ChatType,
+    // #[index(btree)]
+    // pub external_chat_id: String,
+    pub is_pinned: bool,
+    pub pinned_name: Option<String>,
+    #[index(btree)]
+    pub last_message_ts: u64,
+}
 
 // #[spacetimedb::table(name = board, public)]
 // pub struct Board {
@@ -174,25 +175,27 @@ pub struct Client {
 //     pub url: String,
 // }
 
-// #[spacetimedb::table(name = message, public, index(name = by_chat_ts, btree(columns = [chat_id, ts])))]
-// pub struct Message {
-//     #[primary_key]
-//     #[auto_inc]
-//     pub id: u64,
-//     #[index(btree)]
-//     pub owner_user_id: Identity,
-//     #[index(btree)]
-//     pub client_id: u64,
-//     #[index(btree)]
-//     pub chat_id: u64,
-//     pub text: Option<String>,
-//     pub out: bool,
-//     pub deleted: bool,
-//     #[index(btree)]
-//     pub ts: u64, // UTC ms since epoch
-//     #[index(btree)]
-//     pub media_id: Option<u64>,
-// }
+#[spacetimedb::table(name = message, public, index(name = by_chat_ts, btree(columns = [chat_id, ts])))]
+pub struct Message {
+    #[primary_key]
+    // #[auto_inc]
+    pub id: String,
+    #[index(btree)]
+    pub external_id: String,
+    #[index(btree)]
+    pub owner_user_id: Identity,
+    #[index(btree)]
+    pub client_id: u64,
+    #[index(btree)]
+    pub chat_id: String,
+    pub text: Option<String>,
+    pub out: bool,
+    pub deleted: bool,
+    #[index(btree)]
+    pub ts: u64, // UTC ms since epoch
+    #[index(btree)]
+    pub media_id: Option<u64>,
+}
 
 // #[spacetimedb::table(name = qa, public, index(name = qa_pair, btree(columns = [question_message_id, answer_message_id])))]
 // pub struct Qa {
@@ -376,23 +379,63 @@ pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String>
 //     Ok(())
 // }
 
-// #[reducer]
-// pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
-//     if let Some(existing) = ctx.db.chat().id().find(chat.id) {
-//         ctx.db.chat().id().update(chat);
-//     } else {
-//         ctx.db.chat().insert(chat);
-//     }
-//     Ok(())
-// }
+#[reducer]
+pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
+    if let Some(_existing) = ctx.db.chat().id().find(chat.id.clone()) {
+        ctx.db.chat().id().update(chat);
+    } else {
+        ctx.db.chat().insert(chat);
+    }
+    Ok(())
+}
 
-// #[reducer]
-// pub fn delete_chat(ctx: &ReducerContext, chat_id: u64) -> Result<(), String> {
-//     ctx.db.chat().id().delete(chat_id);
-//     Ok(())
-// }
+#[reducer]
+pub fn delete_chat(ctx: &ReducerContext, chat_id: String) -> Result<(), String> {
+    ctx.db.chat().id().delete(chat_id);
+    Ok(())
+}
 
-// #[reducer]
+#[reducer]
+pub fn upsert_message(ctx: &ReducerContext, message: Message) -> Result<(), String> {
+    if let Some(_existing) = ctx.db.message().id().find(message.id.clone()) {
+        ctx.db.message().id().update(message);
+    } else {
+        ctx.db.message().insert(message);
+    }
+    Ok(())
+}
+
+#[reducer] // @todo when chenel will implemented
+pub fn mark_message_deleted(
+    ctx: &ReducerContext,
+    external_message_id: String,
+) -> Result<(), String> {
+    if let [existing] = ctx
+        .db
+        .message()
+        .external_id()
+        .filter(&external_message_id)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ctx.db.message().id().update(Message {
+            id: existing.id.clone(),
+            external_id: existing.external_id.clone(),
+            owner_user_id: existing.owner_user_id,
+            client_id: existing.client_id,
+            chat_id: existing.chat_id.clone(),
+            text: existing.text.clone(),
+            out: existing.out,
+            deleted: true,
+            ts: existing.ts,
+            media_id: existing.media_id,
+        });
+    } else {
+        return Err("message not found or its more than one".to_string());
+    }
+    Ok(())
+}
+
 // pub fn add_messages(ctx: &ReducerContext, messages: Vec<Message>) -> Result<(), String> {
 //     for message in messages {
 //         ctx.db.message().insert(message);
