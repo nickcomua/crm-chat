@@ -23,17 +23,12 @@
           src = pkgs.lib.cleanSource ./.;
 
           # Nix will tell you the correct hash to put here after the first build attempt.
-          npmDepsHash = "sha256-iMeN6QZvOZfFtM4IBhL39EiTGW7zBgi7vlxaqEd3xRw=";
+          npmDepsHash = "sha256-6LaSfN7BU9Zn9lCd9Wzr0YcXc0hZH65cSeUVVfjfFSM=";
 
           # Avoid npm/vite trying to write to read-only paths
           # makeCacheWritable = true;
 
           # Vite often needs a native esbuild. This points it to the Nix version.
-          # ESBUILD_BINARY_PATH = "${pkgs.esbuild}/bin/esbuild";
-
-          # nativeBuildInputs = [
-          #   pkgs.esbuild
-          # ];
 
           # We override the install phase because Vite outputs to 'dist/'
           installPhase = ''
@@ -135,6 +130,36 @@
         packages = {
           default = crm-chat-web;
           inherit crm-chat-web crm-chat-web-img;
+        };
+
+        checks = {
+          crm-chat-web-lint = pkgs.buildNpmPackage {
+            pname = "crm-chat-web-lint";
+            version = "0.0.0";
+            src = pkgs.lib.cleanSource ./.;
+
+            npmDepsHash = "sha256-6LaSfN7BU9Zn9lCd9Wzr0YcXc0hZH65cSeUVVfjfFSM=";
+            makeCacheWritable = true;
+
+            nativeBuildInputs = [
+              pkgs.biome
+            ];
+
+            # Point to the nix-provided binaries to avoid ENOENT in the sandbox
+            # BIOME_BINARY = "${pkgs.biome}/bin/biome";
+            # Override build phase to run lint instead
+            buildPhase = ''
+              npm run lint
+            '';
+
+            # Override install phase to create empty output
+            installPhase = ''
+              mkdir -p $out
+              echo "Lint checks passed" > $out/result
+            '';
+
+            doCheck = false;
+          };
         };
 
         devShells.default = pkgs.mkShell {

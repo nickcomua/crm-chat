@@ -14,9 +14,12 @@ grammers-session = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4
 hack = { version = "0.1", path = "../../libs/hack" }
 jsonwebtoken = "9.3"
 messanger-telegram = { path = "../../libs/messanger-telegram" }
+messanger-interface= { path = "../../libs/messanger-interface" }
 reqwest = { version = "0.12", features = ["json"] }
 sdb_api = { path = "../../libs/sdb_api" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 spacetimedb-sdk = "1.10.*"
 tokio = { version = "1.49.0", features = ["full", "macros", "rt-multi-thread"] }
+futures = "0.3.*"
+tokio-util = "0.7.18"

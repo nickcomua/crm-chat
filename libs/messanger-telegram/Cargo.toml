@@ -2,7 +2,7 @@
 name = "messanger-telegram"
 version = "0.1.0"
 edition = "2021"
-description = "Telegram messenger client implementation for messanger-inteface"
+description = "Telegram messenger client implementation for messanger-interface"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -16,7 +16,7 @@ grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c
   "impl-serde",
 ] }
 hack = { version = "0.1", path = "../hack" }
-messanger-inteface = { path = "../messanger-inteface" }
+messanger-interface = { path = "../messanger-interface" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

@@ -13,8 +13,8 @@ use grammers_client::{
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 use grammers_session::updates::UpdatesLike;
-use messanger_inteface::session::SessionStoreWrapper;
-use messanger_inteface::{
+use messanger_interface::session::SessionStoreWrapper;
+use messanger_interface::{
     AuthConfig, ChatSummary, DialogStream, ExternalId, MessageStream, MessageSummary,
     MessengerClient, MessengerClientBuilder, MessengerError, NativePayload, SessionStore, Update,
     UpdateStream,
@@ -27,15 +27,15 @@ use tokio::task::JoinHandle;
 
 /// Telegram client implementation of the MessengerClient trait.
 pub struct TelegramClient {
-    client: Arc<Mutex<Client>>,
+    pub client: Arc<Mutex<Client>>,
     #[allow(dead_code)]
-    session: Arc<SqliteSession>,
-    api_hash: String,
+    pub session: Arc<SqliteSession>,
+    pub api_hash: String,
     #[allow(dead_code)]
-    session_store: Option<Arc<dyn SessionStore + Send + Sync>>,
-    updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
+    pub session_store: Option<Arc<dyn SessionStore + Send + Sync>>,
+    pub updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
     #[allow(dead_code)]
-    pool_runner_handle: JoinHandle<()>,
+    pub pool_runner_handle: JoinHandle<()>,
 }
 
 impl TelegramClient {
@@ -151,10 +151,10 @@ impl MessengerClient for TelegramClient {
 
     async fn iter_dialogs(&self) -> Result<DialogStream, MessengerError> {
         let client_arc = self.client.clone();
+        let (sender, receiver) = tokio::sync::mpsc::channel(10);
+        let data_stream = stream::wrappers::ReceiverStream::new(receiver);
 
-        // Collect all dialogs first
-        let mut dialogs_vec = Vec::new();
-        {
+        _ = tokio::spawn(async move {
             let client = client_arc.lock().await;
             let mut dialogs = client.iter_dialogs();
             while let Ok(Some(dialog)) = dialogs.next().await {
@@ -171,12 +171,14 @@ impl MessengerClient for TelegramClient {
                         .to_string(),
                     ),
                 };
-                dialogs_vec.push(Ok(summary));
+                // If receiver is dropped, stop producing to avoid unnecessary work
+                if sender.send(Ok(summary)).await.is_err() {
+                    break;
+                }
             }
-        }
+        });
 
-        let stream = stream::iter(dialogs_vec);
-        Ok(Box::pin(stream))
+        Ok(Box::pin(data_stream))
     }
 
     async fn get_messages_count(
@@ -206,22 +208,23 @@ impl MessengerClient for TelegramClient {
     ) -> Result<MessageStream, MessengerError> {
         let client_arc = self.client.clone();
 
-        // Collect all messages - need to find chat within the lock and keep dialog alive
-        let mut messages_vec = Vec::new();
-        {
-            let client = client_arc.lock().await;
-            let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
+        let (sender, receiver) = tokio::sync::mpsc::channel(10);
+        let data_stream = stream::wrappers::ReceiverStream::new(receiver);
+        let client = client_arc.lock().await;
+        let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
 
-            // Keep dialog alive while we use its chat
-            let chat = dialog.peer();
-            let chat_ref = chat.to_ref().ok_or_else(|| {
-                MessengerError::NotFound(format!(
-                    "Could not get reference for chat: {}",
-                    chat.id().bare_id()
-                ))
-            })?;
-            let mut messages = client.iter_messages(chat_ref);
+        // Keep dialog alive while we use its chat
+        let chat = dialog.peer().clone();
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+        let mut messages = client.iter_messages(chat_ref);
+        _ = tokio::spawn(async move {
             while let Ok(Some(msg)) = messages.next().await {
+                // msg.sender() @todo add sender to message summary
                 let summary = MessageSummary {
                     external_id: msg.id().to_string(),
                     chat_external_id: chat.id().bare_id().to_string(),
@@ -232,12 +235,14 @@ impl MessengerClient for TelegramClient {
                         .media()
                         .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
                 };
-                messages_vec.push(Ok(summary));
+                // If receiver is dropped, stop producing to avoid unnecessary work
+                if sender.send(Ok(summary)).await.is_err() {
+                    break;
+                }
             }
-        }
+        });
 
-        let stream = stream::iter(messages_vec);
-        Ok(Box::pin(stream))
+        Ok(Box::pin(data_stream))
     }
 
     async fn iter_updates(&self) -> Result<UpdateStream, MessengerError> {
@@ -250,6 +255,9 @@ impl MessengerClient for TelegramClient {
         })?;
 
         // Create updates configuration
+        // @todo: Evaluate if catch_up should be true to receive missed updates
+        // when the client reconnects after being offline. Currently false to
+        // avoid potential flood of old updates on startup.
         let config = UpdatesConfiguration {
             catch_up: false,
             update_queue_limit: Some(100),

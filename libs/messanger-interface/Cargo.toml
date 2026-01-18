@@ -1,5 +1,5 @@
 [package]
-name = "messanger-inteface"
+name = "messanger-interface"
 version = "0.1.0"
 edition = "2021"
 description = "Universal messenger client interface abstractions for CRM chat ingestion."
