@@ -113,7 +113,10 @@ export function TelegramClientsManager() {
   // Auto-open dialog when a pending client needs user input
   useEffect(() => {
     if (activePendingClient && clientNeedsUserInput(activePendingClient)) {
-      setIsAddDialogOpen(true);
+      const timer = setTimeout(() => {
+        setIsAddDialogOpen(true);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [activePendingClient]);
 

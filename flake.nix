@@ -156,8 +156,9 @@
         crm-chat-web-img = crm-chat-web-app.packages.${system}.crm-chat-web-img;
 
       in {
-        checks = { 
+        checks = {
           inherit telegram-subscriber crm-chat-web;
+          inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint;
           crm-chat-clippy = craneLib.cargoClippy (
             commonArgs
             // {
@@ -201,6 +202,10 @@
               partitions = 1;
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
+              # Set LD_LIBRARY_PATH so test binaries can find libsqlite3.so at runtime
+              preCheck = ''
+                export LD_LIBRARY_PATH="${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
+              '';
               # __noChroot = true;
               # TG_API_ID_1 = builtins.getEnv "TG_API_ID_1";
               # TG_API_HASH_1 = builtins.getEnv "TG_API_HASH_1";

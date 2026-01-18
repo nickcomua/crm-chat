@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TelegramChatId {
@@ -6,15 +7,15 @@ pub struct TelegramChatId {
     pub dialog_external_id: String,
 }
 
-impl ToString for TelegramChatId {
-    fn to_string(&self) -> String {
-        format!("{}:telegram:{}", self.client_id, self.dialog_external_id)
+impl fmt::Display for TelegramChatId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:telegram:{}", self.client_id, self.dialog_external_id)
     }
 }
 
-impl Into<String> for TelegramChatId {
-    fn into(self) -> String {
-        self.to_string()
+impl From<TelegramChatId> for String {
+    fn from(value: TelegramChatId) -> Self {
+        value.to_string()
     }
 }
 
@@ -40,18 +41,19 @@ pub struct TelegramMessageId {
     pub message_external_id: String,
 }
 
-impl ToString for TelegramMessageId {
-    fn to_string(&self) -> String {
-        format!(
+impl fmt::Display for TelegramMessageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
             "{}:telegram:{}:{}",
             self.client_id, self.dialog_external_id, self.message_external_id
         )
     }
 }
 
-impl Into<String> for TelegramMessageId {
-    fn into(self) -> String {
-        self.to_string()
+impl From<TelegramMessageId> for String {
+    fn from(value: TelegramMessageId) -> Self {
+        value.to_string()
     }
 }
 
