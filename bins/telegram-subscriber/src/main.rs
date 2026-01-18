@@ -41,7 +41,6 @@ async fn main() -> Result<()> {
     let config = TelegramConfig::from_env()?;
     let (tx, mut rx) = mpsc::unbounded_channel::<ClientEvent>();
     let token = env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set");
-    let _identity = env::var("DIRTY_IDENTITY").expect("DIRTY_IDENTITY must be set");
     let conn = DbConnection::builder()
         .with_module_name(
             env::var("VITE_SPACETIMEDB_MODULE").expect("VITE_SPACETIMEDB_MODULE must be set"),

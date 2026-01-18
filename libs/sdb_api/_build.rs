@@ -43,6 +43,7 @@ fn main() {
             &project_dir_str,
         ])
         .env("CARGO_TARGET_DIR", &temp_target)
+        .env("HOME", temp_dir.path()) // Set HOME to a writable temp directory
         .current_dir(crate_dir)
         .status();
 
@@ -71,7 +72,11 @@ fn main() {
 
     if !rs_files.is_empty() {
         // Use RUSTFMT env var if set (for Nix compatibility), otherwise fall back to PATH
-        let rustfmt_cmd = env::var("RUSTFMT").unwrap_or_else(|_| "rustfmt".to_string());
+        let rustfmt_cmd = env::var("RUSTFMT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "rustfmt".to_string());
         let fmt_status = Command::new(&rustfmt_cmd)
             .arg("--edition")
             .arg("2024")

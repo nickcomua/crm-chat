@@ -3,18 +3,12 @@
 use anyhow::{Error, Result};
 use grammers_client::client::LoginToken;
 use grammers_client::{SignInError, client::PasswordToken};
-use jsonwebtoken::TokenData;
 use messanger_interface::MessengerClient;
 use messanger_telegram::TelegramClient;
-use sdb_api::module_bindings::{Client as DbClient, ClientStatus, DbConnection};
-use std::sync::Arc;
 
 /// Handle a client in WaitingPhone state - request login code from Telegram.
 pub async fn handle_waiting_phone(phone: &str, tg_client: &TelegramClient) -> Result<LoginToken> {
-    eprintln!(
-        "handle_waiting_phone: Starting for client {} with phone {}",
-        phone, phone
-    );
+    eprintln!("handle_waiting_phone: Starting with phone {}", phone);
 
     // Check authorization with timeout
     eprintln!("handle_waiting_phone: Checking authorization status (timeout 30s)...");

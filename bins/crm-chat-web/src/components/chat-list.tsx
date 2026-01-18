@@ -44,10 +44,14 @@ function getClientDisplayName(client: ClientType): string {
   return `${client.kind.tag} (${client.externalId.slice(0, 8)}...)`;
 }
 
-function getExternalIdColorStyle(externalId: string): { background: string; color: string } {
+function getExternalIdColorStyle(externalId: string): {
+  background: string;
+  color: string;
+} {
   // Simple hash function to get a consistent hue for each external ID
   let hash = 0;
   for (let i = 0; i < externalId.length; i++) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: hash function
     hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
   }
 
@@ -57,18 +61,25 @@ function getExternalIdColorStyle(externalId: string): { background: string; colo
   // Use consistent lightness and chroma values for uniform appearance
   return {
     background: `oklch(0.65 0.18 ${hue} / 0.2)`,
-    color: `oklch(0.45 0.2 ${hue})`
+    color: `oklch(0.45 0.2 ${hue})`,
   };
 }
 
-function ChatIcon({ chatType }: { chatType: ChatType["chatType"] }): React.ReactNode {
+function ChatIcon({
+  chatType,
+}: {
+  chatType: ChatType["chatType"];
+}): React.ReactNode {
   if (chatType.tag === "Group") {
     return <Users className="h-5 w-5" />;
   }
   return <MessageSquare className="h-5 w-5" />;
 }
 
-export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React.ReactNode {
+export function ChatList({
+  selectedChatId,
+  onSelectChat,
+}: ChatListProps): React.ReactNode {
   const [chats] = useTable(tables.chat);
   const [clients] = useTable(tables.client);
   const [messages] = useTable(tables.message);
@@ -85,15 +96,21 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
 
   const chatArray = Array.from(chats);
   const sortedChats = chatArray.sort((a, b) => {
-    if (a.isPinned && !b.isPinned) return -1;
-    if (!a.isPinned && b.isPinned) return 1;
+    if (a.isPinned && !b.isPinned) {
+      return -1;
+    }
+    if (!a.isPinned && b.isPinned) {
+      return 1;
+    }
     return Number(b.lastMessageTs - a.lastMessageTs);
   });
 
   let filteredChats = sortedChats;
 
   if (selectedClientId !== null) {
-    filteredChats = filteredChats.filter((chat: ChatType) => chat.clientId === selectedClientId);
+    filteredChats = filteredChats.filter(
+      (chat: ChatType) => chat.clientId === selectedClientId
+    );
   }
 
   if (searchQuery.trim()) {
@@ -108,7 +125,9 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
     const chatMessages = Array.from(messages).filter(
       (m) => m.chatId === chatId && !m.deleted
     );
-    if (chatMessages.length === 0) return null;
+    if (chatMessages.length === 0) {
+      return null;
+    }
 
     const lastMessage = chatMessages.reduce((prev, curr) =>
       curr.ts > prev.ts ? curr : prev
@@ -116,7 +135,7 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
     return lastMessage.text ?? "[Media]";
   };
 
-  if (chats.length === 0) {
+  if (chatArray.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-4 text-center">
         <MessageSquare className="h-12 w-12 text-muted-foreground/50" />
@@ -135,6 +154,7 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
           <div className="relative flex-1">
             <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              aria-label="Search chats"
               className="pl-9"
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search chats..."
@@ -144,6 +164,7 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
           </div>
           {clientsArray.length > 1 && (
             <Button
+              aria-label="Filter clients"
               className={cn(
                 selectedClientId !== null && "bg-accent text-accent-foreground"
               )}
@@ -245,7 +266,7 @@ export function ChatList({ selectedChatId, onSelectChat }: ChatListProps): React
                     <div className="mt-0.5 flex items-center gap-2">
                       {client && (
                         <span
-                          className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
+                          className="shrink-0 rounded-full px-2 py-0.5 font-medium text-xs"
                           style={getExternalIdColorStyle(client.externalId)}
                         >
                           {client.externalId}

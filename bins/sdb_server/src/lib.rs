@@ -381,6 +381,11 @@ pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String>
 
 #[reducer]
 pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
+    // Authorization guard: only the owner can modify their chats
+    if chat.owner_user_id != ctx.sender {
+        return Err("unauthorized: cannot modify another user's chat".to_string());
+    }
+
     if let Some(_existing) = ctx.db.chat().id().find(chat.id.clone()) {
         ctx.db.chat().id().update(chat);
     } else {
@@ -397,6 +402,11 @@ pub fn delete_chat(ctx: &ReducerContext, chat_id: String) -> Result<(), String> 
 
 #[reducer]
 pub fn upsert_message(ctx: &ReducerContext, message: Message) -> Result<(), String> {
+    // Authorization guard: only the owner can modify their messages
+    if message.owner_user_id != ctx.sender {
+        return Err("unauthorized: cannot modify another user's message".to_string());
+    }
+
     if let Some(_existing) = ctx.db.message().id().find(message.id.clone()) {
         ctx.db.message().id().update(message);
     } else {
@@ -405,7 +415,7 @@ pub fn upsert_message(ctx: &ReducerContext, message: Message) -> Result<(), Stri
     Ok(())
 }
 
-#[reducer] // @todo when chenel will implemented
+#[reducer] // @todo when channel will be implemented
 pub fn mark_message_deleted(
     ctx: &ReducerContext,
     external_message_id: String,

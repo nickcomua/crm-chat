@@ -171,10 +171,10 @@ impl MessengerClient for TelegramClient {
                         .to_string(),
                     ),
                 };
-                sender
-                    .send(Ok(summary))
-                    .await
-                    .expect("Failed to send dialog summary");
+                // If receiver is dropped, stop producing to avoid unnecessary work
+                if sender.send(Ok(summary)).await.is_err() {
+                    break;
+                }
             }
         });
 
@@ -235,10 +235,10 @@ impl MessengerClient for TelegramClient {
                         .media()
                         .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
                 };
-                sender
-                    .send(Ok(summary))
-                    .await
-                    .expect("Failed to send message summary");
+                // If receiver is dropped, stop producing to avoid unnecessary work
+                if sender.send(Ok(summary)).await.is_err() {
+                    break;
+                }
             }
         });
 
@@ -255,8 +255,11 @@ impl MessengerClient for TelegramClient {
         })?;
 
         // Create updates configuration
+        // @todo: Evaluate if catch_up should be true to receive missed updates
+        // when the client reconnects after being offline. Currently false to
+        // avoid potential flood of old updates on startup.
         let config = UpdatesConfiguration {
-            catch_up: false, // @tod maybe just on
+            catch_up: false,
             update_queue_limit: Some(100),
         };
 

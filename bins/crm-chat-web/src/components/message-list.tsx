@@ -43,7 +43,9 @@ function formatDateHeader(ts: bigint): string {
 }
 
 function getChatDisplayName(chat: ChatType | undefined): string {
-  if (!chat) return "Chat";
+  if (!chat) {
+    return "Chat";
+  }
   if (chat.pinnedName) {
     return chat.pinnedName;
   }
@@ -51,7 +53,9 @@ function getChatDisplayName(chat: ChatType | undefined): string {
 }
 
 function getClientDisplayName(client: ClientType | undefined): string {
-  if (!client) return "";
+  if (!client) {
+    return "";
+  }
   return `${client.kind.tag} • ${client.externalId}`;
 }
 
@@ -59,7 +63,9 @@ function shouldShowDateHeader(
   message: MessageType,
   prevMessage: MessageType | undefined
 ): boolean {
-  if (!prevMessage) return true;
+  if (!prevMessage) {
+    return true;
+  }
 
   const messageDate = new Date(Number(message.ts) * 1000).toDateString();
   const prevDate = new Date(Number(prevMessage.ts) * 1000).toDateString();
@@ -72,12 +78,7 @@ function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
   const isDeleted = message.deleted;
 
   return (
-    <div
-      className={cn(
-        "flex",
-        isOutgoing ? "justify-end" : "justify-start"
-      )}
-    >
+    <div className={cn("flex", isOutgoing ? "justify-end" : "justify-start")}>
       <div
         className={cn(
           "max-w-[75%] rounded-2xl px-4 py-2",
@@ -94,29 +95,28 @@ function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
           </div>
         )}
 
-        {message.text ? (
-          <p className={cn(
-            "whitespace-pre-wrap break-words text-sm",
-            // isDeleted && "line-through"
-          )}>
-            {message.text}
-          </p>
-        ) : message.mediaId ? (
-          <div className={cn(
-            "flex items-center gap-2 text-sm",
-            // isDeleted && "line-through"
-          )}>
-            <ImageIcon className="h-4 w-4" />
-            <span>Media</span>
-          </div>
-        ) : (
-          <p className={cn(
-            "text-muted-foreground text-sm italic",
-            // isDeleted && "line-through"
-          )}>
-            [Empty message]
-          </p>
-        )}
+        {(() => {
+          if (message.text) {
+            return (
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {message.text}
+              </p>
+            );
+          }
+          if (message.mediaId) {
+            return (
+              <div className="flex items-center gap-2 text-sm">
+                <ImageIcon className="h-4 w-4" />
+                <span>Media</span>
+              </div>
+            );
+          }
+          return (
+            <p className="text-muted-foreground text-sm italic">
+              [Empty message]
+            </p>
+          );
+        })()}
 
         <div
           className={cn(
@@ -131,21 +131,40 @@ function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
   );
 }
 
-export function MessageList({ chatId, onBack }: MessageListProps): React.ReactNode {
+export function MessageList({
+  chatId,
+  onBack,
+}: MessageListProps): React.ReactNode {
   const [chats] = useTable(tables.chat);
   const [clients] = useTable(tables.client);
   const [messages] = useTable(tables.message);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const chat = Array.from(chats).find((c) => c.id === chatId);
-  const client = chat ? Array.from(clients).find((c) => c.id === chat.clientId) : undefined;
+  const client = chat
+    ? Array.from(clients).find((c) => c.id === chat.clientId)
+    : undefined;
 
   const chatMessages = Array.from(messages).filter((m) => m.chatId === chatId);
   const sortedMessages = chatMessages.sort((a, b) => Number(a.ts - b.ts));
   const activeMessageCount = sortedMessages.filter((m) => !m.deleted).length;
 
+  // Scroll to bottom when chat changes or new messages arrive
+  // Note: React Compiler handles memoization, so we use an empty dependency array
+  // and track changes via a ref to avoid scrolling on every render
+  const prevChatIdRef = useRef(chatId);
+  const prevMessageCountRef = useRef(sortedMessages.length);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const chatChanged = prevChatIdRef.current !== chatId;
+    const messagesChanged =
+      prevMessageCountRef.current !== sortedMessages.length;
+
+    if (chatChanged || messagesChanged) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      prevChatIdRef.current = chatId;
+      prevMessageCountRef.current = sortedMessages.length;
+    }
   });
 
   return (
@@ -153,6 +172,7 @@ export function MessageList({ chatId, onBack }: MessageListProps): React.ReactNo
       <div className="flex items-center gap-3 border-b px-4 py-3">
         {onBack && (
           <Button
+            aria-label="Go back"
             className="md:hidden"
             onClick={onBack}
             size="icon"
@@ -162,16 +182,16 @@ export function MessageList({ chatId, onBack }: MessageListProps): React.ReactNo
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold">
-            {getChatDisplayName(chat)}
-          </h2>
+          <h2 className="truncate font-semibold">{getChatDisplayName(chat)}</h2>
           <p className="truncate text-muted-foreground text-sm">
             {client && (
               <span className="mr-2">{getClientDisplayName(client)}</span>
             )}
             <span>
-              • {activeMessageCount} message{activeMessageCount !== 1 ? "s" : ""}
-              {activeMessageCount !== sortedMessages.length && ` (${sortedMessages.length - activeMessageCount} deleted)`}
+              • {activeMessageCount} message
+              {activeMessageCount !== 1 ? "s" : ""}
+              {activeMessageCount !== sortedMessages.length &&
+                ` (${sortedMessages.length - activeMessageCount} deleted)`}
             </span>
           </p>
         </div>

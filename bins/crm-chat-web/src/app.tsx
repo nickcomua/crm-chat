@@ -111,6 +111,97 @@ function Dashboard() {
 
     let cancelled = false;
 
+    const onConnect = (
+      _conn: DbConnection,
+      identity: Identity,
+      token: string
+    ) => {
+      localStorage.setItem("auth_token", token);
+      console.log(
+        "Connected to SpacetimeDB with identity:",
+        identity.toHexString()
+      );
+      retryCountRef.current = 0;
+    };
+
+    const onDisconnect = () => {
+      console.log("Disconnected from SpacetimeDB");
+    };
+
+    const handleTokenRetry = async (
+      onConnectError: (ctx: ErrorContext, err: Error | Event) => Promise<void>
+    ) => {
+      retryCountRef.current += 1;
+      console.log(
+        `Token error detected, refreshing token (attempt ${retryCountRef.current}/${maxRetries})...`
+      );
+
+      try {
+        const newToken = await getToken({ skipCache: true });
+        if (cancelled) {
+          return;
+        }
+
+        const newBuilder = DbConnection.builder()
+          .withUri(env.VITE_SPACETIMEDB_HOST)
+          .withModuleName(env.VITE_SPACETIMEDB_MODULE)
+          .withToken(newToken ?? undefined)
+          .onConnect(onConnect)
+          .onDisconnect(onDisconnect)
+          .onConnectError(onConnectError);
+
+        connectionBuilderRef.current = newBuilder;
+        setConnectionState({ status: "ready", builder: newBuilder });
+        setConnectionKey((k) => k + 1);
+      } catch {
+        if (!cancelled) {
+          setConnectionState({
+            status: "error",
+            message:
+              "Failed to refresh authentication. Please refresh the page.",
+          });
+        }
+      }
+    };
+
+    const isTokenRelatedError = (err: Error | Event): boolean => {
+      if (err instanceof Event) {
+        return false;
+      }
+      const errorMessage =
+        (err as Error & { message?: string })?.message?.toLowerCase() ?? "";
+      return (
+        errorMessage.includes("token") ||
+        errorMessage.includes("auth") ||
+        errorMessage.includes("unauthorized") ||
+        errorMessage.includes("401")
+      );
+    };
+
+    const onConnectError = async (_ctx: ErrorContext, err: Error | Event) => {
+      console.error("Error connecting to SpacetimeDB:", err);
+
+      if (err instanceof Event) {
+        return;
+      }
+
+      const isTokenError = isTokenRelatedError(err);
+      const errorMessage =
+        (err as Error & { message?: string })?.message?.toLowerCase() ??
+        "unknown error";
+
+      if (isTokenError && retryCountRef.current < maxRetries) {
+        await handleTokenRetry(onConnectError);
+      } else if (!cancelled) {
+        setConnectionState({
+          status: "error",
+          message: isTokenError
+            ? "Failed to authenticate after multiple attempts. Please refresh the page."
+            : `Connection error: ${errorMessage}`,
+        });
+      }
+    };
+
     const initConnection = async () => {
       try {
         const authToken = await getToken({ skipCache: true });
@@ -118,87 +209,6 @@ function Dashboard() {
         if (cancelled) {
           return;
         }
-
-        const onConnect = (
-          _conn: DbConnection,
-          identity: Identity,
-          token: string
-        ) => {
-          localStorage.setItem("auth_token", token);
-          console.log(
-            "Connected to SpacetimeDB with identity:",
-            identity.toHexString()
-          );
-          retryCountRef.current = 0;
-        };
-
-        const onDisconnect = () => {
-          console.log("Disconnected from SpacetimeDB");
-        };
-
-        const onConnectError = async (_ctx: ErrorContext, err: Error) => {
-          console.error("Error connecting to SpacetimeDB:", err);
-
-          // The error might be a DOM Event (from WebSocket) or an Error object
-          // DOM Events don't have a message property, so ignore them (usually StrictMode cleanup)
-          const errorMessage = (err as Error & { message?: string })?.message?.toLowerCase() ?? "";
-
-          if (!errorMessage) {
-            // No message means it's likely a WebSocket Event from StrictMode cleanup, ignore it
-            return;
-          }
-
-          const isTokenError =  
-            errorMessage.includes("token") ||
-            errorMessage.includes("auth") ||
-            errorMessage.includes("unauthorized") ||
-            errorMessage.includes("401");
-
-          if (isTokenError && retryCountRef.current < maxRetries) {
-            await handleTokenRetry();
-          } else if (!cancelled) {
-            setConnectionState({
-              status: "error",
-              message: isTokenError
-                ? "Failed to authenticate after multiple attempts. Please refresh the page."
-                : `Connection error: ${errorMessage}`,
-            });
-          }
-        };
-
-        const handleTokenRetry = async () => {
-          retryCountRef.current += 1;
-          console.log(
-            `Token error detected, refreshing token (attempt ${retryCountRef.current}/${maxRetries})...`
-          );
-
-          try {
-            const newToken = await getToken({ skipCache: true });
-            if (cancelled) {
-              return;
-            }
-
-            const newBuilder = DbConnection.builder()
-              .withUri(env.VITE_SPACETIMEDB_HOST)
-              .withModuleName(env.VITE_SPACETIMEDB_MODULE)
-              .withToken(newToken ?? undefined)
-              .onConnect(onConnect)
-              .onDisconnect(onDisconnect)
-              .onConnectError(onConnectError);
-
-            connectionBuilderRef.current = newBuilder;
-            setConnectionState({ status: "ready", builder: newBuilder });
-            setConnectionKey((k) => k + 1);
-          } catch {
-            if (!cancelled) {
-              setConnectionState({
-                status: "error",
-                message:
-                  "Failed to refresh authentication. Please refresh the page.",
-              });
-            }
-          }
-        };
 
         const builder = DbConnection.builder()
           .withUri(env.VITE_SPACETIMEDB_HOST)

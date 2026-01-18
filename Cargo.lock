@@ -900,7 +900,6 @@ dependencies = [
  "bitflags",
  "chrono",
  "digest",
- "errno",
  "form_urlencoded",
  "futures-channel",
  "futures-core",
