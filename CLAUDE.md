@@ -63,7 +63,7 @@ This is a Rust/TypeScript monorepo with a SpacetimeDB backend and React frontend
   - See bins/sdb_server/README.md for the ER diagram and RLS (Row Level Security) overview
 - **bins/telegram-subscriber**: Service that subscribes to SpacetimeDB client events and spawns Telegram client connections
 - **libs/sdb_api**: Generated Rust bindings for the SpacetimeDB module (auto-generated, do not edit manually)
-- **libs/messanger-inteface**: Platform-agnostic traits for messenger clients (MessengerClient, ChatSummary, MessageSummary, etc.)
+- **libs/messanger-interface**: Platform-agnostic traits for messenger clients (MessengerClient, ChatSummary, MessageSummary, etc.)
 - **libs/messanger-telegram**: Telegram-specific implementation of the messenger interface using grammers
 
 ### Frontend (TypeScript/React)
@@ -179,6 +179,7 @@ The frontend follows Ultracite rules (see bins/crm-chat-web/.cursor/rules/ultrac
 - Function components with proper hook usage
 - Semantic HTML with accessibility attributes
 - No `console.log`, `debugger`, or `alert` in production code
+- **React Compiler is enabled**: Do NOT use `useMemo`, `useCallback`, or `memo()` - the compiler handles memoization automatically
 
 ## Important Implementation Details
 

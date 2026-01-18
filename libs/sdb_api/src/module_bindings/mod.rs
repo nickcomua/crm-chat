@@ -6,19 +6,31 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+pub mod chat_table;
+pub mod chat_type;
+pub mod chat_type_type;
 pub mod client_connected_reducer;
 pub mod client_kind_type;
 pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
+pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
 pub mod identity_disconnected_reducer;
+pub mod mark_message_deleted_reducer;
+pub mod message_table;
+pub mod message_type;
 pub mod robot_table;
 pub mod robot_type;
+pub mod upsert_chat_reducer;
 pub mod upsert_client_reducer;
+pub mod upsert_message_reducer;
 pub mod user_table;
 pub mod user_type;
 
+pub use chat_table::*;
+pub use chat_type::Chat;
+pub use chat_type_type::ChatType;
 pub use client_connected_reducer::{
     ClientConnectedCallbackId, client_connected, set_flags_for_client_connected,
 };
@@ -26,16 +38,26 @@ pub use client_kind_type::ClientKind;
 pub use client_status_type::ClientStatus;
 pub use client_table::*;
 pub use client_type::Client;
+pub use delete_chat_reducer::{DeleteChatCallbackId, delete_chat, set_flags_for_delete_chat};
 pub use delete_client_reducer::{
     DeleteClientCallbackId, delete_client, set_flags_for_delete_client,
 };
 pub use identity_disconnected_reducer::{
     IdentityDisconnectedCallbackId, identity_disconnected, set_flags_for_identity_disconnected,
 };
+pub use mark_message_deleted_reducer::{
+    MarkMessageDeletedCallbackId, mark_message_deleted, set_flags_for_mark_message_deleted,
+};
+pub use message_table::*;
+pub use message_type::Message;
 pub use robot_table::*;
 pub use robot_type::Robot;
+pub use upsert_chat_reducer::{UpsertChatCallbackId, set_flags_for_upsert_chat, upsert_chat};
 pub use upsert_client_reducer::{
     UpsertClientCallbackId, set_flags_for_upsert_client, upsert_client,
+};
+pub use upsert_message_reducer::{
+    UpsertMessageCallbackId, set_flags_for_upsert_message, upsert_message,
 };
 pub use user_table::*;
 pub use user_type::User;
@@ -49,9 +71,13 @@ pub use user_type::User;
 
 pub enum Reducer {
     ClientConnected,
+    DeleteChat { chat_id: String },
     DeleteClient { client_id: u64 },
     IdentityDisconnected,
+    MarkMessageDeleted { external_message_id: String },
+    UpsertChat { chat: Chat },
     UpsertClient { client: Client },
+    UpsertMessage { message: Message },
 }
 
 impl __sdk::InModule for Reducer {
@@ -62,9 +88,13 @@ impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
             Reducer::ClientConnected => "client_connected",
+            Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
             Reducer::IdentityDisconnected => "identity_disconnected",
+            Reducer::MarkMessageDeleted { .. } => "mark_message_deleted",
+            Reducer::UpsertChat { .. } => "upsert_chat",
             Reducer::UpsertClient { .. } => "upsert_client",
+            Reducer::UpsertMessage { .. } => "upsert_message",
             _ => unreachable!(),
         }
     }
@@ -77,6 +107,13 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 client_connected_reducer::ClientConnectedArgs,
             >("client_connected", &value.args)?
             .into()),
+            "delete_chat" => Ok(
+                __sdk::parse_reducer_args::<delete_chat_reducer::DeleteChatArgs>(
+                    "delete_chat",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "delete_client" => Ok(__sdk::parse_reducer_args::<
                 delete_client_reducer::DeleteClientArgs,
             >("delete_client", &value.args)?
@@ -85,9 +122,24 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 identity_disconnected_reducer::IdentityDisconnectedArgs,
             >("identity_disconnected", &value.args)?
             .into()),
+            "mark_message_deleted" => Ok(__sdk::parse_reducer_args::<
+                mark_message_deleted_reducer::MarkMessageDeletedArgs,
+            >("mark_message_deleted", &value.args)?
+            .into()),
+            "upsert_chat" => Ok(
+                __sdk::parse_reducer_args::<upsert_chat_reducer::UpsertChatArgs>(
+                    "upsert_chat",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "upsert_client" => Ok(__sdk::parse_reducer_args::<
                 upsert_client_reducer::UpsertClientArgs,
             >("upsert_client", &value.args)?
+            .into()),
+            "upsert_message" => Ok(__sdk::parse_reducer_args::<
+                upsert_message_reducer::UpsertMessageArgs,
+            >("upsert_message", &value.args)?
             .into()),
             unknown => {
                 Err(
@@ -103,7 +155,9 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
+    chat: __sdk::TableUpdate<Chat>,
     client: __sdk::TableUpdate<Client>,
+    message: __sdk::TableUpdate<Message>,
     robot: __sdk::TableUpdate<Robot>,
     user: __sdk::TableUpdate<User>,
 }
@@ -114,9 +168,15 @@ impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
         let mut db_update = DbUpdate::default();
         for table_update in raw.tables {
             match &table_update.table_name[..] {
+                "chat" => db_update
+                    .chat
+                    .append(chat_table::parse_table_update(table_update)?),
                 "client" => db_update
                     .client
                     .append(client_table::parse_table_update(table_update)?),
+                "message" => db_update
+                    .message
+                    .append(message_table::parse_table_update(table_update)?),
                 "robot" => db_update
                     .robot
                     .append(robot_table::parse_table_update(table_update)?),
@@ -149,8 +209,14 @@ impl __sdk::DbUpdate for DbUpdate {
     ) -> AppliedDiff<'_> {
         let mut diff = AppliedDiff::default();
 
+        diff.chat = cache
+            .apply_diff_to_table::<Chat>("chat", &self.chat)
+            .with_updates_by_pk(|row| &row.id);
         diff.client = cache
             .apply_diff_to_table::<Client>("client", &self.client)
+            .with_updates_by_pk(|row| &row.id);
+        diff.message = cache
+            .apply_diff_to_table::<Message>("message", &self.message)
             .with_updates_by_pk(|row| &row.id);
         diff.robot = cache
             .apply_diff_to_table::<Robot>("robot", &self.robot)
@@ -167,7 +233,9 @@ impl __sdk::DbUpdate for DbUpdate {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
+    chat: __sdk::TableAppliedDiff<'r, Chat>,
     client: __sdk::TableAppliedDiff<'r, Client>,
+    message: __sdk::TableAppliedDiff<'r, Message>,
     robot: __sdk::TableAppliedDiff<'r, Robot>,
     user: __sdk::TableAppliedDiff<'r, User>,
     __unused: std::marker::PhantomData<&'r ()>,
@@ -183,7 +251,9 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         event: &EventContext,
         callbacks: &mut __sdk::DbCallbacks<RemoteModule>,
     ) {
+        callbacks.invoke_table_row_callbacks::<Chat>("chat", &self.chat, event);
         callbacks.invoke_table_row_callbacks::<Client>("client", &self.client, event);
+        callbacks.invoke_table_row_callbacks::<Message>("message", &self.message, event);
         callbacks.invoke_table_row_callbacks::<Robot>("robot", &self.robot, event);
         callbacks.invoke_table_row_callbacks::<User>("user", &self.user, event);
     }
@@ -905,7 +975,9 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type SubscriptionHandle = SubscriptionHandle;
 
     fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
+        chat_table::register_table(client_cache);
         client_table::register_table(client_cache);
+        message_table::register_table(client_cache);
         robot_table::register_table(client_cache);
         user_table::register_table(client_cache);
     }

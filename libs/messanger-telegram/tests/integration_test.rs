@@ -3,7 +3,7 @@
 //! These tests require valid Telegram API credentials and will make actual
 //! API calls to Telegram. Set up your test configuration before running these tests.
 
-use messanger_inteface::{
+use messanger_interface::{
     session::JsonSessionStore, AuthConfig, MessengerClient, MessengerClientBuilder, SessionStore,
     Update,
 };
@@ -210,6 +210,15 @@ async fn test_iter_dialogs() {
             if dialog_count >= 10 {
                 break;
             }
+        }
+
+        // Note: We don't assert dialog_count > 0 because some test accounts
+        // may legitimately have no dialogs. The test validates that iteration
+        // completes without errors, regardless of dialog count.
+        if dialog_count == 0 {
+            println!(
+                "Warning: No dialogs found for this account (this is valid for new/empty accounts)"
+            );
         }
 
         println!("Found {} dialogs", dialog_count);

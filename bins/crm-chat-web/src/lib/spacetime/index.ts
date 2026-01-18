@@ -33,54 +33,140 @@ import {
 // Import and reexport all reducer arg types
 import ClientConnected from "./client_connected_reducer";
 export { ClientConnected };
+import DeleteChat from "./delete_chat_reducer";
+export { DeleteChat };
 import DeleteClient from "./delete_client_reducer";
 export { DeleteClient };
 import IdentityDisconnected from "./identity_disconnected_reducer";
 export { IdentityDisconnected };
+import MarkMessageDeleted from "./mark_message_deleted_reducer";
+export { MarkMessageDeleted };
+import UpsertChat from "./upsert_chat_reducer";
+export { UpsertChat };
 import UpsertClient from "./upsert_client_reducer";
 export { UpsertClient };
+import UpsertMessage from "./upsert_message_reducer";
+export { UpsertMessage };
 
 // Import and reexport all procedure arg types
 
 // Import and reexport all table handle types
+import ChatRow from "./chat_table";
+export { ChatRow };
 import ClientRow from "./client_table";
 export { ClientRow };
+import MessageRow from "./message_table";
+export { MessageRow };
+import RobotRow from "./robot_table";
+export { RobotRow };
 import UserRow from "./user_table";
 export { UserRow };
 
 // Import and reexport all types
+import Chat from "./chat_type";
+export { Chat };
+import ChatType from "./chat_type_type";
+export { ChatType };
 import Client from "./client_type";
 export { Client };
 import ClientKind from "./client_kind_type";
 export { ClientKind };
 import ClientStatus from "./client_status_type";
 export { ClientStatus };
+import Message from "./message_type";
+export { Message };
+import Robot from "./robot_type";
+export { Robot };
 import User from "./user_type";
 export { User };
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema(
   __table({
-    name: 'client',
+    name: 'chat',
     indexes: [
-      { name: 'external_id', algorithm: 'btree', columns: [
-        'externalId',
+      { name: 'chat_type', algorithm: 'btree', columns: [
+        'chatType',
+      ] },
+      { name: 'client_id', algorithm: 'btree', columns: [
+        'clientId',
       ] },
       { name: 'id', algorithm: 'btree', columns: [
         'id',
       ] },
-      { name: 'kind', algorithm: 'btree', columns: [
-        'kind',
+      { name: 'last_message_ts', algorithm: 'btree', columns: [
+        'lastMessageTs',
       ] },
       { name: 'owner_user_id', algorithm: 'btree', columns: [
         'ownerUserId',
       ] },
     ],
     constraints: [
-      { name: 'client_external_id_key', constraint: 'unique', columns: ['externalId'] },
+      { name: 'chat_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ChatRow),
+  __table({
+    name: 'client',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'kind', algorithm: 'btree', columns: [
+        'kind',
+      ] },
+      { name: 'user_client_pair', algorithm: 'btree', columns: [
+        'ownerUserId',
+        'externalId',
+      ] },
+    ],
+    constraints: [
       { name: 'client_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ClientRow),
+  __table({
+    name: 'message',
+    indexes: [
+      { name: 'chat_id', algorithm: 'btree', columns: [
+        'chatId',
+      ] },
+      { name: 'by_chat_ts', algorithm: 'btree', columns: [
+        'chatId',
+        'ts',
+      ] },
+      { name: 'client_id', algorithm: 'btree', columns: [
+        'clientId',
+      ] },
+      { name: 'external_id', algorithm: 'btree', columns: [
+        'externalId',
+      ] },
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'media_id', algorithm: 'btree', columns: [
+        'mediaId',
+      ] },
+      { name: 'owner_user_id', algorithm: 'btree', columns: [
+        'ownerUserId',
+      ] },
+      { name: 'ts', algorithm: 'btree', columns: [
+        'ts',
+      ] },
+    ],
+    constraints: [
+      { name: 'message_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MessageRow),
+  __table({
+    name: 'robot',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'robot_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, RobotRow),
   __table({
     name: 'user',
     indexes: [
@@ -96,8 +182,12 @@ const tablesSchema = __schema(
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("delete_chat", DeleteChat),
   __reducerSchema("delete_client", DeleteClient),
+  __reducerSchema("mark_message_deleted", MarkMessageDeleted),
+  __reducerSchema("upsert_chat", UpsertChat),
   __reducerSchema("upsert_client", UpsertClient),
+  __reducerSchema("upsert_message", UpsertMessage),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

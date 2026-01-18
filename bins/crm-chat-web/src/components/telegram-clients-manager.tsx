@@ -92,7 +92,7 @@ export function TelegramClientsManager() {
     }
 
     return { connectedClients: connected, pendingClients: pending };
-  })()
+  })();
 
   // Find the pending client that needs user input or the selected one
   const activePendingClient = (() => {
@@ -108,12 +108,15 @@ export function TelegramClientsManager() {
 
     // Otherwise find any client that needs user input
     return pendingClients.find(clientNeedsUserInput) ?? null;
-  })()
+  })();
 
   // Auto-open dialog when a pending client needs user input
   useEffect(() => {
     if (activePendingClient && clientNeedsUserInput(activePendingClient)) {
-      setIsAddDialogOpen(true);
+      const timer = setTimeout(() => {
+        setIsAddDialogOpen(true);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [activePendingClient]);
 
