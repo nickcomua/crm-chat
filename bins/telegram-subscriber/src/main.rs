@@ -7,13 +7,15 @@
 mod auth;
 mod config;
 mod db;
+mod elasticsearch;
 mod ids;
 mod session;
 mod subscriber;
 
 use anyhow::Result;
-use config::{TelegramConfig, get_session_dir};
+use config::{ElasticsearchAuth, ElasticsearchConfig, TelegramConfig, get_session_dir};
 use db::{ClientEvent, process_client};
+use elasticsearch::ElasticsearchClient;
 use sdb_api::module_bindings::{
     ClientTableAccess, DbConnection, ErrorContext, SubscriptionEventContext,
 };
@@ -39,6 +41,22 @@ fn on_sub_error(_ctx: &ErrorContext, err: Error) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = TelegramConfig::from_env()?;
+    let es_config = ElasticsearchConfig::from_env();
+    let es_client = Arc::new(ElasticsearchClient::new(es_config.clone()));
+
+    if es_config.enabled {
+        let auth_method = match &es_config.auth {
+            ElasticsearchAuth::ApiKey(_) => "API key",
+            ElasticsearchAuth::Basic { .. } => "basic auth",
+        };
+        println!(
+            "Elasticsearch indexing enabled: {} (index: {}, pipeline: {}, auth: {})",
+            es_config.url, es_config.index, es_config.pipeline, auth_method
+        );
+    } else {
+        println!("Elasticsearch indexing disabled (set ES_ENABLED=true to enable)");
+    }
+
     let (tx, mut rx) = mpsc::unbounded_channel::<ClientEvent>();
     let token = env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set");
     let conn = DbConnection::builder()
@@ -95,7 +113,7 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             Some(event) = rx.recv() => {
-                process_client(conn_ark.clone(), event.client(), sessions.clone(), &config).await;
+                process_client(conn_ark.clone(), event.client(), sessions.clone(), &config, es_client.clone()).await;
             }
             _ = tokio::signal::ctrl_c() => {
                 println!("Shutting down...");

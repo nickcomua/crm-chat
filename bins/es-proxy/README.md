@@ -15,10 +15,27 @@ A secure proxy for Elasticsearch that provides JWT authentication and automatic 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
 | `ELASTICSEARCH_URL` | Elasticsearch URL | `http://localhost:9200` |
-| `ELASTIC_USERNAME` | Elasticsearch username | `elastic` |
-| `ELASTIC_PASSWORD` | Elasticsearch password | `changeme` |
+| `ELASTIC_TOKEN` | Elasticsearch API Key (takes priority over username/password) | - |
+| `ELASTIC_USERNAME` | Elasticsearch username (used if `ELASTIC_TOKEN` not set) | `elastic` |
+| `ELASTIC_PASSWORD` | Elasticsearch password (used if `ELASTIC_TOKEN` not set) | `changeme` |
 | `INDEX_NAME` | Index to search | `crm-chat-msgs` |
 | `USE_SPACETIMEDB_IDENTITY` | Compute identity from `issuer\|subject` | `false` |
+
+### Elasticsearch Authentication
+
+The proxy supports two authentication methods:
+
+1. **API Key** (recommended for production): Set `ELASTIC_TOKEN` to your Elasticsearch API key
+   ```bash
+   ELASTIC_TOKEN=your-api-key ./es-proxy
+   ```
+
+2. **Basic Auth**: Set `ELASTIC_USERNAME` and `ELASTIC_PASSWORD`
+   ```bash
+   ELASTIC_USERNAME=elastic ELASTIC_PASSWORD=changeme ./es-proxy
+   ```
+
+If both are set, `ELASTIC_TOKEN` takes priority.
 
 ## How It Works
 
@@ -48,7 +65,7 @@ curl -X POST http://localhost:3001/search \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "_source": ["sender_name", "content"],
+    "_source": ["sender_id", "content"],
     "query": {
       "match": { "content": "meeting" }
     }
@@ -182,7 +199,7 @@ const search = async (query: string) => {
         k: 10,
         num_candidates: 50
       },
-      _source: ['sender_name', 'content', 'created_at']
+      _source: ['sender_id', 'content', 'created_at']
     })
   });
 

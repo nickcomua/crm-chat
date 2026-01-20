@@ -16,6 +16,7 @@ export default __t.row({
   ownerUserId: __t.identity(),
   clientId: __t.u64(),
   chatId: __t.string(),
+  senderId: __t.string(),
   text: __t.option(__t.string()),
   out: __t.bool(),
   deleted: __t.bool(),

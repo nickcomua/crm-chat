@@ -11,6 +11,7 @@ use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    elasticsearch::{ElasticsearchClient, MessageDocument},
     ids::{TelegramChatId, TelegramMessageId},
     subscriber::sync_dialogs,
 };
@@ -20,8 +21,9 @@ pub async fn telegram_subscriber(
     client: Client,
     tg_client: Arc<TelegramClient>,
     cancell: CancellationToken,
+    es_client: Arc<ElasticsearchClient>,
 ) {
-    let dialogs = match sync_dialogs(&conn, &client, &tg_client).await {
+    let dialogs = match sync_dialogs(&conn, &client, &tg_client, es_client.clone()).await {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Failed to sync dialogs for client {}: {}", client.id, e);
@@ -85,14 +87,16 @@ pub async fn telegram_subscriber(
                     dialog_external_id: dialog.1.dialog_external_id.clone(),
                     message_external_id: msg.external_id.clone(),
                 };
+                let message_id: String = id.clone().into();
                 // Convert milliseconds to seconds for consistent timestamp handling
                 let ts_secs = msg.timestamp_ms.map(|ms| ms / 1000).unwrap_or(0);
                 if let Err(e) = conn.reducers().upsert_message(Message {
-                    id: id.into(),
+                    id: message_id.clone(),
                     owner_user_id: client.owner_user_id,
                     external_id: msg.external_id.clone(),
                     client_id: client.id,
                     chat_id: dialog.0.id.clone(),
+                    sender_id: msg.sender_id.clone(),
                     deleted: false,
                     out: msg.outgoing,
                     media_id: None,
@@ -103,6 +107,25 @@ pub async fn telegram_subscriber(
                         "Failed to upsert message {} for client {}: {:?}",
                         msg.external_id, client.id, e
                     );
+                } else if let Some(text) = &msg.text {
+                    // Index to Elasticsearch on successful SpacetimeDB upsert
+                    if let Err(e) = es_client
+                        .index_message(MessageDocument {
+                            user_id: client.owner_user_id.to_string(),
+                            client_id: client.id,
+                            chat_id: dialog.0.id.clone(),
+                            id: message_id.clone(),
+                            message_id: message_id.clone(),
+                            external_id: msg.external_id.clone(),
+                            sender_id: msg.sender_id.clone(),
+                            content: text.clone(),
+                            out: msg.outgoing,
+                            created_at: ts_secs,
+                        })
+                        .await
+                    {
+                        eprintln!("Failed to index message {} to ES: {}", message_id, e);
+                    }
                 }
             }
             Update::MessageEdited(msg) => {
@@ -121,14 +144,16 @@ pub async fn telegram_subscriber(
                     dialog_external_id: dialog.1.dialog_external_id.clone(),
                     message_external_id: msg.external_id.clone(),
                 };
+                let message_id: String = id.clone().into();
                 // Convert milliseconds to seconds for consistent timestamp handling
                 let ts_secs = msg.timestamp_ms.map(|ms| ms / 1000).unwrap_or(0);
                 if let Err(e) = conn.reducers().upsert_message(Message {
-                    id: id.into(),
+                    id: message_id.clone(),
                     owner_user_id: client.owner_user_id,
                     external_id: msg.external_id.clone(),
                     client_id: client.id,
                     chat_id: dialog.0.id.clone(),
+                    sender_id: msg.sender_id.clone(),
                     deleted: false,
                     out: msg.outgoing,
                     media_id: None,
@@ -139,6 +164,25 @@ pub async fn telegram_subscriber(
                         "Failed to upsert edited message {} for client {}: {:?}",
                         msg.external_id, client.id, e
                     );
+                } else if let Some(text) = &msg.text {
+                    // Index to Elasticsearch on successful SpacetimeDB upsert
+                    if let Err(e) = es_client
+                        .index_message(MessageDocument {
+                            user_id: client.owner_user_id.to_string(),
+                            client_id: client.id,
+                            chat_id: dialog.0.id.clone(),
+                            id: message_id.clone(),
+                            message_id: message_id.clone(),
+                            external_id: msg.external_id.clone(),
+                            sender_id: msg.sender_id.clone(),
+                            content: text.clone(),
+                            out: msg.outgoing,
+                            created_at: ts_secs,
+                        })
+                        .await
+                    {
+                        eprintln!("Failed to index edited message {} to ES: {}", message_id, e);
+                    }
                 }
             }
             Update::MessageDeleted {
@@ -175,10 +219,10 @@ pub async fn telegram_subscriber(
                 }
             }
             other => {
-                eprintln!(
-                    "Unhandled update type for client {}: {:?}",
-                    client.id, other
-                );
+                // eprintln!(
+                //     "Unhandled update type for client {}: {:?}",
+                //     client.id, other
+                // );
             }
         }
     }

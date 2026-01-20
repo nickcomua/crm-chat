@@ -2,6 +2,7 @@
 
 use crate::auth::{handle_waiting_code, handle_waiting_password, handle_waiting_phone};
 use crate::config::{TelegramConfig, get_session_path};
+use crate::elasticsearch::ElasticsearchClient;
 use crate::session::{Session, TelegramSubscriberHandler};
 use crate::subscriber::telegram_subscriber;
 use messanger_interface::session::JsonSessionStore;
@@ -40,6 +41,7 @@ pub async fn process_client(
     client: &DbClient,
     sessions: Arc<Mutex<HashMap<u64, Option<Session>>>>,
     config: &TelegramConfig,
+    es_client: Arc<ElasticsearchClient>,
 ) {
     // Only process Telegram clients
     if !matches!(client.kind, ClientKind::Telegram) {
@@ -349,6 +351,7 @@ pub async fn process_client(
                     client.clone(),
                     session.telegram_client.clone(),
                     cancel.clone(),
+                    es_client,
                 ));
                 session.subscriber_handler = Some(TelegramSubscriberHandler { handler, cancel });
             } else {
