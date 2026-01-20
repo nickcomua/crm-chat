@@ -12,6 +12,7 @@ import {
 
 // The tagged union or sum type for the algebraic type `ClientStatus`.
 const ClientStatus = __t.enum("ClientStatus", {WaitingPhone: __t.option(__t.string()),
+  WaitingQrCode: __t.option(__t.string()),
   WaitingCode: __t.option(__t.string()),
   WaitingPassword: __t.option(__t.string()),
   Connected: __t.unit(),

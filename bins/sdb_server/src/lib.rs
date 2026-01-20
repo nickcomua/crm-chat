@@ -49,6 +49,8 @@ pub struct Robot {
 #[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
 pub enum ClientStatus {
     WaitingPhone(Option<String>),
+    /// QR code login: None = waiting for QR URL to be generated, Some(url) = display this QR code
+    WaitingQrCode(Option<String>),
     WaitingCode(Option<String>),
     WaitingPassword(Option<String>),
     Connected,
@@ -337,7 +339,23 @@ fn validate_phone(phone: String) -> Result<(), String> {
 
 #[reducer]
 pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String> {
-    validate_phone(client.external_id.clone())?;
+    log::info!(
+        "upsert_client called: id={}, external_id={}, status={:?}, owner={:?}",
+        client.id,
+        client.external_id,
+        client.status,
+        client.owner_user_id
+    );
+
+    // For QR code login, external_id can be a temporary identifier (e.g., "qr:timestamp")
+    // that gets updated to the actual phone after successful login
+    let is_qr_login = matches!(client.status, ClientStatus::WaitingQrCode(_))
+        || client.external_id.starts_with("qr:");
+
+    if !is_qr_login {
+        validate_phone(client.external_id.clone())?;
+    }
+
     if let ClientStatus::WaitingPhone(Some(phone)) = &client.status {
         validate_phone(phone.clone())?;
     }
@@ -347,6 +365,24 @@ pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String>
             return Err("auth code is invalid".to_string());
         }
     }
+
+    // First, try to find by ID if provided (handles QR login where external_id changes)
+    // This is important because during QR login, external_id changes from "qr:timestamp" to actual phone
+    if client.id > 0 {
+        if let Some(existing) = ctx.db.client().id().find(client.id) {
+            log::info!(
+                "Found existing client by id={}, updating external_id from {} to {}, status={:?}",
+                existing.id,
+                existing.external_id,
+                client.external_id,
+                client.status
+            );
+            ctx.db.client().id().update(client);
+            return Ok(());
+        }
+    }
+
+    // Fall back to lookup by (owner_user_id, external_id) pair
     if let Some(existing) = ctx
         .db
         .client()
@@ -354,13 +390,20 @@ pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String>
         .filter((&client.owner_user_id.clone(), &client.external_id.clone()))
         .next()
     {
-        log::info!("Updating client: {:?}", client);
+        log::info!(
+            "Found existing client by external_id with id={}, updating to status={:?}",
+            existing.id,
+            client.status
+        );
         ctx.db.client().id().update(Client {
             id: existing.id,
             ..client
         });
     } else {
-        log::info!("Inserting client: {:?}", client);
+        log::info!(
+            "No existing client found, inserting new with external_id={}",
+            client.external_id
+        );
         ctx.db.client().insert(client);
     }
     Ok(())

@@ -1,4 +1,13 @@
-import { ArrowLeft, ArrowRight, Loader2, Phone, Shield } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
+  Phone,
+  QrCode,
+  Shield,
+  Smartphone,
+} from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import type React from "react";
 import { useEffect, useState } from "react";
 import type { Infer } from "spacetimedb";
@@ -31,12 +40,19 @@ function isValidCode(code: string): boolean {
   return CODE_REGEX.test(code);
 }
 
-type Step = "phone" | "code" | "password" | "complete" | "waiting";
+type Step =
+  | "choose"
+  | "phone"
+  | "qr"
+  | "code"
+  | "password"
+  | "complete"
+  | "waiting";
 
 // Helper to determine the current step from client status
 function getStepFromStatus(client: ClientType | null): Step {
   if (!client) {
-    return "phone";
+    return "choose";
   }
 
   const status = client.status;
@@ -47,6 +63,14 @@ function getStepFromStatus(client: ClientType | null): Step {
       return "waiting";
     }
     return "phone";
+  }
+  if (status.tag === "WaitingQrCode") {
+    if (status.value != null && status.value !== "") {
+      // QR code URL is available, show QR code
+      return "qr";
+    }
+    // Waiting for QR code to be generated
+    return "waiting";
   }
   if (status.tag === "WaitingCode") {
     if (status.value !== undefined) {
@@ -68,7 +92,7 @@ function getStepFromStatus(client: ClientType | null): Step {
     return "complete";
   }
 
-  return "phone";
+  return "choose";
 }
 
 // Helper to get a waiting message based on status
@@ -81,6 +105,9 @@ function getWaitingMessage(client: ClientType | null): string {
 
   if (status.tag === "WaitingPhone" && status.value !== undefined) {
     return "Sending verification code...";
+  }
+  if (status.tag === "WaitingQrCode" && (status.value == null || status.value === "")) {
+    return "Generating QR code...";
   }
   if (status.tag === "WaitingCode" && status.value !== undefined) {
     return "Verifying code...";
@@ -111,7 +138,9 @@ export function AddClientDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clientId, setClientId] = useState<bigint | null>(null);
-  // Track if we just submitted phone and are waiting for backend to process
+  // Track selected login method
+  const [loginMethod, setLoginMethod] = useState<"phone" | "qr" | null>(null);
+  // Track if we just submitted and are waiting for backend to process
   const [waitingForBackend, setWaitingForBackend] = useState(false);
   // Track if we just completed the flow (to show success before closing)
   const [justCompleted, setJustCompleted] = useState(false);
@@ -120,23 +149,20 @@ export function AddClientDialog({
   const derivedStep = getStepFromStatus(pendingClient);
 
   // Determine the current step to display
-  // - If we just completed, show complete step even if pendingClient becomes null
-  // - If we're waiting for backend after phone submission, show waiting step
-  // - Otherwise use the derived step from client status
   const getDisplayStep = (): Step => {
     if (justCompleted) {
       return "complete";
     }
-    if (waitingForBackend && derivedStep === "phone") {
+    if (waitingForBackend && (derivedStep === "choose" || derivedStep === "phone")) {
       return "waiting";
     }
     return derivedStep;
   };
   const step = getDisplayStep();
 
-  // Reset waitingForBackend when we get a response (step changes from what we were waiting for)
+  // Reset waitingForBackend when we get a response
   useEffect(() => {
-    if (waitingForBackend && derivedStep !== "phone") {
+    if (waitingForBackend && derivedStep !== "choose" && derivedStep !== "phone") {
       setWaitingForBackend(false);
     }
   }, [derivedStep, waitingForBackend]);
@@ -152,9 +178,22 @@ export function AddClientDialog({
   useEffect(() => {
     if (pendingClient) {
       setClientId(pendingClient.id);
-      // Pre-fill phone from externalId if available
-      if (pendingClient.externalId && !phone) {
+      // Pre-fill phone from externalId if available and not a QR placeholder
+      if (
+        pendingClient.externalId &&
+        !phone &&
+        !pendingClient.externalId.startsWith("qr:")
+      ) {
         setPhone(pendingClient.externalId);
+      }
+      // Detect login method from status
+      if (pendingClient.status.tag === "WaitingQrCode") {
+        setLoginMethod("qr");
+      } else if (
+        pendingClient.status.tag === "WaitingPhone" ||
+        pendingClient.status.tag === "WaitingCode"
+      ) {
+        setLoginMethod("phone");
       }
     }
   }, [pendingClient, phone]);
@@ -166,6 +205,7 @@ export function AddClientDialog({
     setIsSubmitting(false);
     setError(null);
     setClientId(null);
+    setLoginMethod(null);
     setWaitingForBackend(false);
     setJustCompleted(false);
   };
@@ -173,6 +213,35 @@ export function AddClientDialog({
   const handleClose = () => {
     resetForm();
     onOpenChange(false);
+  };
+
+  const handleChoosePhone = () => {
+    setLoginMethod("phone");
+  };
+
+  const handleChooseQr = () => {
+    if (!connection?.identity) {
+      return;
+    }
+    setLoginMethod("qr");
+    setIsSubmitting(true);
+    setWaitingForBackend(true);
+
+    // Create a client with QR login status
+    const qrExternalId = `qr:${Date.now()}`;
+    connection.reducers.upsertClient({
+      client: {
+        id: 0n,
+        ownerUserId: connection.identity,
+        kind: { tag: "Telegram" },
+        externalId: qrExternalId,
+        activeChats: [],
+        status: { tag: "WaitingQrCode", value: undefined },
+        session: "",
+      },
+    });
+
+    setTimeout(() => setIsSubmitting(false), 500);
   };
 
   const handleSubmitPhone = () => {
@@ -206,8 +275,6 @@ export function AddClientDialog({
       },
     });
 
-    // Reset submitting state after a short delay (button loading)
-    // waitingForBackend will keep showing the waiting step until backend responds
     setTimeout(() => setIsSubmitting(false), 500);
   };
 
@@ -256,7 +323,6 @@ export function AddClientDialog({
     }
     setIsSubmitting(true);
 
-    // Submit with empty password to indicate skip
     connection.reducers.upsertClient({
       client: {
         ...pendingClient,
@@ -275,13 +341,41 @@ export function AddClientDialog({
     handleClose();
   };
 
+  const handleBackToChoose = () => {
+    if (pendingClient && connection) {
+      connection.reducers.deleteClient({ clientId: pendingClient.id });
+    }
+    setLoginMethod(null);
+    setWaitingForBackend(false);
+  };
+
+  // Get QR code URL from client status
+  const qrCodeUrl =
+    pendingClient?.status.tag === "WaitingQrCode"
+      ? pendingClient.status.value
+      : null;
+
+  // Debug logging for QR code flow
+  console.log("AddClientDialog render:", {
+    pendingClient: pendingClient ? {
+      id: pendingClient.id,
+      status: pendingClient.status,
+      externalId: pendingClient.externalId,
+    } : null,
+    derivedStep,
+    step,
+    qrCodeUrl,
+  });
+
   return (
     <Dialog onOpenChange={handleClose} open={open}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add Telegram Client</DialogTitle>
           <DialogDescription>
+            {step === "choose" && "Choose how you want to log in"}
             {step === "phone" && "Enter your phone number to get started"}
+            {step === "qr" && "Scan the QR code with your Telegram app"}
             {step === "code" &&
               "Enter the verification code sent to your phone"}
             {step === "password" &&
@@ -292,16 +386,32 @@ export function AddClientDialog({
         </DialogHeader>
 
         <div className="mt-4">
+          {step === "choose" && (
+            <ChooseMethodStep
+              isLoading={isSubmitting}
+              onChoosePhone={handleChoosePhone}
+              onChooseQr={handleChooseQr}
+            />
+          )}
+
           {step === "phone" && (
             <PhoneStep
               error={error}
               isLoading={isSubmitting}
+              onBack={handleBackToChoose}
               onSubmit={handleSubmitPhone}
               phone={phone}
               setPhone={(p) => {
                 setPhone(p);
                 setError(null);
               }}
+            />
+          )}
+
+          {step === "qr" && (
+            <QrStep
+              onBack={handleBackToChoose}
+              qrUrl={qrCodeUrl}
             />
           )}
 
@@ -334,7 +444,7 @@ export function AddClientDialog({
             <WaitingStep
               message={
                 getWaitingMessage(pendingClient) ||
-                "Sending verification code..."
+                "Processing..."
               }
             />
           )}
@@ -342,9 +452,54 @@ export function AddClientDialog({
           {step === "complete" && <CompleteStep onClose={handleClose} />}
         </div>
 
-        <StepIndicator currentStep={step} />
+        <StepIndicator currentStep={step} loginMethod={loginMethod} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ChooseMethodStep({
+  onChoosePhone,
+  onChooseQr,
+  isLoading,
+}: {
+  onChoosePhone: () => void;
+  onChooseQr: () => void;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3">
+        <Button
+          className="h-auto flex-col gap-2 py-4"
+          disabled={isLoading}
+          onClick={onChooseQr}
+          variant="outline"
+        >
+          <QrCode className="h-8 w-8" />
+          <div className="text-center">
+            <div className="font-medium">Scan QR Code</div>
+            <div className="text-muted-foreground text-xs">
+              Quick login with another device
+            </div>
+          </div>
+        </Button>
+        <Button
+          className="h-auto flex-col gap-2 py-4"
+          disabled={isLoading}
+          onClick={onChoosePhone}
+          variant="outline"
+        >
+          <Smartphone className="h-8 w-8" />
+          <div className="text-center">
+            <div className="font-medium">Phone Number</div>
+            <div className="text-muted-foreground text-xs">
+              Login with SMS verification code
+            </div>
+          </div>
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -353,12 +508,14 @@ function PhoneStep({
   setPhone,
   isLoading,
   onSubmit,
+  onBack,
   error,
 }: {
   phone: string;
   setPhone: (phone: string) => void;
   isLoading: boolean;
   onSubmit: () => void;
+  onBack: () => void;
   error: string | null;
 }) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -393,17 +550,68 @@ function PhoneStep({
           </p>
         )}
       </div>
-      <Button
-        className="w-full"
-        disabled={!phone.trim() || isLoading}
-        onClick={onSubmit}
-      >
-        {isLoading ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <div className="flex gap-2">
+        <Button disabled={isLoading} onClick={onBack} variant="outline">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back
+        </Button>
+        <Button
+          className="flex-1"
+          disabled={!phone.trim() || isLoading}
+          onClick={onSubmit}
+        >
+          {isLoading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <ArrowRight className="mr-2 h-4 w-4" />
+          )}
+          Send Code
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function QrStep({
+  qrUrl,
+  onBack,
+}: {
+  qrUrl: string | null | undefined;
+  onBack: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col items-center gap-4">
+        {qrUrl ? (
+          <div className="rounded-lg border bg-white p-4">
+            <QRCodeSVG
+              bgColor="#ffffff"
+              fgColor="#000000"
+              level="M"
+              size={200}
+              value={qrUrl}
+            />
+          </div>
         ) : (
-          <ArrowRight className="mr-2 h-4 w-4" />
+          <div className="flex h-[232px] w-[232px] items-center justify-center rounded-lg border">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
         )}
-        Send Code
+        <div className="space-y-2 text-center">
+          <p className="text-muted-foreground text-sm">
+            Open Telegram on your phone
+          </p>
+          <p className="text-muted-foreground text-sm">
+            Go to <span className="font-medium">Settings → Devices → Link Desktop Device</span>
+          </p>
+          <p className="text-muted-foreground text-sm">
+            Point your phone at this screen to confirm login
+          </p>
+        </div>
+      </div>
+      <Button className="w-full" onClick={onBack} variant="outline">
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        Back to login options
       </Button>
     </div>
   );
@@ -582,18 +790,33 @@ function CompleteStep({ onClose }: { onClose: () => void }) {
   );
 }
 
-function StepIndicator({ currentStep }: { currentStep: Step }) {
-  const steps: Step[] = ["phone", "code", "password", "complete"];
-  const stepIndex = {
-    phone: 0,
-    code: 1,
-    password: 2,
-    complete: 3,
-    waiting: -1, // Special case, will use the previous step's index
+function StepIndicator({
+  currentStep,
+  loginMethod,
+}: {
+  currentStep: Step;
+  loginMethod: "phone" | "qr" | null;
+}) {
+  // Different steps based on login method
+  const phoneSteps: Step[] = ["choose", "phone", "code", "complete"];
+  const qrSteps: Step[] = ["choose", "qr", "complete"];
+
+  const steps = loginMethod === "qr" ? qrSteps : phoneSteps;
+
+  const getStepIndex = (step: Step): number => {
+    if (step === "waiting") {
+      // For waiting, show progress based on what we're waiting for
+      return loginMethod === "qr" ? 1 : 1;
+    }
+    if (step === "password") {
+      // Password is between code and complete for phone flow
+      return 2;
+    }
+    const index = steps.indexOf(step);
+    return index >= 0 ? index : 0;
   };
 
-  // For waiting state, we show progress based on what we're waiting for
-  const currentIndex = currentStep === "waiting" ? 1 : stepIndex[currentStep];
+  const currentIndex = getStepIndex(currentStep);
 
   return (
     <div className="mt-6 flex justify-center gap-2">
