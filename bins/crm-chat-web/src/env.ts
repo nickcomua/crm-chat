@@ -18,6 +18,7 @@ export const env = createEnv({
     VITE_CLERK_PUBLISHABLE_KEY: z.string().min(1),
     VITE_SPACETIMEDB_HOST: z.url(),
     VITE_SPACETIMEDB_MODULE: z.string().min(1),
+    VITE_ES_PROXY_URL: z.string().url().default("http://localhost:3001"),
   },
   runtimeEnv: getRuntimeEnv(),
   emptyStringAsUndefined: true,

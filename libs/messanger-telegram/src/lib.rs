@@ -224,20 +224,29 @@ impl MessengerClient for TelegramClient {
         let mut messages = client.iter_messages(chat_ref);
         _ = tokio::spawn(async move {
             while let Ok(Some(msg)) = messages.next().await {
-                // msg.sender() @todo add sender to message summary
-                let summary = MessageSummary {
-                    external_id: msg.id().to_string(),
-                    chat_external_id: chat.id().bare_id().to_string(),
-                    text: Some(msg.text().to_string()),
-                    outgoing: msg.outgoing(),
-                    timestamp_ms: Some(msg.date().timestamp_millis() as u64),
-                    media_external_id: msg
-                        .media()
-                        .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
-                };
-                // If receiver is dropped, stop producing to avoid unnecessary work
-                if sender.send(Ok(summary)).await.is_err() {
-                    break;
+                if let Some(sender_id) = msg.sender_id() {
+                    let summary = MessageSummary {
+                        external_id: msg.id().to_string(),
+                        chat_external_id: chat.id().bare_id().to_string(),
+                        text: Some(msg.text().to_string()),
+                        sender_id: sender_id.to_string(),
+                        outgoing: msg.outgoing(),
+                        timestamp_ms: Some(msg.date().timestamp_millis() as u64),
+                        media_external_id: msg
+                            .media()
+                            .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
+                    };
+                    // If receiver is dropped, stop producing to avoid unnecessary work
+                    if sender.send(Ok(summary)).await.is_err() {
+                        break;
+                    }
+                } else {
+                    sender
+                        .send(Err(MessengerError::NotFound(
+                            "Sender not found".to_string(),
+                        )))
+                        .await
+                        .ok();
                 }
             }
         });
@@ -278,9 +287,14 @@ impl MessengerClient for TelegramClient {
                                 Some(chat) => chat.id().bare_id(),
                                 None => message.peer_id().bare_id(),
                             };
+                            let sender_id = message
+                                .sender_id()
+                                .map(|id| id.to_string())
+                                .unwrap_or_default();
                             Ok(Update::NewMessage(MessageSummary {
                                 external_id: message.id().to_string(),
                                 chat_external_id: chat_id.to_string(),
+                                sender_id,
                                 text: Some(message.text().to_string()),
                                 outgoing: message.outgoing(),
                                 timestamp_ms: Some(message.date().timestamp_millis() as u64),
@@ -294,9 +308,14 @@ impl MessengerClient for TelegramClient {
                                 Some(chat) => chat.id().bare_id(),
                                 None => message.peer_id().bare_id(),
                             };
+                            let sender_id = message
+                                .sender_id()
+                                .map(|id| id.to_string())
+                                .unwrap_or_default();
                             Ok(Update::MessageEdited(MessageSummary {
                                 external_id: message.id().to_string(),
                                 chat_external_id: chat_id.to_string(),
+                                sender_id,
                                 text: Some(message.text().to_string()),
                                 outgoing: message.outgoing(),
                                 timestamp_ms: Some(message.date().timestamp_millis() as u64),

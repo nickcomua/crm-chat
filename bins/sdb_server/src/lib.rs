@@ -188,6 +188,7 @@ pub struct Message {
     pub client_id: u64,
     #[index(btree)]
     pub chat_id: String,
+    pub sender_id: String,
     pub text: Option<String>,
     pub out: bool,
     pub deleted: bool,
@@ -382,7 +383,8 @@ pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String>
 #[reducer]
 pub fn upsert_chat(ctx: &ReducerContext, chat: Chat) -> Result<(), String> {
     // Authorization guard: only the owner can modify their chats
-    if chat.owner_user_id != ctx.sender {
+    let is_robot = ctx.db.robot().id().find(ctx.sender).is_some();
+    if !is_robot && chat.owner_user_id != ctx.sender {
         return Err("unauthorized: cannot modify another user's chat".to_string());
     }
 
@@ -403,7 +405,8 @@ pub fn delete_chat(ctx: &ReducerContext, chat_id: String) -> Result<(), String> 
 #[reducer]
 pub fn upsert_message(ctx: &ReducerContext, message: Message) -> Result<(), String> {
     // Authorization guard: only the owner can modify their messages
-    if message.owner_user_id != ctx.sender {
+    let is_robot = ctx.db.robot().id().find(ctx.sender).is_some();
+    if !is_robot && message.owner_user_id != ctx.sender {
         return Err("unauthorized: cannot modify another user's message".to_string());
     }
 
@@ -435,6 +438,7 @@ pub fn mark_message_deleted(
             client_id: existing.client_id,
             chat_id: existing.chat_id.clone(),
             text: existing.text.clone(),
+            sender_id: existing.sender_id.clone(),
             out: existing.out,
             deleted: true,
             ts: existing.ts,

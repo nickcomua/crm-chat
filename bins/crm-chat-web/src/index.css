@@ -122,3 +122,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Hide the default search clear button in WebKit browsers */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}

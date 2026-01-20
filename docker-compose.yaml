@@ -109,11 +109,22 @@ services:
   #   depends_on:
   #     spacetimedb-deploy:
   #       condition: service_completed_successfully
+  #     elasticsearch:
+  #       condition: service_healthy
   #   environment:
   #     - SPACETIMEDB_URI=http://spacetimedb:3000
   #     - SPACETIMEDB_MODULE=crm-chat
   #     - TG_ID=${TG_ID}
   #     - TG_HASH=${TG_HASH}
+  #     # Elasticsearch configuration
+  #     - ES_ENABLED=true
+  #     - ES_URL=http://elasticsearch:9200
+  #     - ES_INDEX=crm-chat-msgs
+  #     - ES_PIPELINE=openrouter-pipeline
+  #     # Use ELASTIC_TOKEN for API key auth (preferred), or ES_USERNAME/ES_PASSWORD for basic auth
+  #     - ELASTIC_TOKEN=${ELASTIC_TOKEN:-}
+  #     - ES_USERNAME=elastic
+  #     - ES_PASSWORD=${ELASTIC_PASSWORD:-changeme}
   #     # Add additional TG_API_ID_*, TG_API_HASH_*, TG_SESSION_FILE_* as needed
 
   # crm-chat-web:

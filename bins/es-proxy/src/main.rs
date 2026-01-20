@@ -44,7 +44,7 @@ pub struct SearchRequest {
 
     /// Fields to return in the response
     #[serde(rename = "_source", skip_serializing_if = "Option::is_none")]
-    #[schema(example = json!(["sender_name", "content", "created_at"]))]
+    #[schema(example = json!(["sender_id", "content", "created_at"]))]
     pub source: Option<Value>,
 
     /// Maximum number of results to return
@@ -123,6 +123,50 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Filter type for scoped searches
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchScope {
+    /// Search across all user's messages
+    All,
+    /// Search within a specific chat
+    Chat { chat_id: String },
+    /// Search within a specific client's messages
+    Client { client_id: u64 },
+}
+
+/// Simplified search request for frontend use
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SimpleSearchRequest {
+    /// Text query to search for
+    #[schema(example = "meeting tomorrow")]
+    pub q: String,
+
+    /// Search scope - filter by chat, client, or search all
+    #[serde(default)]
+    #[schema(value_type = Option<SearchScope>)]
+    pub scope: Option<SearchScope>,
+
+    /// Use semantic (vector) search instead of keyword search
+    #[serde(default)]
+    #[schema(example = false)]
+    pub semantic: bool,
+
+    /// Maximum number of results to return
+    #[serde(default = "default_size")]
+    #[schema(example = 20)]
+    pub size: u32,
+
+    /// Offset for pagination
+    #[serde(default)]
+    #[schema(example = 0)]
+    pub from: u32,
+}
+
+fn default_size() -> u32 {
+    20
+}
+
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -131,9 +175,9 @@ pub struct ErrorResponse {
         description = "A secure proxy for Elasticsearch that provides JWT authentication and automatic user-based filtering. Users can only access documents that belong to them.",
         license(name = "MIT")
     ),
-    paths(search, health),
+    paths(search, simple_search, health),
     components(
-        schemas(SearchRequest, SearchResponse, SearchHits, SearchHit, ErrorResponse)
+        schemas(SearchRequest, SearchResponse, SearchHits, SearchHit, ErrorResponse, SimpleSearchRequest, SearchScope)
     ),
     modifiers(&SecurityAddon),
     tags(
@@ -167,10 +211,29 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
+/// Elasticsearch authentication method
+#[derive(Clone)]
+enum ElasticsearchAuth {
+    /// API Key authentication (Authorization: ApiKey <token>)
+    ApiKey(String),
+    /// Basic authentication (Authorization: Basic <base64(user:pass)>)
+    Basic(String),
+}
+
+impl ElasticsearchAuth {
+    /// Returns the Authorization header value
+    fn header_value(&self) -> String {
+        match self {
+            ElasticsearchAuth::ApiKey(token) => format!("ApiKey {}", token),
+            ElasticsearchAuth::Basic(encoded) => format!("Basic {}", encoded),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     elasticsearch_url: String,
-    elasticsearch_auth: String,
+    elasticsearch_auth: ElasticsearchAuth,
     index_name: String,
     jwks_cache: Arc<RwLock<JwksCache>>,
     use_spacetimedb_identity: bool,
@@ -198,8 +261,8 @@ struct JwksResponse {
 struct Jwk {
     kid: String,
     kty: String,
-    n: Option<String>,   // RSA modulus
-    e: Option<String>,   // RSA exponent
+    n: Option<String>, // RSA modulus
+    e: Option<String>, // RSA exponent
     #[serde(rename = "use")]
     key_use: Option<String>,
     alg: Option<String>,
@@ -242,7 +305,10 @@ async fn fetch_jwks() -> Result<JwksResponse, String> {
 }
 
 /// Get decoding key for a specific kid
-async fn get_decoding_key(cache: &Arc<RwLock<JwksCache>>, kid: &str) -> Result<DecodingKey, String> {
+async fn get_decoding_key(
+    cache: &Arc<RwLock<JwksCache>>,
+    kid: &str,
+) -> Result<DecodingKey, String> {
     // Check cache first
     {
         let cache_read = cache.read().await;
@@ -301,7 +367,7 @@ fn compute_spacetimedb_identity(issuer: &str, subject: &str) -> String {
     final_bytes[2..6].copy_from_slice(&checksum_hash.as_bytes()[..4]);
     final_bytes[6..].copy_from_slice(id_hash);
 
-    format!("0x{}", hex::encode(final_bytes))
+    hex::encode(final_bytes)
 }
 
 async fn auth_middleware(
@@ -331,10 +397,12 @@ async fn auth_middleware(
     })?;
 
     // Get the decoding key from JWKS
-    let decoding_key = get_decoding_key(&state.jwks_cache, &kid).await.map_err(|e| {
-        error!("Failed to get decoding key: {}", e);
-        StatusCode::UNAUTHORIZED
-    })?;
+    let decoding_key = get_decoding_key(&state.jwks_cache, &kid)
+        .await
+        .map_err(|e| {
+            error!("Failed to get decoding key: {}", e);
+            StatusCode::UNAUTHORIZED
+        })?;
 
     // Validate the JWT
     let mut validation = Validation::new(Algorithm::RS256);
@@ -350,7 +418,10 @@ async fn auth_middleware(
 
     // Double-check issuer (belt and suspenders)
     if claims.iss.as_deref() != Some(CLERK_ISSUER) {
-        error!("Invalid issuer: {:?}, expected {}", claims.iss, CLERK_ISSUER);
+        error!(
+            "Invalid issuer: {:?}, expected {}",
+            claims.iss, CLERK_ISSUER
+        );
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -364,10 +435,11 @@ async fn auth_middleware(
 
     info!("Authenticated user: {} (sub: {})", user_id, claims.sub);
 
-    request.extensions_mut().insert(AuthenticatedUser { user_id });
+    request
+        .extensions_mut()
+        .insert(AuthenticatedUser { user_id });
     Ok(next.run(request).await)
 }
-
 
 /// Search for documents in Elasticsearch with automatic user filtering
 ///
@@ -438,7 +510,10 @@ async fn search(
         );
     }
 
-    info!("Modified query: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    info!(
+        "Modified query: {}",
+        serde_json::to_string_pretty(&body).unwrap_or_default()
+    );
 
     // Forward to Elasticsearch
     let client = reqwest::Client::new();
@@ -446,7 +521,7 @@ async fn search(
 
     let response = client
         .post(&url)
-        .header("Authorization", format!("Basic {}", state.elasticsearch_auth))
+        .header("Authorization", state.elasticsearch_auth.header_value())
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -459,7 +534,141 @@ async fn search(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    Ok((StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK), Json(body)))
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(body),
+    ))
+}
+
+/// Simple search endpoint with convenient filtering options
+///
+/// A simplified search API that handles common use cases:
+/// - Full-text keyword search
+/// - Semantic (vector) search using embeddings
+/// - Filtering by chat_id or client_id
+///
+/// The user_id filter is automatically applied based on the JWT token.
+#[utoipa::path(
+    post,
+    path = "/search/simple",
+    tag = "search",
+    request_body(
+        content = SimpleSearchRequest,
+        description = "Simple search parameters with optional scope filtering",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "Search results", body = SearchResponse),
+        (status = 401, description = "Unauthorized - missing or invalid JWT", body = ErrorResponse),
+        (status = 502, description = "Elasticsearch error", body = ErrorResponse)
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+async fn simple_search(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<AuthenticatedUser>,
+    Json(request): Json<SimpleSearchRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Build the filter clauses
+    let mut filters = vec![json!({
+        "term": { "user_id": user.user_id }
+    })];
+
+    // Add scope-based filters
+    match &request.scope {
+        Some(SearchScope::Chat { chat_id }) => {
+            filters.push(json!({
+                "term": { "chat_id": chat_id }
+            }));
+        }
+        Some(SearchScope::Client { client_id }) => {
+            filters.push(json!({
+                "term": { "client_id": client_id }
+            }));
+        }
+        Some(SearchScope::All) | None => {}
+    }
+
+    // Build the query body
+    let body = if request.semantic {
+        // Semantic search using KNN
+        json!({
+            "knn": {
+                "field": "content_embedding",
+                "query_vector_builder": {
+                    "text_embedding": {
+                        "model_id": "openrouter-embeddings",
+                        "model_text": request.q
+                    }
+                },
+                "k": request.size,
+                "num_candidates": request.size * 5,
+                "filter": {
+                    "bool": {
+                        "filter": filters
+                    }
+                }
+            },
+            "_source": ["id", "external_id", "chat_id", "client_id", "sender_id", "content", "out", "created_at"],
+            "size": request.size,
+            "from": request.from
+        })
+    } else {
+        // Keyword search using match query
+        json!({
+            "query": {
+                "bool": {
+                    "must": [{
+                        "match": {
+                            "content": {
+                                "query": request.q,
+                                "fuzziness": "AUTO"
+                            }
+                        }
+                    }],
+                    "filter": filters
+                }
+            },
+            "_source": ["id", "external_id", "chat_id", "client_id", "sender_id", "content", "out", "created_at"],
+            "size": request.size,
+            "from": request.from,
+            "sort": [
+                { "_score": "desc" },
+                { "created_at": "desc" }
+            ]
+        })
+    };
+
+    info!(
+        "Simple search query: {}",
+        serde_json::to_string_pretty(&body).unwrap_or_default()
+    );
+
+    // Forward to Elasticsearch
+    let client = reqwest::Client::new();
+    let url = format!("{}/{}/_search", state.elasticsearch_url, state.index_name);
+
+    let response = client
+        .post(&url)
+        .header("Authorization", state.elasticsearch_auth.header_value())
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        Json(body),
+    ))
 }
 
 /// Health check endpoint
@@ -484,6 +693,9 @@ async fn openapi_json() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    // Load .env file from current directory or parent directories
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -491,13 +703,23 @@ async fn main() {
         )
         .init();
 
-    let es_user = std::env::var("ELASTIC_USERNAME").unwrap_or_else(|_| "elastic".to_string());
-    let es_pass = std::env::var("ELASTIC_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
-    let es_auth = BASE64.encode(format!("{}:{}", es_user, es_pass));
+    // Determine Elasticsearch authentication method
+    // Priority: ELASTIC_TOKEN (API Key) > ELASTIC_USERNAME/ELASTIC_PASSWORD (Basic)
+    let es_auth = if let Ok(token) = std::env::var("ELASTIC_TOKEN") {
+        info!("Using API Key authentication for Elasticsearch");
+        ElasticsearchAuth::ApiKey(token)
+    } else {
+        let es_user = std::env::var("ELASTIC_USERNAME").unwrap_or_else(|_| "elastic".to_string());
+        let es_pass = std::env::var("ELASTIC_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
+        info!(
+            "Using Basic authentication for Elasticsearch (user: {})",
+            es_user
+        );
+        ElasticsearchAuth::Basic(BASE64.encode(format!("{}:{}", es_user, es_pass)))
+    };
 
     let state = Arc::new(AppState {
-        elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
-            .unwrap_or_else(|_| "http://localhost:9200".to_string()),
+        elasticsearch_url: std::env::var("ELASTICSEARCH_URL").unwrap(),
         elasticsearch_auth: es_auth,
         index_name: std::env::var("INDEX_NAME").unwrap_or_else(|_| "crm-chat-msgs".to_string()),
         jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
@@ -509,7 +731,10 @@ async fn main() {
     info!("Starting ES proxy on port 3001");
     info!("Elasticsearch URL: {}", state.elasticsearch_url);
     info!("Index: {}", state.index_name);
-    info!("Using SpacetimeDB identity: {}", state.use_spacetimedb_identity);
+    info!(
+        "Using SpacetimeDB identity: {}",
+        state.use_spacetimedb_identity
+    );
     info!("Accepting tokens from issuer: {}", CLERK_ISSUER);
 
     let cors = CorsLayer::new()
@@ -519,7 +744,11 @@ async fn main() {
 
     let app = Router::new()
         .route("/search", post(search))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .route("/search/simple", post(simple_search))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .route("/health", get(health))
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
         .layer(cors)
