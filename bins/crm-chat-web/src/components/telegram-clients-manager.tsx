@@ -20,13 +20,16 @@ function isClientConnected(client: ClientType): boolean {
   return client.status.tag === "Connected";
 }
 
-// Helper to check if a client needs user input (status without value)
+// Helper to check if a client needs user input or is in QR login flow
 function clientNeedsUserInput(client: ClientType): boolean {
   const status = client.status;
-  // Client needs input when status is WaitingCode or WaitingPassword without a value
+  // Client needs input when:
+  // - WaitingCode or WaitingPassword without a value (needs user to enter code/password)
+  // - WaitingQrCode (needs user to scan QR code or wait for URL)
   return (
-    (status.tag === "WaitingCode" || status.tag === "WaitingPassword") &&
-    status.value === undefined
+    ((status.tag === "WaitingCode" || status.tag === "WaitingPassword") &&
+      status.value === undefined) ||
+    status.tag === "WaitingQrCode"
   );
 }
 
@@ -62,6 +65,12 @@ function getStatusDisplay(client: ClientType): {
       return { label: "Verifying password...", color: "bg-amber-500" };
     }
     return { label: "Enter password", color: "bg-amber-500" };
+  }
+  if (status.tag === "WaitingQrCode") {
+    if (status.value !== undefined) {
+      return { label: "Scan QR code", color: "bg-blue-500" };
+    }
+    return { label: "Generating QR...", color: "bg-amber-500" };
   }
 
   return { label: "Unknown", color: "bg-gray-500" };

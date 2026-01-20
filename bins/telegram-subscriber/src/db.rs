@@ -1,12 +1,14 @@
 //! SpacetimeDB client event handling.
 
-use crate::auth::{handle_waiting_code, handle_waiting_password, handle_waiting_phone};
+use crate::auth::{handle_qr_login, handle_waiting_code, handle_waiting_password, handle_waiting_phone, QrExportResult};
 use crate::config::{TelegramConfig, get_session_path};
 use crate::elasticsearch::ElasticsearchClient;
-use crate::session::{Session, TelegramSubscriberHandler};
+use crate::session::{QrPollingHandler, Session, TelegramSubscriberHandler};
 use crate::subscriber::telegram_subscriber;
+use grammers_client::client::PasswordToken;
 use messanger_interface::session::JsonSessionStore;
 use messanger_interface::{AuthConfig, MessengerClient, MessengerClientBuilder};
+use messanger_telegram::TelegramClient;
 use messanger_telegram::TelegramClientBuilder;
 use sdb_api::module_bindings::{
     Client as DbClient, ClientKind, ClientStatus, DbConnection, upsert_client,
@@ -17,6 +19,87 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+/// Result from QR polling that needs to be handled by the main session
+pub enum QrPollResult {
+    Success { phone: Option<String> },
+    PasswordRequired(PasswordToken),
+}
+
+/// Background task that polls for QR login completion
+async fn qr_polling_task(
+    conn: Arc<DbConnection>,
+    client: DbClient,
+    tg_client: Arc<TelegramClient>,
+    api_id: i32,
+    cancel: CancellationToken,
+    result_tx: tokio::sync::mpsc::Sender<QrPollResult>,
+) {
+    let poll_interval = std::time::Duration::from_secs(2);
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                println!("QR polling cancelled for client {}", client.id);
+                return;
+            }
+            _ = tokio::time::sleep(poll_interval) => {
+                println!("Polling QR status for client {}...", client.id);
+                match handle_qr_login(api_id, &tg_client).await {
+                    Ok(QrExportResult::Token { url, expires: _ }) => {
+                        // Token refreshed, update URL for frontend
+                        println!("QR token refreshed for client {}", client.id);
+                        if let Err(e) = conn.reducers().upsert_client(DbClient {
+                            status: ClientStatus::WaitingQrCode(Some(url)),
+                            ..client.clone()
+                        }) {
+                            eprintln!("Failed to update QR URL for client {}: {:?}", client.id, e);
+                        }
+                    }
+                    Ok(QrExportResult::Success { phone }) => {
+                        println!("QR scan successful for client {}!", client.id);
+                        // Update client to Connected status
+                        let updated_client = if let Some(ref phone) = phone {
+                            DbClient {
+                                status: ClientStatus::Connected,
+                                external_id: phone.clone(),
+                                ..client.clone()
+                            }
+                        } else {
+                            DbClient {
+                                status: ClientStatus::Connected,
+                                ..client.clone()
+                            }
+                        };
+                        if let Err(e) = conn.reducers().upsert_client(updated_client) {
+                            eprintln!("Failed to update client {} to Connected: {:?}", client.id, e);
+                        }
+                        // Notify the session about the result
+                        let _ = result_tx.send(QrPollResult::Success { phone }).await;
+                        return;
+                    }
+                    Ok(QrExportResult::PasswordRequired(password_token)) => {
+                        println!("QR login requires 2FA password for client {}", client.id);
+                        // Update client to WaitingPassword status
+                        if let Err(e) = conn.reducers().upsert_client(DbClient {
+                            status: ClientStatus::WaitingPassword(None),
+                            ..client.clone()
+                        }) {
+                            eprintln!("Failed to update client {} to WaitingPassword: {:?}", client.id, e);
+                        }
+                        // Notify the session about the password requirement
+                        let _ = result_tx.send(QrPollResult::PasswordRequired(password_token)).await;
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("Error polling QR status for client {}: {:?}", client.id, e);
+                        // Continue polling
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Event types for client table changes.
 #[derive(Debug, Clone)]
@@ -90,6 +173,7 @@ pub async fn process_client(
                     login_token: None,
                     password_token: None,
                     subscriber_handler: None,
+                    qr_polling_handler: None,
                 }),
                 Err(e) => {
                     eprintln!(
@@ -192,6 +276,104 @@ pub async fn process_client(
                         ..client.clone()
                     })
                     .expect("Failed to update client");
+            }
+        }
+        ClientStatus::WaitingQrCode(None) => {
+            // Initial QR code request - generate and return the QR URL
+            println!(
+                "Client {}({}) requesting QR code login",
+                client.id, client.external_id
+            );
+
+            // Cancel any existing QR polling handler
+            if let Some(handler) = session.qr_polling_handler.take() {
+                handler.cancel.cancel();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
+            }
+
+            match handle_qr_login(config.api_id, &session.telegram_client).await {
+                Ok(QrExportResult::Token { url, expires: _ }) => {
+                    println!("Client {} QR code generated, starting polling", client.id);
+                    conn.reducers()
+                        .upsert_client(DbClient {
+                            status: ClientStatus::WaitingQrCode(Some(url)),
+                            ..client.clone()
+                        })
+                        .expect("Failed to update client with QR URL");
+
+                    // Start QR polling task
+                    let cancel = CancellationToken::new();
+                    let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
+                    let handler = tokio::spawn(qr_polling_task(
+                        conn.clone(),
+                        client.clone(),
+                        session.telegram_client.clone(),
+                        config.api_id,
+                        cancel.clone(),
+                        result_tx,
+                    ));
+                    session.qr_polling_handler = Some(QrPollingHandler { handler, cancel });
+                }
+                Ok(QrExportResult::Success { phone }) => {
+                    println!("Client {} already authorized via QR", client.id);
+                    // Update external_id to the actual phone if available
+                    let updated_client = if let Some(phone) = phone {
+                        DbClient {
+                            status: ClientStatus::Connected,
+                            external_id: phone,
+                            ..client.clone()
+                        }
+                    } else {
+                        DbClient {
+                            status: ClientStatus::Connected,
+                            ..client.clone()
+                        }
+                    };
+                    conn.reducers()
+                        .upsert_client(updated_client)
+                        .expect("Failed to update client");
+                }
+                Ok(QrExportResult::PasswordRequired(password_token)) => {
+                    println!("Client {} QR login requires 2FA password", client.id);
+                    session.password_token = Some(password_token);
+                    conn.reducers()
+                        .upsert_client(DbClient {
+                            status: ClientStatus::WaitingPassword(None),
+                            ..client.clone()
+                        })
+                        .expect("Failed to update client");
+                }
+                Err(e) => {
+                    eprintln!("Error generating QR code for client {}: {:?}", client.id, e);
+                    // Keep waiting for QR - client can retry
+                }
+            }
+        }
+        ClientStatus::WaitingQrCode(Some(_url)) => {
+            // QR code is displayed, polling is handled by the background task
+            // If we get here, the polling task should already be running
+            // Just ensure it's running, otherwise restart it
+            if session.qr_polling_handler.is_none() {
+                println!(
+                    "Client {}({}) has QR URL but no polling task, restarting polling",
+                    client.id, client.external_id
+                );
+                let cancel = CancellationToken::new();
+                let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
+                let handler = tokio::spawn(qr_polling_task(
+                    conn.clone(),
+                    client.clone(),
+                    session.telegram_client.clone(),
+                    config.api_id,
+                    cancel.clone(),
+                    result_tx,
+                ));
+                session.qr_polling_handler = Some(QrPollingHandler { handler, cancel });
+            } else {
+                println!(
+                    "Client {}({}) QR polling already active",
+                    client.id, client.external_id
+                );
             }
         }
         ClientStatus::WaitingCode(Some(code)) => {
@@ -298,6 +480,7 @@ pub async fn process_client(
                 login_token: None,
                 password_token: None,
                 subscriber_handler: None,
+                qr_polling_handler: None,
             };
         }
         ClientStatus::WaitingPhone(None) => {
@@ -320,6 +503,13 @@ pub async fn process_client(
         }
         ClientStatus::Connected => {
             println!("Client {}({}) is connected", client.id, client.external_id);
+
+            // Cancel QR polling if running (no longer needed)
+            if let Some(handler) = session.qr_polling_handler.take() {
+                handler.cancel.cancel();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
+            }
+
             let is_authorized = session.telegram_client.is_authorized().await;
             if !is_authorized.is_ok_and(|r| r) {
                 eprintln!(

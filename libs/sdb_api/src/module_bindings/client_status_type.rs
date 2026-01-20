@@ -9,6 +9,8 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 pub enum ClientStatus {
     WaitingPhone(Option<String>),
 
+    WaitingQrCode(Option<String>),
+
     WaitingCode(Option<String>),
 
     WaitingPassword(Option<String>),

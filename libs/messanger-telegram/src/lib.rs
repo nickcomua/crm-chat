@@ -38,11 +38,176 @@ pub struct TelegramClient {
     pub pool_runner_handle: JoinHandle<()>,
 }
 
+/// Result of a QR login token export operation.
+#[derive(Debug, Clone)]
+pub enum QrLoginToken {
+    /// A new token was generated. Contains the `tg://login?token=...` URL and expiry timestamp.
+    Token {
+        /// The `tg://login?token=...` URL that should be displayed as a QR code
+        url: String,
+        /// Unix timestamp when this token expires
+        expires: i32,
+    },
+    /// The token was accepted on another device, login succeeded.
+    Success,
+    /// The client needs to connect to a different DC to complete login.
+    /// This is handled automatically by `login_with_qr`.
+    MigrateTo {
+        dc_id: i32,
+    },
+}
+
 impl TelegramClient {
     /// Get access to the underlying grammers Client for advanced operations
     /// like sending, editing, and deleting messages.
     pub async fn get_native_client(&self) -> Arc<Mutex<Client>> {
         self.client.clone()
+    }
+
+    /// Perform QR code login.
+    ///
+    /// This function exports a login token that can be displayed as a QR code.
+    /// The user scans the QR code with an already-logged-in Telegram app to authorize
+    /// this client.
+    ///
+    /// # Arguments
+    /// * `api_id` - Your Telegram API ID
+    /// * `on_token` - Callback called with each new QR token URL. Display this as a QR code.
+    ///   The callback receives the `tg://login?token=...` URL and expiry timestamp.
+    ///   Return `true` to continue waiting, `false` to abort.
+    /// * `password_callback` - Optional callback for 2FA password. Called if the account has 2FA enabled.
+    ///
+    /// # Returns
+    /// * `Ok(())` - Login succeeded
+    /// * `Err(MessengerError)` - Login failed
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.login_with_qr(
+    ///     api_id,
+    ///     |url, expires| {
+    ///         println!("Scan this QR code: {}", url);
+    ///         println!("Expires at: {}", expires);
+    ///         true // continue waiting
+    ///     },
+    ///     Some(|hint| async move {
+    ///         // Prompt user for 2FA password
+    ///         Some("password".to_string())
+    ///     }),
+    /// ).await?;
+    /// ```
+    pub async fn login_with_qr<F, PF, PFut>(
+        &self,
+        api_id: i32,
+        mut on_token: F,
+        password_callback: Option<PF>,
+    ) -> Result<(), MessengerError>
+    where
+        F: FnMut(String, i32) -> bool + Send,
+        PF: FnOnce(Option<String>) -> PFut + Send,
+        PFut: std::future::Future<Output = Option<String>> + Send,
+    {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use grammers_tl_types as tl;
+
+        let client = self.client.lock().await;
+
+        // IDs of users already logged in on this client (to exclude from QR login)
+        let except_ids = vec![];
+
+        loop {
+            // Request a new login token
+            let request = tl::functions::auth::ExportLoginToken {
+                api_id,
+                api_hash: self.api_hash.clone(),
+                except_ids: except_ids.clone(),
+            };
+
+            let result = client.invoke(&request).await.map_err(|e| {
+                MessengerError::Authentication(format!("Failed to export login token: {}", e))
+            })?;
+
+            match result {
+                tl::enums::auth::LoginToken::Token(token) => {
+                    // Generate the tg:// URL for QR code
+                    let encoded = URL_SAFE_NO_PAD.encode(&token.token);
+                    let url = format!("tg://login?token={}", encoded);
+
+                    // Call the callback with the new token
+                    if !on_token(url, token.expires) {
+                        return Err(MessengerError::Authentication(
+                            "QR login aborted by user".to_string(),
+                        ));
+                    }
+
+                    // Wait a bit before checking again or requesting a new token
+                    // The token typically expires in ~30 seconds
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                    // Need to import the token on a different DC
+                    let import_request = tl::functions::auth::ImportLoginToken {
+                        token: migrate.token,
+                    };
+
+                    let import_result = client
+                        .invoke_in_dc(migrate.dc_id, &import_request)
+                        .await
+                        .map_err(|e| {
+                            MessengerError::Authentication(format!(
+                                "Failed to import login token to DC {}: {}",
+                                migrate.dc_id, e
+                            ))
+                        })?;
+
+                    // Handle the result from the other DC
+                    match import_result {
+                        tl::enums::auth::LoginToken::Success(success) => {
+                            return self
+                                .handle_qr_login_success(&client, success, password_callback)
+                                .await;
+                        }
+                        _ => {
+                            // Unexpected response, continue the loop
+                            continue;
+                        }
+                    }
+                }
+                tl::enums::auth::LoginToken::Success(success) => {
+                    return self
+                        .handle_qr_login_success(&client, success, password_callback)
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// Handle successful QR login authorization
+    async fn handle_qr_login_success<PF, PFut>(
+        &self,
+        _client: &Client,
+        success: grammers_tl_types::types::auth::LoginTokenSuccess,
+        _password_callback: Option<PF>,
+    ) -> Result<(), MessengerError>
+    where
+        PF: FnOnce(Option<String>) -> PFut + Send,
+        PFut: std::future::Future<Output = Option<String>> + Send,
+    {
+        use grammers_tl_types as tl;
+
+        match success.authorization {
+            tl::enums::auth::Authorization::Authorization(_auth) => {
+                // Successfully logged in
+                Ok(())
+            }
+            tl::enums::auth::Authorization::SignUpRequired(_) => {
+                Err(MessengerError::Authentication(
+                    "Account signup required - QR login only works for existing accounts"
+                        .to_string(),
+                ))
+            }
+        }
     }
 }
 
