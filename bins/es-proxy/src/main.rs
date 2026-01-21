@@ -238,6 +238,7 @@ struct AppState {
     jwks_cache: Arc<RwLock<JwksCache>>,
     use_spacetimedb_identity: bool,
     clerk_issuer: String,
+    http_client: reqwest::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,7 +290,10 @@ async fn fetch_jwks(clerk_issuer: &str) -> Result<JwksResponse, String> {
     let url = format!("{}/.well-known/jwks.json", clerk_issuer);
     info!("Fetching JWKS from {}", url);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(&url)
         .send()
@@ -447,10 +451,10 @@ async fn forward_to_es(
     state: &AppState,
     body: &Value,
 ) -> Result<(StatusCode, Value), (StatusCode, String)> {
-    let client = reqwest::Client::new();
     let url = format!("{}/{}/_search", state.elasticsearch_url, state.index_name);
 
-    let response = client
+    let response = state
+        .http_client
         .post(&url)
         .header("Authorization", state.elasticsearch_auth.header_value())
         .header("Content-Type", "application/json")
@@ -466,7 +470,7 @@ async fn forward_to_es(
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
     Ok((
-        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
         body,
     ))
 }
@@ -530,7 +534,13 @@ async fn search(
         *query = new_query;
     } else {
         // No query specified, create one with just the filter
-        body.as_object_mut().unwrap().insert(
+        let obj = body.as_object_mut().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Request body must be a JSON object".to_string(),
+            )
+        })?;
+        obj.insert(
             "query".to_string(),
             json!({
                 "bool": {
@@ -697,14 +707,18 @@ async fn main() {
         info!("Using API Key authentication for Elasticsearch");
         ElasticsearchAuth::ApiKey(token)
     } else {
-        let es_user = std::env::var("ELASTIC_USERNAME").unwrap_or_else(|_| "elastic".to_string());
-        let es_pass = std::env::var("ELASTIC_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
-        info!(
-            "Using Basic authentication for Elasticsearch (user: {})",
-            es_user
-        );
+        let es_user = std::env::var("ELASTIC_USERNAME")
+            .expect("ELASTIC_USERNAME must be set when not using ELASTIC_TOKEN");
+        let es_pass = std::env::var("ELASTIC_PASSWORD")
+            .expect("ELASTIC_PASSWORD must be set when not using ELASTIC_TOKEN");
+        info!("Using Basic authentication for Elasticsearch");
         ElasticsearchAuth::Basic(BASE64.encode(format!("{}:{}", es_user, es_pass)))
     };
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("Failed to create HTTP client");
 
     let state = Arc::new(AppState {
         elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
@@ -717,6 +731,7 @@ async fn main() {
             .unwrap_or(false),
         clerk_issuer: std::env::var("CLERK_ISSUER")
             .unwrap_or_else(|_| "https://noted-rabbit-14.clerk.accounts.dev".to_string()),
+        http_client,
     });
 
     info!("Starting ES proxy on port 3001");
@@ -745,6 +760,8 @@ async fn main() {
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
+        .await
+        .expect("Failed to bind to port 3001");
+    axum::serve(listener, app).await.expect("Server error");
 }
