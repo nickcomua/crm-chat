@@ -296,6 +296,7 @@ export function SearchDialog({
               />
               {query && (
                 <button
+                  aria-label="Clear search"
                   className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   onClick={() => setQuery("")}
                   type="button"
@@ -305,6 +306,10 @@ export function SearchDialog({
               )}
             </div>
             <Button
+              aria-label={
+                semantic ? "Semantic search enabled" : "Enable semantic search"
+              }
+              aria-pressed={semantic}
               className={cn(semantic && "bg-primary text-primary-foreground")}
               onClick={() => setSemantic(!semantic)}
               size="icon"

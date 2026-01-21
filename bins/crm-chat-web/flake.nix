@@ -23,7 +23,7 @@
           src = pkgs.lib.cleanSource ./.;
 
           # Nix will tell you the correct hash to put here after the first build attempt.
-          npmDepsHash = "sha256-6LaSfN7BU9Zn9lCd9Wzr0YcXc0hZH65cSeUVVfjfFSM=";
+          npmDepsHash = "sha256-p4AGxP0UDgaswr7KUnCVuL53WgorcmsMClwlpRBKUUg=";
 
           # Avoid npm/vite trying to write to read-only paths
           # makeCacheWritable = true;
@@ -138,7 +138,7 @@
             version = "0.0.0";
             src = pkgs.lib.cleanSource ./.;
 
-            npmDepsHash = "sha256-6LaSfN7BU9Zn9lCd9Wzr0YcXc0hZH65cSeUVVfjfFSM=";
+            npmDepsHash = "sha256-p4AGxP0UDgaswr7KUnCVuL53WgorcmsMClwlpRBKUUg=";
             makeCacheWritable = true;
 
             nativeBuildInputs = [
