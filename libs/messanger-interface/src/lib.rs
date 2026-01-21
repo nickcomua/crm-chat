@@ -149,16 +149,16 @@ mod tests {
 
     #[async_trait]
     impl MessengerClient for MockMessengerClient {
-        async fn login<'callback, F, Fut>(
-            &self,
-            _question_callback: F,
-        ) -> Result<(), MessengerError>
-        where
-            F: Send + Sync + Fn(String) -> Fut + 'callback,
-            Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
-        {
-            Ok(())
-        }
+        // async fn login<'callback, F, Fut>(
+        //     &self,
+        //     _question_callback: F,
+        // ) -> Result<(), MessengerError>
+        // where
+        //     F: Send + Sync + Fn(String) -> Fut + 'callback,
+        //     Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
+        // {
+        //     Ok(())
+        // }
 
         async fn is_authorized(&self) -> Result<bool, MessengerError> {
             Ok(self.authorized)

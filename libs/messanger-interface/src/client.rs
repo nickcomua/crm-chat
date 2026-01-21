@@ -17,10 +17,10 @@ pub trait MessengerClient: Send + Sync {
     /// Check if the client is currently authorized.
     async fn is_authorized(&self) -> Result<bool, MessengerError>;
 
-    async fn login<'callback, F, Fut>(&self, question_callback: F) -> Result<(), MessengerError>
-    where
-        F: Send + Sync + Fn(String) -> Fut + 'callback,
-        Fut: std::future::Future<Output = Option<String>> + Send + 'callback;
+    // async fn login<'callback, F, Fut>(&self, question_callback: F) -> Result<(), MessengerError>
+    // where
+    //     F: Send + Sync + Fn(String) -> Fut + 'callback,
+    //     Fut: std::future::Future<Output = Option<String>> + Send + 'callback;
 
     /// Get the external identifier for the authenticated user/account.
     ///

@@ -21,19 +21,21 @@ pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
 pub mod delete_task_reducer;
 pub mod generate_qr_code_output_type;
-pub mod generate_qr_code_result_type;
 pub mod generate_qr_code_type;
 pub mod identity_disconnected_reducer;
+pub mod login_token_type;
 pub mod mark_message_deleted_reducer;
 pub mod message_table;
 pub mod message_type;
+pub mod password_token_type;
 pub mod poll_qr_login_output_type;
-pub mod poll_qr_login_result_type;
 pub mod poll_qr_login_type;
+pub mod qr_token_type;
 pub mod request_login_code_output_type;
 pub mod request_login_code_type;
 pub mod robot_table;
 pub mod robot_type;
+pub mod sign_in_success_type;
 pub mod task_payload_type;
 pub mod task_status_type;
 pub mod task_table;
@@ -69,23 +71,25 @@ pub use delete_client_reducer::{
 };
 pub use delete_task_reducer::{DeleteTaskCallbackId, delete_task, set_flags_for_delete_task};
 pub use generate_qr_code_output_type::GenerateQrCodeOutput;
-pub use generate_qr_code_result_type::GenerateQrCodeResult;
 pub use generate_qr_code_type::GenerateQrCode;
 pub use identity_disconnected_reducer::{
     IdentityDisconnectedCallbackId, identity_disconnected, set_flags_for_identity_disconnected,
 };
+pub use login_token_type::LoginToken;
 pub use mark_message_deleted_reducer::{
     MarkMessageDeletedCallbackId, mark_message_deleted, set_flags_for_mark_message_deleted,
 };
 pub use message_table::*;
 pub use message_type::Message;
+pub use password_token_type::PasswordToken;
 pub use poll_qr_login_output_type::PollQrLoginOutput;
-pub use poll_qr_login_result_type::PollQrLoginResult;
 pub use poll_qr_login_type::PollQrLogin;
+pub use qr_token_type::QrToken;
 pub use request_login_code_output_type::RequestLoginCodeOutput;
 pub use request_login_code_type::RequestLoginCode;
 pub use robot_table::*;
 pub use robot_type::Robot;
+pub use sign_in_success_type::SignInSuccess;
 pub use task_payload_type::TaskPayload;
 pub use task_status_type::TaskStatus;
 pub use task_table::*;

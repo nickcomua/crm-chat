@@ -426,38 +426,46 @@ async fn test_native_message_access() {
         if !is_authorized {
             panic!("Client is not authorized");
         }
-
+        println!("Client is authorized");
         // Get first dialog
-        let mut dialogs = client
-            .iter_dialogs()
-            .await
-            .expect("Failed to get dialogs stream");
+        let first_dialog = {
+            let mut dialogs = client
+                .iter_dialogs()
+                .await
+                .expect("Failed to get dialogs stream");
 
-        let first_dialog = match dialogs.next().await {
-            Some(Ok(dialog)) => dialog,
-            Some(Err(e)) => {
-                panic!("Failed to get first dialog: {}", e);
-            }
-            None => {
-                panic!("No dialogs found");
+            match dialogs.next().await {
+                Some(Ok(dialog)) => dialog,
+                Some(Err(e)) => {
+                    panic!("Failed to get first dialog: {}", e);
+                }
+                None => {
+                    panic!("No dialogs found");
+                }
             }
         };
+        dbg!("First dialog: {}", &first_dialog);
+        // Drop dialogs stream to release the mutex lock held by the spawned task
+        // drop(dialogs);
 
         // Get first message
-        let mut messages = client
-            .iter_messages(&first_dialog.external_id)
-            .await
-            .expect("Failed to get messages stream");
+        let first_message = {
+            let mut messages = client
+                .iter_messages(&first_dialog.external_id)
+                .await
+                .expect("Failed to get messages stream");
 
-        let first_message = match messages.next().await {
-            Some(Ok(message)) => message,
-            Some(Err(e)) => {
-                panic!("Failed to get first message: {}", e);
-            }
-            None => {
-                panic!("No messages found in dialog");
+            match messages.next().await {
+                Some(Ok(message)) => message,
+                Some(Err(e)) => {
+                    panic!("Failed to get first message: {}", e);
+                }
+                None => {
+                    panic!("No messages found in dialog");
+                }
             }
         };
+        dbg!("First message: {}", &first_message);
 
         // Get native message payload
         // Note: message external_id format is "message_id" in our implementation

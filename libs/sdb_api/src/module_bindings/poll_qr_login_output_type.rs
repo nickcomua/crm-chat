@@ -4,16 +4,19 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-use super::poll_qr_login_result_type::PollQrLoginResult;
+use super::password_token_type::PasswordToken;
+use super::qr_token_type::QrToken;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub enum PollQrLoginOutput {
     Pending,
 
-    Success(PollQrLoginResult),
+    Token(QrToken),
 
-    PasswordRequired,
+    Success,
+
+    PasswordRequired(PasswordToken),
 
     Failed(String),
 }

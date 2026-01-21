@@ -2,6 +2,8 @@
 //!
 //! Tasks are created by the frontend/API and picked up by robot workers (e.g., telegram-subscriber).
 //! This enables async processing of authentication flows and other long-running operations.
+//!
+//! Each task payload mirrors the input/output of the corresponding TelegramClient method.
 
 use spacetimedb::{reducer, Identity, ReducerContext, Table, Timestamp};
 
@@ -24,67 +26,32 @@ pub enum TaskStatus {
 
 // === Task Payloads (Input + Output pairs) ===
 
-// --- Generate QR Code ---
-
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub struct GenerateQrCodeResult {
-    /// The QR URL (tg://login?token=...)
-    pub url: String,
-    /// Expiration timestamp (UTC ms since epoch)
-    pub expires_at: u64,
-}
-
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub enum GenerateQrCodeOutput {
-    Pending,
-    Success(GenerateQrCodeResult),
-    Failed(String),
-}
-
-/// Generate a QR code for Telegram login.
-/// Input: nothing (client_id is in the task)
-/// Output: QR URL and expiration, or error
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub struct GenerateQrCode {
-    pub output: GenerateQrCodeOutput,
-}
-
-// --- Poll QR Login ---
-
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub struct PollQrLoginResult {
-    /// Phone number of the logged-in account (if available).
-    pub phone: Option<String>,
-}
-
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub enum PollQrLoginOutput {
-    Pending,
-    Success(PollQrLoginResult),
-    PasswordRequired,
-    Failed(String),
-}
-
-/// Poll for QR code scan completion.
-/// Input: nothing (polls the existing QR session)
-/// Output: still waiting, success with phone, password required, or error
-#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
-pub struct PollQrLogin {
-    pub output: PollQrLoginOutput,
-}
-
 // --- Request Login Code ---
+// TelegramClient::request_login_code(phone: &str) -> Result<ClonableLoginToken>
+
+/// Mirrors ClonableLoginToken from messanger-telegram.
+/// Contains the data needed to verify the login code.
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct LoginToken {
+    /// The phone number associated with this login attempt.
+    pub phone: String,
+    /// The hash received from Telegram for this login code request.
+    pub phone_code_hash: String,
+}
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub enum RequestLoginCodeOutput {
     Pending,
-    CodeSent,
+    /// Login code sent successfully. Contains the token needed for sign_in.
+    Success(LoginToken),
+    /// Already authorized.
+    AlreadyAuthorized,
     Failed(String),
 }
 
-/// Request a login code to be sent via SMS.
-/// Input: phone number
-/// Output: code sent confirmation, or error
+/// Request a login code to be sent via SMS/Telegram.
+/// Input: phone number in international format (e.g., "+1234567890")
+/// Output: LoginToken containing phone and phone_code_hash
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub struct RequestLoginCode {
     pub phone: String,
@@ -92,18 +59,39 @@ pub struct RequestLoginCode {
 }
 
 // --- Verify Login Code ---
+// TelegramClient::sign_in(token: &ClonableLoginToken, code: &str) -> Result<SignInResult>
+
+/// Mirrors ClonablePasswordToken from messanger-telegram.
+/// Contains the data needed to verify the 2FA password.
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct PasswordToken {
+    /// Optional hint for the password.
+    pub hint: Option<String>,
+}
+
+/// Success result containing user info.
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct SignInSuccess {
+    pub user_id: i64,
+}
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub enum VerifyLoginCodeOutput {
     Pending,
-    Success,
-    PasswordRequired,
+    /// Sign-in was successful.
+    Success(SignInSuccess),
+    /// 2FA password is required to complete sign-in.
+    PasswordRequired(PasswordToken),
+    /// The provided code was invalid.
+    InvalidCode,
+    /// Sign-up is required (account doesn't exist).
+    SignUpRequired,
     Failed(String),
 }
 
-/// Verify the login code received via SMS.
-/// Input: the code
-/// Output: success, password required, or error
+/// Verify the login code received via SMS/Telegram.
+/// Input: the verification code (LoginToken is stored in robot's session)
+/// Output: SignInSuccess, PasswordToken for 2FA, or error status
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub struct VerifyLoginCode {
     pub code: String,
@@ -111,32 +99,90 @@ pub struct VerifyLoginCode {
 }
 
 // --- Verify Password ---
+// TelegramClient::check_password(token: ClonablePasswordToken, password: &str) -> Result<CheckPasswordResult>
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub enum VerifyPasswordOutput {
     Pending,
-    Success,
+    /// Password was correct, sign-in successful.
+    Success(SignInSuccess),
+    /// The provided password was invalid.
+    InvalidPassword,
     Failed(String),
 }
 
 /// Verify the 2FA password.
-/// Input: the password
-/// Output: success, or error
+/// Input: the password (PasswordToken is stored in robot's session)
+/// Output: SignInSuccess or invalid password error
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub struct VerifyPassword {
     pub password: String,
     pub output: VerifyPasswordOutput,
 }
 
+// --- Generate QR Code ---
+// TelegramClient::login_with_qr(api_id) -> Stream<QrLoginToken>
+
+/// QR code token data for display.
+/// Mirrors QrLoginToken::Token from messanger-telegram.
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct QrToken {
+    /// The `tg://login?token=...` URL that should be displayed as a QR code.
+    pub url: String,
+    /// Unix timestamp when this token expires.
+    pub expires: i32,
+}
+
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub enum GenerateQrCodeOutput {
+    Pending,
+    /// QR code generated successfully.
+    Token(QrToken),
+    /// Already authorized.
+    AlreadyAuthorized,
+    Failed(String),
+}
+
+/// Generate a QR code for Telegram login.
+/// Input: nothing (client_id is in the task)
+/// Output: QrToken with URL and expiration
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct GenerateQrCode {
+    pub output: GenerateQrCodeOutput,
+}
+
+// --- Poll QR Login ---
+// Continues polling TelegramClient::login_with_qr stream
+
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub enum PollQrLoginOutput {
+    Pending,
+    /// New QR token URL to display (token expired and was refreshed).
+    Token(QrToken),
+    /// QR scanned and login succeeded.
+    Success,
+    /// QR scanned but 2FA password is required.
+    PasswordRequired(PasswordToken),
+    Failed(String),
+}
+
+/// Poll for QR code scan completion.
+/// Input: nothing (polls the existing QR session)
+/// Output: new QrToken, success, PasswordToken for 2FA, or error
+#[derive(Clone, Debug, spacetimedb::SpacetimeType)]
+pub struct PollQrLogin {
+    pub output: PollQrLoginOutput,
+}
+
 // === Unified Task Payload ===
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub enum TaskPayload {
-    GenerateQrCode(GenerateQrCode),
-    PollQrLogin(PollQrLogin),
     RequestLoginCode(RequestLoginCode),
     VerifyLoginCode(VerifyLoginCode),
     VerifyPassword(VerifyPassword),
+    GenerateQrCode(GenerateQrCode),
+    PollQrLogin(PollQrLogin),
 }
 
 // === Task Table ===

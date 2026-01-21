@@ -13,15 +13,15 @@ use super::verify_password_type::VerifyPassword;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub enum TaskPayload {
-    GenerateQrCode(GenerateQrCode),
-
-    PollQrLogin(PollQrLogin),
-
     RequestLoginCode(RequestLoginCode),
 
     VerifyLoginCode(VerifyLoginCode),
 
     VerifyPassword(VerifyPassword),
+
+    GenerateQrCode(GenerateQrCode),
+
+    PollQrLogin(PollQrLogin),
 }
 
 impl __sdk::InModule for TaskPayload {
