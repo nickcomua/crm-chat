@@ -245,6 +245,7 @@ struct AppState {
 struct JwtClaims {
     sub: String,
     iss: Option<String>,
+    #[allow(dead_code)]
     exp: Option<u64>,
 }
 
@@ -266,7 +267,9 @@ struct Jwk {
     n: Option<String>, // RSA modulus
     e: Option<String>, // RSA exponent
     #[serde(rename = "use")]
+    #[allow(dead_code)]
     key_use: Option<String>,
+    #[allow(dead_code)]
     alg: Option<String>,
 }
 
@@ -685,6 +688,7 @@ async fn health() -> &'static str {
 }
 
 /// Returns the OpenAPI specification as JSON
+#[allow(dead_code)]
 async fn openapi_json() -> impl IntoResponse {
     Json(ApiDoc::openapi())
 }

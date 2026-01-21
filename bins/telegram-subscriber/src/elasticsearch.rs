@@ -47,6 +47,7 @@ impl ElasticsearchClient {
     }
 
     /// Check if ES indexing is enabled.
+    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
