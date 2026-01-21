@@ -715,9 +715,8 @@ async fn main() {
         use_spacetimedb_identity: std::env::var("USE_SPACETIMEDB_IDENTITY")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false),
-        clerk_issuer: std::env::var("CLERK_ISSUER").unwrap_or_else(|_| {
-            "https://noted-rabbit-14.clerk.accounts.dev".to_string()
-        }),
+        clerk_issuer: std::env::var("CLERK_ISSUER")
+            .unwrap_or_else(|_| "https://noted-rabbit-14.clerk.accounts.dev".to_string()),
     });
 
     info!("Starting ES proxy on port 3001");
