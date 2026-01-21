@@ -1012,7 +1012,6 @@ dependencies = [
  "chrono",
  "digest",
  "either",
- "errno",
  "flate2",
  "form_urlencoded",
  "futures-channel",
