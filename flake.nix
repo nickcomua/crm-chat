@@ -88,6 +88,7 @@
             pkgs.lld
             pkgs.rustfmt
             pkgs.pkg-config
+            pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
           #   pkgs.llvmPackages.libclang
@@ -96,15 +97,16 @@
 
           buildInputs =
             [
-              
+
               pkgs.openssl
+              pkgs.cacert # Required for utoipa-swagger-ui to download over HTTPS
               # pkgs.pkg-config
               # Add additional build inputs here
               # pkgs.gtk3
               # pkgs.webkitgtk_4_1
               # pkgs.libsoup_3
               # pkgs.cairo
-              
+
               pkgs.sqlite
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
@@ -114,6 +116,8 @@
 
            # needed for spacetimedb-lib to build
            SPACETIMEDB_NIX_BUILD_GIT_COMMIT = self.rev or "development";
+           # Required for curl to verify SSL certificates during build
+           SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
         };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -135,6 +139,7 @@
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
               (craneLib.fileset.commonCargoSources ./bins/sdb_server)
+              (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./libs/sdb_api)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
