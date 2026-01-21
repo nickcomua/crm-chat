@@ -3,6 +3,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use spacetimedb::{reducer, Identity, ReducerContext, Table, Timestamp};
 
+pub mod task;
+pub use task::*;
+
 // === Enums ===
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType, Serialize, Deserialize)]
