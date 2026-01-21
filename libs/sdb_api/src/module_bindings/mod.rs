@@ -6,6 +6,7 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+pub mod assign_task_reducer;
 pub mod chat_table;
 pub mod chat_type;
 pub mod chat_type_type;
@@ -14,20 +15,40 @@ pub mod client_kind_type;
 pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
+pub mod complete_task_reducer;
+pub mod create_task_reducer;
 pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
+pub mod delete_task_reducer;
+pub mod generate_qr_code_output_type;
+pub mod generate_qr_code_result_type;
+pub mod generate_qr_code_type;
 pub mod identity_disconnected_reducer;
 pub mod mark_message_deleted_reducer;
 pub mod message_table;
 pub mod message_type;
+pub mod poll_qr_login_output_type;
+pub mod poll_qr_login_result_type;
+pub mod poll_qr_login_type;
+pub mod request_login_code_output_type;
+pub mod request_login_code_type;
 pub mod robot_table;
 pub mod robot_type;
+pub mod task_payload_type;
+pub mod task_status_type;
+pub mod task_table;
+pub mod task_type;
 pub mod upsert_chat_reducer;
 pub mod upsert_client_reducer;
 pub mod upsert_message_reducer;
 pub mod user_table;
 pub mod user_type;
+pub mod verify_login_code_output_type;
+pub mod verify_login_code_type;
+pub mod verify_password_output_type;
+pub mod verify_password_type;
 
+pub use assign_task_reducer::{AssignTaskCallbackId, assign_task, set_flags_for_assign_task};
 pub use chat_table::*;
 pub use chat_type::Chat;
 pub use chat_type_type::ChatType;
@@ -38,10 +59,18 @@ pub use client_kind_type::ClientKind;
 pub use client_status_type::ClientStatus;
 pub use client_table::*;
 pub use client_type::Client;
+pub use complete_task_reducer::{
+    CompleteTaskCallbackId, complete_task, set_flags_for_complete_task,
+};
+pub use create_task_reducer::{CreateTaskCallbackId, create_task, set_flags_for_create_task};
 pub use delete_chat_reducer::{DeleteChatCallbackId, delete_chat, set_flags_for_delete_chat};
 pub use delete_client_reducer::{
     DeleteClientCallbackId, delete_client, set_flags_for_delete_client,
 };
+pub use delete_task_reducer::{DeleteTaskCallbackId, delete_task, set_flags_for_delete_task};
+pub use generate_qr_code_output_type::GenerateQrCodeOutput;
+pub use generate_qr_code_result_type::GenerateQrCodeResult;
+pub use generate_qr_code_type::GenerateQrCode;
 pub use identity_disconnected_reducer::{
     IdentityDisconnectedCallbackId, identity_disconnected, set_flags_for_identity_disconnected,
 };
@@ -50,8 +79,17 @@ pub use mark_message_deleted_reducer::{
 };
 pub use message_table::*;
 pub use message_type::Message;
+pub use poll_qr_login_output_type::PollQrLoginOutput;
+pub use poll_qr_login_result_type::PollQrLoginResult;
+pub use poll_qr_login_type::PollQrLogin;
+pub use request_login_code_output_type::RequestLoginCodeOutput;
+pub use request_login_code_type::RequestLoginCode;
 pub use robot_table::*;
 pub use robot_type::Robot;
+pub use task_payload_type::TaskPayload;
+pub use task_status_type::TaskStatus;
+pub use task_table::*;
+pub use task_type::Task;
 pub use upsert_chat_reducer::{UpsertChatCallbackId, set_flags_for_upsert_chat, upsert_chat};
 pub use upsert_client_reducer::{
     UpsertClientCallbackId, set_flags_for_upsert_client, upsert_client,
@@ -61,6 +99,10 @@ pub use upsert_message_reducer::{
 };
 pub use user_table::*;
 pub use user_type::User;
+pub use verify_login_code_output_type::VerifyLoginCodeOutput;
+pub use verify_login_code_type::VerifyLoginCode;
+pub use verify_password_output_type::VerifyPasswordOutput;
+pub use verify_password_type::VerifyPassword;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -70,14 +112,40 @@ pub use user_type::User;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
+    AssignTask {
+        task_id: u64,
+    },
     ClientConnected,
-    DeleteChat { chat_id: String },
-    DeleteClient { client_id: u64 },
+    CompleteTask {
+        task_id: u64,
+        payload: TaskPayload,
+    },
+    CreateTask {
+        client_id: u64,
+        payload: TaskPayload,
+    },
+    DeleteChat {
+        chat_id: String,
+    },
+    DeleteClient {
+        client_id: u64,
+    },
+    DeleteTask {
+        task_id: u64,
+    },
     IdentityDisconnected,
-    MarkMessageDeleted { external_message_id: String },
-    UpsertChat { chat: Chat },
-    UpsertClient { client: Client },
-    UpsertMessage { message: Message },
+    MarkMessageDeleted {
+        external_message_id: String,
+    },
+    UpsertChat {
+        chat: Chat,
+    },
+    UpsertClient {
+        client: Client,
+    },
+    UpsertMessage {
+        message: Message,
+    },
 }
 
 impl __sdk::InModule for Reducer {
@@ -87,9 +155,13 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
+            Reducer::AssignTask { .. } => "assign_task",
             Reducer::ClientConnected => "client_connected",
+            Reducer::CompleteTask { .. } => "complete_task",
+            Reducer::CreateTask { .. } => "create_task",
             Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
+            Reducer::DeleteTask { .. } => "delete_task",
             Reducer::IdentityDisconnected => "identity_disconnected",
             Reducer::MarkMessageDeleted { .. } => "mark_message_deleted",
             Reducer::UpsertChat { .. } => "upsert_chat",
@@ -103,10 +175,28 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
     type Error = __sdk::Error;
     fn try_from(value: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> __sdk::Result<Self> {
         match &value.reducer_name[..] {
+            "assign_task" => Ok(
+                __sdk::parse_reducer_args::<assign_task_reducer::AssignTaskArgs>(
+                    "assign_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "client_connected" => Ok(__sdk::parse_reducer_args::<
                 client_connected_reducer::ClientConnectedArgs,
             >("client_connected", &value.args)?
             .into()),
+            "complete_task" => Ok(__sdk::parse_reducer_args::<
+                complete_task_reducer::CompleteTaskArgs,
+            >("complete_task", &value.args)?
+            .into()),
+            "create_task" => Ok(
+                __sdk::parse_reducer_args::<create_task_reducer::CreateTaskArgs>(
+                    "create_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "delete_chat" => Ok(
                 __sdk::parse_reducer_args::<delete_chat_reducer::DeleteChatArgs>(
                     "delete_chat",
@@ -118,6 +208,13 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 delete_client_reducer::DeleteClientArgs,
             >("delete_client", &value.args)?
             .into()),
+            "delete_task" => Ok(
+                __sdk::parse_reducer_args::<delete_task_reducer::DeleteTaskArgs>(
+                    "delete_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "identity_disconnected" => Ok(__sdk::parse_reducer_args::<
                 identity_disconnected_reducer::IdentityDisconnectedArgs,
             >("identity_disconnected", &value.args)?
@@ -159,6 +256,7 @@ pub struct DbUpdate {
     client: __sdk::TableUpdate<Client>,
     message: __sdk::TableUpdate<Message>,
     robot: __sdk::TableUpdate<Robot>,
+    task: __sdk::TableUpdate<Task>,
     user: __sdk::TableUpdate<User>,
 }
 
@@ -180,6 +278,9 @@ impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
                 "robot" => db_update
                     .robot
                     .append(robot_table::parse_table_update(table_update)?),
+                "task" => db_update
+                    .task
+                    .append(task_table::parse_table_update(table_update)?),
                 "user" => db_update
                     .user
                     .append(user_table::parse_table_update(table_update)?),
@@ -221,6 +322,9 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.robot = cache
             .apply_diff_to_table::<Robot>("robot", &self.robot)
             .with_updates_by_pk(|row| &row.id);
+        diff.task = cache
+            .apply_diff_to_table::<Task>("task", &self.task)
+            .with_updates_by_pk(|row| &row.id);
         diff.user = cache
             .apply_diff_to_table::<User>("user", &self.user)
             .with_updates_by_pk(|row| &row.id);
@@ -237,6 +341,7 @@ pub struct AppliedDiff<'r> {
     client: __sdk::TableAppliedDiff<'r, Client>,
     message: __sdk::TableAppliedDiff<'r, Message>,
     robot: __sdk::TableAppliedDiff<'r, Robot>,
+    task: __sdk::TableAppliedDiff<'r, Task>,
     user: __sdk::TableAppliedDiff<'r, User>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
@@ -255,6 +360,7 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks.invoke_table_row_callbacks::<Client>("client", &self.client, event);
         callbacks.invoke_table_row_callbacks::<Message>("message", &self.message, event);
         callbacks.invoke_table_row_callbacks::<Robot>("robot", &self.robot, event);
+        callbacks.invoke_table_row_callbacks::<Task>("task", &self.task, event);
         callbacks.invoke_table_row_callbacks::<User>("user", &self.user, event);
     }
 }
@@ -979,6 +1085,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         client_table::register_table(client_cache);
         message_table::register_table(client_cache);
         robot_table::register_table(client_cache);
+        task_table::register_table(client_cache);
         user_table::register_table(client_cache);
     }
 }
