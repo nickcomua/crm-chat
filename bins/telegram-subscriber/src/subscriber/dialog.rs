@@ -35,6 +35,7 @@ impl std::fmt::Display for SyncError {
 impl std::error::Error for SyncError {}
 
 /// Helper function to build a MessageDocument for ES indexing
+#[allow(clippy::too_many_arguments)]
 fn build_message_document(
     client: &Client,
     dialog: &Chat,
@@ -67,10 +68,10 @@ async fn queue_es_doc(
 ) {
     es_docs.push(doc);
 
-    if es_docs.len() >= 100 {
-        if let Err(e) = es_client.bulk_index_messages(std::mem::take(es_docs)).await {
-            eprintln!("Warning: Failed to bulk index messages to ES: {}", e);
-        }
+    if es_docs.len() >= 100
+        && let Err(e) = es_client.bulk_index_messages(std::mem::take(es_docs)).await
+    {
+        eprintln!("Warning: Failed to bulk index messages to ES: {}", e);
     }
 }
 

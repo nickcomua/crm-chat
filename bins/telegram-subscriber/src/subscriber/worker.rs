@@ -17,6 +17,7 @@ use crate::{
 };
 
 /// Helper function to index a message to Elasticsearch
+#[allow(clippy::too_many_arguments)]
 async fn index_message_to_es(
     es_client: &ElasticsearchClient,
     client: &Client,
@@ -150,7 +151,7 @@ pub async fn telegram_subscriber(
                         msg.sender_id.clone(),
                         text,
                         msg.outgoing,
-                        ts_secs as u64,
+                        ts_secs,
                         "message",
                     )
                     .await;
@@ -203,7 +204,7 @@ pub async fn telegram_subscriber(
                         msg.sender_id.clone(),
                         text,
                         msg.outgoing,
-                        ts_secs as u64,
+                        ts_secs,
                         "edited message",
                     )
                     .await;
@@ -242,7 +243,7 @@ pub async fn telegram_subscriber(
                     }
                 }
             }
-            other => {
+            _other => {
                 // eprintln!(
                 //     "Unhandled update type for client {}: {:?}",
                 //     client.id, other
