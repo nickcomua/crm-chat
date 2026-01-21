@@ -4,25 +4,13 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-use super::password_token_type::PasswordToken;
-use super::sign_in_success_type::SignInSuccess;
-
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub enum VerifyLoginCodeOutput {
-    Pending,
-
-    Success(SignInSuccess),
-
-    PasswordRequired(PasswordToken),
-
-    InvalidCode,
-
-    SignUpRequired,
-
-    Failed(String),
+pub struct LoginToken {
+    pub phone: String,
+    pub phone_code_hash: String,
 }
 
-impl __sdk::InModule for VerifyLoginCodeOutput {
+impl __sdk::InModule for LoginToken {
     type Module = super::RemoteModule;
 }

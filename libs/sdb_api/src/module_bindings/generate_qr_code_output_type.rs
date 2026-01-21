@@ -4,14 +4,16 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-use super::generate_qr_code_result_type::GenerateQrCodeResult;
+use super::qr_token_type::QrToken;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub enum GenerateQrCodeOutput {
     Pending,
 
-    Success(GenerateQrCodeResult),
+    Token(QrToken),
+
+    AlreadyAuthorized,
 
     Failed(String),
 }

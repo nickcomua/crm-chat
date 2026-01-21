@@ -4,12 +4,16 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+use super::sign_in_success_type::SignInSuccess;
+
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub enum VerifyPasswordOutput {
     Pending,
 
-    Success,
+    Success(SignInSuccess),
+
+    InvalidPassword,
 
     Failed(String),
 }

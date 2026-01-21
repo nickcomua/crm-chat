@@ -1,17 +1,19 @@
 //! SpacetimeDB client event handling.
 
-use crate::auth::{handle_qr_login, handle_waiting_code, handle_waiting_password, handle_waiting_phone, QrExportResult};
-use crate::config::{TelegramConfig, get_session_path};
+use crate::auth::{
+    handle_waiting_code, handle_waiting_password, handle_waiting_phone, poll_qr_login,
+    CodeVerifyResult, PasswordVerifyResult, QrPollResult,
+};
+use crate::config::{get_session_path, TelegramConfig};
 use crate::elasticsearch::ElasticsearchClient;
 use crate::session::{QrPollingHandler, Session, TelegramSubscriberHandler};
 use crate::subscriber::telegram_subscriber;
-use grammers_client::client::PasswordToken;
 use messanger_interface::session::JsonSessionStore;
 use messanger_interface::{AuthConfig, MessengerClient, MessengerClientBuilder};
 use messanger_telegram::TelegramClient;
 use messanger_telegram::TelegramClientBuilder;
 use sdb_api::module_bindings::{
-    Client as DbClient, ClientKind, ClientStatus, DbConnection, upsert_client,
+    upsert_client, Client as DbClient, ClientKind, ClientStatus, DbConnection,
 };
 use serde_json::json;
 use spacetimedb_sdk::DbContext;
@@ -20,12 +22,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// Result from QR polling that needs to be handled by the main session
-pub enum QrPollResult {
-    Success { phone: Option<String> },
-    PasswordRequired(PasswordToken),
-}
-
 /// Background task that polls for QR login completion
 async fn qr_polling_task(
     conn: Arc<DbConnection>,
@@ -33,7 +29,6 @@ async fn qr_polling_task(
     tg_client: Arc<TelegramClient>,
     api_id: i32,
     cancel: CancellationToken,
-    result_tx: tokio::sync::mpsc::Sender<QrPollResult>,
 ) {
     let poll_interval = std::time::Duration::from_secs(2);
 
@@ -45,8 +40,8 @@ async fn qr_polling_task(
             }
             _ = tokio::time::sleep(poll_interval) => {
                 println!("Polling QR status for client {}...", client.id);
-                match handle_qr_login(api_id, &tg_client).await {
-                    Ok(QrExportResult::Token { url, expires: _ }) => {
+                match poll_qr_login(api_id, &tg_client).await {
+                    QrPollResult::Token { url, expires: _ } => {
                         // Token refreshed, update URL for frontend
                         println!("QR token refreshed for client {}", client.id);
                         if let Err(e) = conn.reducers().upsert_client(DbClient {
@@ -56,8 +51,15 @@ async fn qr_polling_task(
                             eprintln!("Failed to update QR URL for client {}: {:?}", client.id, e);
                         }
                     }
-                    Ok(QrExportResult::Success { phone }) => {
+                    QrPollResult::Success => {
                         println!("QR scan successful for client {}!", client.id);
+                        // Get phone from the client if possible
+                        let phone = tg_client
+                            .get_client_external_id()
+                            .await
+                            .ok()
+                            .map(|id| id.replace("telegram:", "+"));
+
                         // Update client to Connected status
                         let updated_client = if let Some(ref phone) = phone {
                             DbClient {
@@ -74,25 +76,10 @@ async fn qr_polling_task(
                         if let Err(e) = conn.reducers().upsert_client(updated_client) {
                             eprintln!("Failed to update client {} to Connected: {:?}", client.id, e);
                         }
-                        // Notify the session about the result
-                        let _ = result_tx.send(QrPollResult::Success { phone }).await;
                         return;
                     }
-                    Ok(QrExportResult::PasswordRequired(password_token)) => {
-                        println!("QR login requires 2FA password for client {}", client.id);
-                        // Update client to WaitingPassword status
-                        if let Err(e) = conn.reducers().upsert_client(DbClient {
-                            status: ClientStatus::WaitingPassword(None),
-                            ..client.clone()
-                        }) {
-                            eprintln!("Failed to update client {} to WaitingPassword: {:?}", client.id, e);
-                        }
-                        // Notify the session about the password requirement
-                        let _ = result_tx.send(QrPollResult::PasswordRequired(password_token)).await;
-                        return;
-                    }
-                    Err(e) => {
-                        eprintln!("Error polling QR status for client {}: {:?}", client.id, e);
+                    QrPollResult::Error(e) => {
+                        eprintln!("Error polling QR status for client {}: {}", client.id, e);
                         // Continue polling
                     }
                 }
@@ -258,24 +245,28 @@ pub async fn process_client(
                 sessions_guard.insert(client.id, Some(session));
                 return;
             }
-            if let Ok(token) =
-                handle_waiting_phone(&client.external_id, &session.telegram_client).await
-            {
-                session.login_token = Some(token);
-                conn.reducers()
-                    .upsert_client(DbClient {
-                        status: ClientStatus::WaitingCode(None),
-                        ..client.clone()
-                    })
-                    .expect("Failed to update client");
-            } else {
-                eprintln!("Error handling waiting phone for client {}", client.id);
-                conn.reducers()
-                    .upsert_client(DbClient {
-                        status: ClientStatus::WaitingPhone(None),
-                        ..client.clone()
-                    })
-                    .expect("Failed to update client");
+            match handle_waiting_phone(&client.external_id, &session.telegram_client).await {
+                Ok(token) => {
+                    session.login_token = Some(token);
+                    conn.reducers()
+                        .upsert_client(DbClient {
+                            status: ClientStatus::WaitingCode(None),
+                            ..client.clone()
+                        })
+                        .expect("Failed to update client");
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Error handling waiting phone for client {}: {}",
+                        client.id, e
+                    );
+                    conn.reducers()
+                        .upsert_client(DbClient {
+                            status: ClientStatus::WaitingPhone(None),
+                            ..client.clone()
+                        })
+                        .expect("Failed to update client");
+                }
             }
         }
         ClientStatus::WaitingQrCode(None) => {
@@ -288,11 +279,12 @@ pub async fn process_client(
             // Cancel any existing QR polling handler
             if let Some(handler) = session.qr_polling_handler.take() {
                 handler.cancel.cancel();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
             }
 
-            match handle_qr_login(config.api_id, &session.telegram_client).await {
-                Ok(QrExportResult::Token { url, expires: _ }) => {
+            match poll_qr_login(config.api_id, &session.telegram_client).await {
+                QrPollResult::Token { url, expires: _ } => {
                     println!("Client {} QR code generated, starting polling", client.id);
                     conn.reducers()
                         .upsert_client(DbClient {
@@ -303,20 +295,25 @@ pub async fn process_client(
 
                     // Start QR polling task
                     let cancel = CancellationToken::new();
-                    let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
                     let handler = tokio::spawn(qr_polling_task(
                         conn.clone(),
                         client.clone(),
                         session.telegram_client.clone(),
                         config.api_id,
                         cancel.clone(),
-                        result_tx,
                     ));
                     session.qr_polling_handler = Some(QrPollingHandler { handler, cancel });
                 }
-                Ok(QrExportResult::Success { phone }) => {
+                QrPollResult::Success => {
                     println!("Client {} already authorized via QR", client.id);
-                    // Update external_id to the actual phone if available
+                    // Get phone from the client if possible
+                    let phone = session
+                        .telegram_client
+                        .get_client_external_id()
+                        .await
+                        .ok()
+                        .map(|id| id.replace("telegram:", "+"));
+
                     let updated_client = if let Some(phone) = phone {
                         DbClient {
                             status: ClientStatus::Connected,
@@ -333,18 +330,8 @@ pub async fn process_client(
                         .upsert_client(updated_client)
                         .expect("Failed to update client");
                 }
-                Ok(QrExportResult::PasswordRequired(password_token)) => {
-                    println!("Client {} QR login requires 2FA password", client.id);
-                    session.password_token = Some(password_token);
-                    conn.reducers()
-                        .upsert_client(DbClient {
-                            status: ClientStatus::WaitingPassword(None),
-                            ..client.clone()
-                        })
-                        .expect("Failed to update client");
-                }
-                Err(e) => {
-                    eprintln!("Error generating QR code for client {}: {:?}", client.id, e);
+                QrPollResult::Error(e) => {
+                    eprintln!("Error generating QR code for client {}: {}", client.id, e);
                     // Keep waiting for QR - client can retry
                 }
             }
@@ -359,14 +346,12 @@ pub async fn process_client(
                     client.id, client.external_id
                 );
                 let cancel = CancellationToken::new();
-                let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
                 let handler = tokio::spawn(qr_polling_task(
                     conn.clone(),
                     client.clone(),
                     session.telegram_client.clone(),
                     config.api_id,
                     cancel.clone(),
-                    result_tx,
                 ));
                 session.qr_polling_handler = Some(QrPollingHandler { handler, cancel });
             } else {
@@ -382,20 +367,15 @@ pub async fn process_client(
                 client.id, client.external_id
             );
             if let Some(token) = &session.login_token {
-                if let Ok(password_token) =
-                    handle_waiting_code(&client.external_id, code, token, &session.telegram_client)
-                        .await
+                match handle_waiting_code(
+                    &client.external_id,
+                    code,
+                    token,
+                    &session.telegram_client,
+                )
+                .await
                 {
-                    session.password_token = password_token;
-                    if session.password_token.is_some() {
-                        println!("Client {} requires password, updating status", client.id);
-                        conn.reducers()
-                            .upsert_client(DbClient {
-                                status: ClientStatus::WaitingPassword(None),
-                                ..client.clone()
-                            })
-                            .expect("Failed to update client");
-                    } else {
+                    Ok(CodeVerifyResult::Success) => {
                         println!("Client {} connected successfully", client.id);
                         conn.reducers()
                             .upsert_client(DbClient {
@@ -404,14 +384,46 @@ pub async fn process_client(
                             })
                             .expect("Failed to update client");
                     }
-                } else {
-                    eprintln!("Error handling waiting phone for client {}", client.id);
-                    conn.reducers()
-                        .upsert_client(DbClient {
-                            status: ClientStatus::WaitingPhone(None),
-                            ..client.clone()
-                        })
-                        .expect("Failed to update client");
+                    Ok(CodeVerifyResult::PasswordRequired(password_token)) => {
+                        println!("Client {} requires password, updating status", client.id);
+                        session.password_token = Some(password_token);
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingPassword(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
+                    Ok(CodeVerifyResult::InvalidCode) => {
+                        eprintln!("Invalid code for client {}, letting user retry", client.id);
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingCode(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
+                    Ok(CodeVerifyResult::SignUpRequired) => {
+                        eprintln!(
+                            "Sign up required for client {}, account doesn't exist",
+                            client.id
+                        );
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingPhone(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
+                    Err(e) => {
+                        eprintln!("Error handling code for client {}: {}", client.id, e);
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingPhone(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
                 }
             } else {
                 eprintln!("Need login token for client {}", client.id);
@@ -435,36 +447,48 @@ pub async fn process_client(
                 let _ =
                     tokio::time::timeout(std::time::Duration::from_secs(5), handler.handler).await;
             }
-            let Session {
-                telegram_client,
-                password_token,
-                ..
-            } = session;
-            if let Some(password_token) = password_token {
-                if handle_waiting_password(
+
+            if let Some(password_token) = session.password_token.take() {
+                match handle_waiting_password(
                     &client.external_id,
                     password,
                     password_token,
-                    &telegram_client,
+                    &session.telegram_client,
                 )
                 .await
-                .is_ok()
                 {
-                    println!("Client {} connected successfully", client.id);
-                    conn.reducers()
-                        .upsert_client(DbClient {
-                            status: ClientStatus::Connected,
-                            ..client.clone()
-                        })
-                        .expect("Failed to update client");
-                } else {
-                    eprintln!("Error handling waiting password for client {}", client.id);
-                    conn.reducers()
-                        .upsert_client(DbClient {
-                            status: ClientStatus::WaitingPhone(None),
-                            ..client.clone()
-                        })
-                        .expect("Failed to update client");
+                    Ok(PasswordVerifyResult::Success) => {
+                        println!("Client {} connected successfully", client.id);
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::Connected,
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
+                    Ok(PasswordVerifyResult::InvalidPassword) => {
+                        eprintln!(
+                            "Invalid password for client {}, letting user retry",
+                            client.id
+                        );
+                        // Need to re-request password token since we consumed it
+                        // For now, reset to phone stage
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingPhone(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
+                    Err(e) => {
+                        eprintln!("Error handling password for client {}: {}", client.id, e);
+                        conn.reducers()
+                            .upsert_client(DbClient {
+                                status: ClientStatus::WaitingPhone(None),
+                                ..client.clone()
+                            })
+                            .expect("Failed to update client");
+                    }
                 }
             } else {
                 eprintln!("Need password token for client {}", client.id);
@@ -475,13 +499,9 @@ pub async fn process_client(
                     })
                     .expect("Failed to update client");
             }
-            session = Session {
-                telegram_client,
-                login_token: None,
-                password_token: None,
-                subscriber_handler: None,
-                qr_polling_handler: None,
-            };
+
+            // Clear tokens after password attempt
+            session.login_token = None;
         }
         ClientStatus::WaitingPhone(None) => {
             println!(
@@ -507,7 +527,8 @@ pub async fn process_client(
             // Cancel QR polling if running (no longer needed)
             if let Some(handler) = session.qr_polling_handler.take() {
                 handler.cancel.cancel();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), handler.handler).await;
             }
 
             let is_authorized = session.telegram_client.is_authorized().await;

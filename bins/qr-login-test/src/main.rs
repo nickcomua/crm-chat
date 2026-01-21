@@ -178,6 +178,17 @@ fn handle_login_success(success: tl::types::auth::LoginTokenSuccess) -> Result<b
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
+//     let _guard = sentry::init(("", sentry::ClientOptions {
+//     release: sentry::release_name!(),
+//     // Capture user IPs and potentially sensitive headers when using HTTP server integrations
+//     // see https://docs.sentry.io/platforms/rust/data-management/data-collected for more info
+//     send_default_pii: true,
+//     ..Default::default()
+//   }));
+
+//   // Sentry will capture this
+//   panic!("Everything is on fire!");
     // Load .env file from project root
     let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
