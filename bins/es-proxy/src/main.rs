@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-const CLERK_ISSUER: &str = "https://noted-rabbit-14.clerk.accounts.dev";
+// CLERK_ISSUER is now configured via environment variable and stored in AppState
 
 /// Search request body - accepts standard Elasticsearch query DSL
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -237,6 +237,7 @@ struct AppState {
     index_name: String,
     jwks_cache: Arc<RwLock<JwksCache>>,
     use_spacetimedb_identity: bool,
+    clerk_issuer: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,8 +285,8 @@ impl JwksCache {
 }
 
 /// Fetch JWKS from Clerk
-async fn fetch_jwks() -> Result<JwksResponse, String> {
-    let url = format!("{}/.well-known/jwks.json", CLERK_ISSUER);
+async fn fetch_jwks(clerk_issuer: &str) -> Result<JwksResponse, String> {
+    let url = format!("{}/.well-known/jwks.json", clerk_issuer);
     info!("Fetching JWKS from {}", url);
 
     let client = reqwest::Client::new();
@@ -308,6 +309,7 @@ async fn fetch_jwks() -> Result<JwksResponse, String> {
 async fn get_decoding_key(
     cache: &Arc<RwLock<JwksCache>>,
     kid: &str,
+    clerk_issuer: &str,
 ) -> Result<DecodingKey, String> {
     // Check cache first
     {
@@ -320,7 +322,7 @@ async fn get_decoding_key(
     }
 
     // Fetch fresh JWKS
-    let jwks = fetch_jwks().await?;
+    let jwks = fetch_jwks(clerk_issuer).await?;
 
     // Update cache
     let mut cache_write = cache.write().await;
@@ -372,11 +374,11 @@ fn compute_spacetimedb_identity(issuer: &str, subject: &str) -> String {
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let auth_header = headers
+    let auth_header = request
+        .headers()
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -397,7 +399,7 @@ async fn auth_middleware(
     })?;
 
     // Get the decoding key from JWKS
-    let decoding_key = get_decoding_key(&state.jwks_cache, &kid)
+    let decoding_key = get_decoding_key(&state.jwks_cache, &kid, &state.clerk_issuer)
         .await
         .map_err(|e| {
             error!("Failed to get decoding key: {}", e);
@@ -406,7 +408,7 @@ async fn auth_middleware(
 
     // Validate the JWT
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[CLERK_ISSUER]);
+    validation.set_issuer(&[&state.clerk_issuer]);
     validation.validate_exp = true;
 
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
@@ -417,17 +419,17 @@ async fn auth_middleware(
     let claims = token_data.claims;
 
     // Double-check issuer (belt and suspenders)
-    if claims.iss.as_deref() != Some(CLERK_ISSUER) {
+    if claims.iss.as_deref() != Some(state.clerk_issuer.as_str()) {
         error!(
             "Invalid issuer: {:?}, expected {}",
-            claims.iss, CLERK_ISSUER
+            claims.iss, state.clerk_issuer
         );
         return Err(StatusCode::UNAUTHORIZED);
     }
 
     // Compute user_id
     let user_id = if state.use_spacetimedb_identity {
-        let issuer = claims.iss.as_deref().unwrap_or(CLERK_ISSUER);
+        let issuer = claims.iss.as_deref().unwrap_or(&state.clerk_issuer);
         compute_spacetimedb_identity(issuer, &claims.sub)
     } else {
         claims.sub.clone()
@@ -439,6 +441,34 @@ async fn auth_middleware(
         .extensions_mut()
         .insert(AuthenticatedUser { user_id });
     Ok(next.run(request).await)
+}
+/// Forward a search request to Elasticsearch and return the response
+async fn forward_to_es(
+    state: &AppState,
+    body: &Value,
+) -> Result<(StatusCode, Value), (StatusCode, String)> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/{}/_search", state.elasticsearch_url, state.index_name);
+
+    let response = client
+        .post(&url)
+        .header("Authorization", state.elasticsearch_auth.header_value())
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    Ok((
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
+        body,
+    ))
 }
 
 /// Search for documents in Elasticsearch with automatic user filtering
@@ -515,29 +545,8 @@ async fn search(
         serde_json::to_string_pretty(&body).unwrap_or_default()
     );
 
-    // Forward to Elasticsearch
-    let client = reqwest::Client::new();
-    let url = format!("{}/{}/_search", state.elasticsearch_url, state.index_name);
-
-    let response = client
-        .post(&url)
-        .header("Authorization", state.elasticsearch_auth.header_value())
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-
-    let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-
-    Ok((
-        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
-        Json(body),
-    ))
+    let (status, body) = forward_to_es(&state, &body).await?;
+    Ok((status, Json(body)))
 }
 
 /// Simple search endpoint with convenient filtering options
@@ -646,29 +655,8 @@ async fn simple_search(
         serde_json::to_string_pretty(&body).unwrap_or_default()
     );
 
-    // Forward to Elasticsearch
-    let client = reqwest::Client::new();
-    let url = format!("{}/{}/_search", state.elasticsearch_url, state.index_name);
-
-    let response = client
-        .post(&url)
-        .header("Authorization", state.elasticsearch_auth.header_value())
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-
-    let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-
-    Ok((
-        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK),
-        Json(body),
-    ))
+    let (status, body) = forward_to_es(&state, &body).await?;
+    Ok((status, Json(body)))
 }
 
 /// Health check endpoint
@@ -719,13 +707,17 @@ async fn main() {
     };
 
     let state = Arc::new(AppState {
-        elasticsearch_url: std::env::var("ELASTICSEARCH_URL").unwrap(),
+        elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
+            .expect("ELASTICSEARCH_URL must be set for es-proxy"),
         elasticsearch_auth: es_auth,
         index_name: std::env::var("INDEX_NAME").unwrap_or_else(|_| "crm-chat-msgs".to_string()),
         jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
         use_spacetimedb_identity: std::env::var("USE_SPACETIMEDB_IDENTITY")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false),
+        clerk_issuer: std::env::var("CLERK_ISSUER").unwrap_or_else(|_| {
+            "https://noted-rabbit-14.clerk.accounts.dev".to_string()
+        }),
     });
 
     info!("Starting ES proxy on port 3001");
@@ -735,7 +727,7 @@ async fn main() {
         "Using SpacetimeDB identity: {}",
         state.use_spacetimedb_identity
     );
-    info!("Accepting tokens from issuer: {}", CLERK_ISSUER);
+    info!("Accepting tokens from issuer: {}", state.clerk_issuer);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

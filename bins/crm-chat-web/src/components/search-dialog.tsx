@@ -64,9 +64,10 @@ function SearchResultItem({
   }
 
   const chat = source.chat_id ? chatsMap.get(source.chat_id) : undefined;
-  const client = source.client_id
-    ? clientsMap.get(BigInt(source.client_id))
-    : undefined;
+  const client =
+    source.client_id !== undefined && source.client_id !== null
+      ? clientsMap.get(BigInt(source.client_id))
+      : undefined;
 
   const chatName =
     chat?.pinnedName ?? `Chat ${source.chat_id?.slice(0, 8) ?? "unknown"}`;

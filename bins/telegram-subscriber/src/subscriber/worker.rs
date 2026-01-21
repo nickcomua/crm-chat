@@ -16,6 +16,38 @@ use crate::{
     subscriber::sync_dialogs,
 };
 
+/// Helper function to index a message to Elasticsearch
+async fn index_message_to_es(
+    es_client: &ElasticsearchClient,
+    client: &Client,
+    chat_id: &str,
+    message_id: &str,
+    external_id: &str,
+    sender_id: String,
+    text: &str,
+    outgoing: bool,
+    ts_secs: u64,
+    context: &str,
+) {
+    if let Err(e) = es_client
+        .index_message(MessageDocument {
+            user_id: client.owner_user_id.to_string(),
+            client_id: client.id,
+            chat_id: chat_id.to_string(),
+            id: message_id.to_string(),
+            message_id: message_id.to_string(),
+            external_id: external_id.to_string(),
+            sender_id,
+            content: text.to_string(),
+            out: outgoing,
+            created_at: ts_secs,
+        })
+        .await
+    {
+        eprintln!("Failed to index {} {} to ES: {}", context, message_id, e);
+    }
+}
+
 pub async fn telegram_subscriber(
     conn: Arc<DbConnection>,
     client: Client,
@@ -109,23 +141,19 @@ pub async fn telegram_subscriber(
                     );
                 } else if let Some(text) = &msg.text {
                     // Index to Elasticsearch on successful SpacetimeDB upsert
-                    if let Err(e) = es_client
-                        .index_message(MessageDocument {
-                            user_id: client.owner_user_id.to_string(),
-                            client_id: client.id,
-                            chat_id: dialog.0.id.clone(),
-                            id: message_id.clone(),
-                            message_id: message_id.clone(),
-                            external_id: msg.external_id.clone(),
-                            sender_id: msg.sender_id.clone(),
-                            content: text.clone(),
-                            out: msg.outgoing,
-                            created_at: ts_secs,
-                        })
-                        .await
-                    {
-                        eprintln!("Failed to index message {} to ES: {}", message_id, e);
-                    }
+                    index_message_to_es(
+                        &es_client,
+                        &client,
+                        &dialog.0.id,
+                        &message_id,
+                        &msg.external_id,
+                        msg.sender_id.clone(),
+                        text,
+                        msg.outgoing,
+                        ts_secs as u64,
+                        "message",
+                    )
+                    .await;
                 }
             }
             Update::MessageEdited(msg) => {
@@ -166,23 +194,19 @@ pub async fn telegram_subscriber(
                     );
                 } else if let Some(text) = &msg.text {
                     // Index to Elasticsearch on successful SpacetimeDB upsert
-                    if let Err(e) = es_client
-                        .index_message(MessageDocument {
-                            user_id: client.owner_user_id.to_string(),
-                            client_id: client.id,
-                            chat_id: dialog.0.id.clone(),
-                            id: message_id.clone(),
-                            message_id: message_id.clone(),
-                            external_id: msg.external_id.clone(),
-                            sender_id: msg.sender_id.clone(),
-                            content: text.clone(),
-                            out: msg.outgoing,
-                            created_at: ts_secs,
-                        })
-                        .await
-                    {
-                        eprintln!("Failed to index edited message {} to ES: {}", message_id, e);
-                    }
+                    index_message_to_es(
+                        &es_client,
+                        &client,
+                        &dialog.0.id,
+                        &message_id,
+                        &msg.external_id,
+                        msg.sender_id.clone(),
+                        text,
+                        msg.outgoing,
+                        ts_secs as u64,
+                        "edited message",
+                    )
+                    .await;
                 }
             }
             Update::MessageDeleted {
