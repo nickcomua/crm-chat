@@ -214,9 +214,9 @@ impl utoipa::Modify for SecurityAddon {
 /// Elasticsearch authentication method
 #[derive(Clone)]
 enum ElasticsearchAuth {
-    /// API Key authentication (Authorization: ApiKey <token>)
+    /// API Key authentication (Authorization: ApiKey `<token>`)
     ApiKey(String),
-    /// Basic authentication (Authorization: Basic <base64(user:pass)>)
+    /// Basic authentication (Authorization: Basic `<base64(user:pass)>`)
     Basic(String),
 }
 
