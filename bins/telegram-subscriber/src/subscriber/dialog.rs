@@ -34,6 +34,63 @@ impl std::fmt::Display for SyncError {
 
 impl std::error::Error for SyncError {}
 
+/// Helper function to build a MessageDocument for ES indexing
+fn build_message_document(
+    client: &Client,
+    dialog: &Chat,
+    message_id: &str,
+    external_id: &str,
+    sender_id: String,
+    text: &str,
+    outgoing: bool,
+    ts_secs: u64,
+) -> MessageDocument {
+    MessageDocument {
+        user_id: client.owner_user_id.to_string(),
+        client_id: client.id,
+        chat_id: dialog.id.clone(),
+        id: message_id.to_string(),
+        message_id: message_id.to_string(),
+        external_id: external_id.to_string(),
+        sender_id,
+        content: text.to_string(),
+        out: outgoing,
+        created_at: ts_secs,
+    }
+}
+
+/// Queue a document for ES bulk indexing, automatically flushing when batch size is reached
+async fn queue_es_doc(
+    es_client: &ElasticsearchClient,
+    es_docs: &mut Vec<MessageDocument>,
+    doc: MessageDocument,
+) {
+    es_docs.push(doc);
+
+    if es_docs.len() >= 100 {
+        if let Err(e) = es_client.bulk_index_messages(std::mem::take(es_docs)).await {
+            eprintln!("Warning: Failed to bulk index messages to ES: {}", e);
+        }
+    }
+}
+
+/// Flush any remaining documents to ES
+async fn flush_es_docs(es_client: &ElasticsearchClient, mut es_docs: Vec<MessageDocument>) {
+    if es_docs.is_empty() {
+        return;
+    }
+
+    if let Err(e) = es_client
+        .bulk_index_messages(std::mem::take(&mut es_docs))
+        .await
+    {
+        eprintln!(
+            "Warning: Failed to bulk index remaining messages to ES: {}",
+            e
+        );
+    }
+}
+
 pub async fn sync_dialogs(
     conn: &DbConnection,
     client: &Client,
@@ -197,40 +254,23 @@ pub async fn sync_dialogs(
                 // Continue with other messages instead of failing
             } else if let Some(text) = &message.text {
                 // Queue for ES bulk indexing
-                es_docs.push(MessageDocument {
-                    user_id: client.owner_user_id.to_string(),
-                    client_id: client.id,
-                    chat_id: dialog.id.clone(),
-                    id: message_id.clone(),
-                    message_id: message_id.clone(),
-                    external_id: message.external_id.clone(),
-                    sender_id: message.sender_id.clone(),
-                    content: text.clone(),
-                    out: message.outgoing,
-                    created_at: ts_secs,
-                });
-
-                // Bulk index every 100 messages to avoid memory buildup
-                if es_docs.len() >= 100
-                    && let Err(e) = es_client
-                        .bulk_index_messages(std::mem::take(&mut es_docs))
-                        .await
-                {
-                    eprintln!("Warning: Failed to bulk index messages to ES: {}", e);
-                }
+                let doc = build_message_document(
+                    client,
+                    &dialog,
+                    &message_id,
+                    &message.external_id,
+                    message.sender_id.clone(),
+                    text,
+                    message.outgoing,
+                    ts_secs,
+                );
+                queue_es_doc(&es_client, &mut es_docs, doc).await;
             }
         }
     }
 
     // Index any remaining messages
-    if !es_docs.is_empty()
-        && let Err(e) = es_client.bulk_index_messages(es_docs).await
-    {
-        eprintln!(
-            "Warning: Failed to bulk index remaining messages to ES: {}",
-            e
-        );
-    }
+    flush_es_docs(&es_client, es_docs).await;
 
     Ok(db_dialogs)
 }
