@@ -16,7 +16,6 @@ pub struct Client {
     pub external_id: String,
     pub active_chats: Vec<u64>,
     pub status: ClientStatus,
-    pub session: String,
 }
 
 impl __sdk::InModule for Client {

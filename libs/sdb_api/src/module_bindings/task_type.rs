@@ -10,9 +10,8 @@ use super::task_status_type::TaskStatus;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct Task {
-    pub id: u64,
+    pub id: String,
     pub owner_user_id: __sdk::Identity,
-    pub client_id: u64,
     pub status: TaskStatus,
     pub payload: TaskPayload,
     pub created_at: __sdk::Timestamp,

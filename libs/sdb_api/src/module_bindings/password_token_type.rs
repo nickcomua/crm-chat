@@ -8,6 +8,7 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 #[sats(crate = __lib)]
 pub struct PasswordToken {
     pub hint: Option<String>,
+    pub token: String,
 }
 
 impl __sdk::InModule for PasswordToken {

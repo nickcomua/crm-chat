@@ -9,14 +9,14 @@ use super::task_payload_type::TaskPayload;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct CreateTaskArgs {
-    pub client_id: u64,
+    pub id: String,
     pub payload: TaskPayload,
 }
 
 impl From<CreateTaskArgs> for super::Reducer {
     fn from(args: CreateTaskArgs) -> Self {
         Self::CreateTask {
-            client_id: args.client_id,
+            id: args.id,
             payload: args.payload,
         }
     }
@@ -38,7 +38,7 @@ pub trait create_task {
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed by listening for [`Self::on_create_task`] callbacks.
-    fn create_task(&self, client_id: u64, payload: TaskPayload) -> __sdk::Result<()>;
+    fn create_task(&self, id: String, payload: TaskPayload) -> __sdk::Result<()>;
     /// Register a callback to run whenever we are notified of an invocation of the reducer `create_task`.
     ///
     /// Callbacks should inspect the [`__sdk::ReducerEvent`] contained in the [`super::ReducerEventContext`]
@@ -48,7 +48,7 @@ pub trait create_task {
     /// to cancel the callback.
     fn on_create_task(
         &self,
-        callback: impl FnMut(&super::ReducerEventContext, &u64, &TaskPayload) + Send + 'static,
+        callback: impl FnMut(&super::ReducerEventContext, &String, &TaskPayload) + Send + 'static,
     ) -> CreateTaskCallbackId;
     /// Cancel a callback previously registered by [`Self::on_create_task`],
     /// causing it not to run in the future.
@@ -56,13 +56,13 @@ pub trait create_task {
 }
 
 impl create_task for super::RemoteReducers {
-    fn create_task(&self, client_id: u64, payload: TaskPayload) -> __sdk::Result<()> {
+    fn create_task(&self, id: String, payload: TaskPayload) -> __sdk::Result<()> {
         self.imp
-            .call_reducer("create_task", CreateTaskArgs { client_id, payload })
+            .call_reducer("create_task", CreateTaskArgs { id, payload })
     }
     fn on_create_task(
         &self,
-        mut callback: impl FnMut(&super::ReducerEventContext, &u64, &TaskPayload) + Send + 'static,
+        mut callback: impl FnMut(&super::ReducerEventContext, &String, &TaskPayload) + Send + 'static,
     ) -> CreateTaskCallbackId {
         CreateTaskCallbackId(self.imp.on_reducer(
             "create_task",
@@ -70,7 +70,7 @@ impl create_task for super::RemoteReducers {
                 let super::ReducerEventContext {
                     event:
                         __sdk::ReducerEvent {
-                            reducer: super::Reducer::CreateTask { client_id, payload },
+                            reducer: super::Reducer::CreateTask { id, payload },
                             ..
                         },
                     ..
@@ -78,7 +78,7 @@ impl create_task for super::RemoteReducers {
                 else {
                     unreachable!()
                 };
-                callback(ctx, client_id, payload)
+                callback(ctx, id, payload)
             }),
         ))
     }

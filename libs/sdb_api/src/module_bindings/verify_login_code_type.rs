@@ -9,6 +9,7 @@ use super::verify_login_code_output_type::VerifyLoginCodeOutput;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct VerifyLoginCode {
+    pub client_phone: String,
     pub code: String,
     pub output: VerifyLoginCodeOutput,
 }

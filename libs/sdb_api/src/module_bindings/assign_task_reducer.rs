@@ -7,7 +7,7 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct AssignTaskArgs {
-    pub task_id: u64,
+    pub task_id: String,
 }
 
 impl From<AssignTaskArgs> for super::Reducer {
@@ -34,7 +34,7 @@ pub trait assign_task {
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed by listening for [`Self::on_assign_task`] callbacks.
-    fn assign_task(&self, task_id: u64) -> __sdk::Result<()>;
+    fn assign_task(&self, task_id: String) -> __sdk::Result<()>;
     /// Register a callback to run whenever we are notified of an invocation of the reducer `assign_task`.
     ///
     /// Callbacks should inspect the [`__sdk::ReducerEvent`] contained in the [`super::ReducerEventContext`]
@@ -44,7 +44,7 @@ pub trait assign_task {
     /// to cancel the callback.
     fn on_assign_task(
         &self,
-        callback: impl FnMut(&super::ReducerEventContext, &u64) + Send + 'static,
+        callback: impl FnMut(&super::ReducerEventContext, &String) + Send + 'static,
     ) -> AssignTaskCallbackId;
     /// Cancel a callback previously registered by [`Self::on_assign_task`],
     /// causing it not to run in the future.
@@ -52,13 +52,13 @@ pub trait assign_task {
 }
 
 impl assign_task for super::RemoteReducers {
-    fn assign_task(&self, task_id: u64) -> __sdk::Result<()> {
+    fn assign_task(&self, task_id: String) -> __sdk::Result<()> {
         self.imp
             .call_reducer("assign_task", AssignTaskArgs { task_id })
     }
     fn on_assign_task(
         &self,
-        mut callback: impl FnMut(&super::ReducerEventContext, &u64) + Send + 'static,
+        mut callback: impl FnMut(&super::ReducerEventContext, &String) + Send + 'static,
     ) -> AssignTaskCallbackId {
         AssignTaskCallbackId(self.imp.on_reducer(
             "assign_task",

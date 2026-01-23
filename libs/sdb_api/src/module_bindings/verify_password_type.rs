@@ -9,7 +9,9 @@ use super::verify_password_output_type::VerifyPasswordOutput;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct VerifyPassword {
+    pub client_phone: String,
     pub password: String,
+    pub token: String,
     pub output: VerifyPasswordOutput,
 }
 

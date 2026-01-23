@@ -4,24 +4,30 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+use super::display_message_type::DisplayMessage;
 use super::generate_qr_code_type::GenerateQrCode;
-use super::poll_qr_login_type::PollQrLogin;
-use super::request_login_code_type::RequestLoginCode;
+use super::receive_login_code_type::ReceiveLoginCode;
+use super::receive_password_type::ReceivePassword;
+use super::send_login_code_type::SendLoginCode;
 use super::verify_login_code_type::VerifyLoginCode;
 use super::verify_password_type::VerifyPassword;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub enum TaskPayload {
-    RequestLoginCode(RequestLoginCode),
+    SendLoginCode(SendLoginCode),
+
+    ReceiveLoginCode(ReceiveLoginCode),
 
     VerifyLoginCode(VerifyLoginCode),
+
+    ReceivePassword(ReceivePassword),
 
     VerifyPassword(VerifyPassword),
 
     GenerateQrCode(GenerateQrCode),
 
-    PollQrLogin(PollQrLogin),
+    DisplayMessage(DisplayMessage),
 }
 
 impl __sdk::InModule for TaskPayload {

@@ -1,5 +1,5 @@
 import { Loader2, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useSpacetimeDB, useTable } from "spacetimedb/react";
 import { type Client, type DbConnection, tables } from "../lib/spacetime";
@@ -20,22 +20,22 @@ function isClientConnected(client: ClientType): boolean {
   return client.status.tag === "Connected";
 }
 
-// Helper to check if a client needs user input or is in QR login flow
-function clientNeedsUserInput(client: ClientType): boolean {
-  const status = client.status;
-  // Client needs input when:
-  // - WaitingCode or WaitingPassword without a value (needs user to enter code/password)
-  // - WaitingQrCode (needs user to scan QR code or wait for URL)
+// Helper to check if a client is in authentication state (any task-based state)
+function isClientAuthenticating(client: ClientType): boolean {
+  const { tag } = client.status;
   return (
-    ((status.tag === "WaitingCode" || status.tag === "WaitingPassword") &&
-      status.value === undefined) ||
-    status.tag === "WaitingQrCode"
+    tag === "SendingLoginCode" ||
+    tag === "ReceivingLoginCode" ||
+    tag === "VerifyingLoginCode" ||
+    tag === "ReceivingPassword" ||
+    tag === "VerifyingPassword" ||
+    tag === "GeneratingQrCode"
   );
 }
 
-// Helper to check if a client is pending (not connected)
-function isClientPending(client: ClientType): boolean {
-  return !isClientConnected(client);
+// Helper to check if a client has an error
+function isClientError(client: ClientType): boolean {
+  return client.status.tag === "Error";
 }
 
 // Get status display info
@@ -45,112 +45,59 @@ function getStatusDisplay(client: ClientType): {
 } {
   const status = client.status;
 
-  if (status.tag === "Connected") {
-    return { label: "Connected", color: "bg-emerald-500" };
-  }
-  if (status.tag === "WaitingPhone") {
-    if (status.value !== undefined) {
+  switch (status.tag) {
+    case "Connected":
+      return { label: "Connected", color: "bg-emerald-500" };
+    case "SendingLoginCode":
       return { label: "Sending code...", color: "bg-amber-500" };
-    }
-    return { label: "Enter phone", color: "bg-amber-500" };
-  }
-  if (status.tag === "WaitingCode") {
-    if (status.value !== undefined) {
+    case "ReceivingLoginCode":
+      return { label: "Enter verification code", color: "bg-blue-500" };
+    case "VerifyingLoginCode":
       return { label: "Verifying code...", color: "bg-amber-500" };
-    }
-    return { label: "Enter code", color: "bg-amber-500" };
-  }
-  if (status.tag === "WaitingPassword") {
-    if (status.value !== undefined) {
+    case "ReceivingPassword":
+      return { label: "Enter 2FA password", color: "bg-blue-500" };
+    case "VerifyingPassword":
       return { label: "Verifying password...", color: "bg-amber-500" };
-    }
-    return { label: "Enter password", color: "bg-amber-500" };
-  }
-  if (status.tag === "WaitingQrCode") {
-    if (status.value !== undefined) {
+    case "GeneratingQrCode":
       return { label: "Scan QR code", color: "bg-blue-500" };
-    }
-    return { label: "Generating QR...", color: "bg-amber-500" };
+    case "Error":
+      return { label: `Error: ${status.value}`, color: "bg-red-500" };
+    default:
+      return { label: "Unknown", color: "bg-gray-500" };
   }
-
-  return { label: "Unknown", color: "bg-gray-500" };
 }
 
-export function TelegramClientsManager() {
+export function TelegramClientsManager(): React.ReactNode {
   const { getConnection, isActive } = useSpacetimeDB();
   const conn = getConnection<DbConnection>();
   const [clients] = useTable(tables.client);
-  const [users] = useTable(tables.user);
-  console.log(users, clients);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [selectedPendingClientId, setSelectedPendingClientId] = useState<
-    bigint | null
-  >(null);
 
-  // Separate clients into connected and pending
-  const { connectedClients, pendingClients } = (() => {
-    const connected: ClientType[] = [];
-    const pending: ClientType[] = [];
+  // Separate clients into connected and authenticating
+  const connectedClients: ClientType[] = [];
+  const authenticatingClients: ClientType[] = [];
 
-    for (const client of clients) {
-      if (isClientConnected(client)) {
-        connected.push(client);
-      } else {
-        pending.push(client);
-      }
+  for (const client of clients) {
+    if (isClientConnected(client)) {
+      connectedClients.push(client);
+    } else if (isClientAuthenticating(client) || isClientError(client)) {
+      authenticatingClients.push(client);
     }
+  }
 
-    return { connectedClients: connected, pendingClients: pending };
-  })();
-
-  // Find the pending client that needs user input or the selected one
-  const activePendingClient = (() => {
-    // First check if we have a selected pending client
-    if (selectedPendingClientId) {
-      const selected = pendingClients.find(
-        (c) => c.id === selectedPendingClientId
-      );
-      if (selected) {
-        return selected;
-      }
-    }
-
-    // Otherwise find any client that needs user input
-    return pendingClients.find(clientNeedsUserInput) ?? null;
-  })();
-
-  // Auto-open dialog when a pending client needs user input
-  useEffect(() => {
-    if (activePendingClient && clientNeedsUserInput(activePendingClient)) {
-      const timer = setTimeout(() => {
-        setIsAddDialogOpen(true);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [activePendingClient]);
-
-  const handleDeleteClient = (clientId: bigint) => {
+  const handleDeleteClient = (clientId: bigint): void => {
     if (!conn) {
       return;
     }
     conn.reducers.deleteClient({ clientId });
   };
 
-  const handleOpenAddDialog = () => {
-    setSelectedPendingClientId(null);
+  const handleOpenAddDialog = (): void => {
     setIsAddDialogOpen(true);
   };
 
-  const handleDialogOpenChange = (open: boolean) => {
+  const handleDialogOpenChange = (open: boolean): void => {
     setIsAddDialogOpen(open);
-    if (!open) {
-      setSelectedPendingClientId(null);
-    }
-  };
-
-  const handleContinuePendingClient = (client: ClientType) => {
-    setSelectedPendingClientId(client.id);
-    setIsAddDialogOpen(true);
   };
 
   if (!isActive) {
@@ -165,7 +112,7 @@ export function TelegramClientsManager() {
   }
 
   const hasNoClients =
-    connectedClients.length === 0 && pendingClients.length === 0;
+    connectedClients.length === 0 && authenticatingClients.length === 0;
 
   return (
     <div className="space-y-6">
@@ -184,18 +131,17 @@ export function TelegramClientsManager() {
         </Button>
       </div>
 
-      {/* Pending Clients Section */}
-      {pendingClients.length > 0 && (
+      {/* Authenticating Clients Section */}
+      {authenticatingClients.length > 0 && (
         <div className="space-y-3">
           <h3 className="font-semibold text-lg text-muted-foreground">
             Pending Authentication
           </h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {pendingClients.map((client) => (
+            {authenticatingClients.map((client) => (
               <ClientCard
                 client={client}
                 key={client.id.toString()}
-                onContinue={() => handleContinuePendingClient(client)}
                 onDelete={() => handleDeleteClient(client.id)}
               />
             ))}
@@ -206,7 +152,7 @@ export function TelegramClientsManager() {
       {/* Connected Clients Section */}
       {connectedClients.length > 0 && (
         <div className="space-y-3">
-          {pendingClients.length > 0 && (
+          {authenticatingClients.length > 0 && (
             <h3 className="font-semibold text-lg text-muted-foreground">
               Connected Clients
             </h3>
@@ -241,30 +187,34 @@ export function TelegramClientsManager() {
       )}
 
       <AddClientDialog
-        connection={conn}
         onOpenChange={handleDialogOpenChange}
         open={isAddDialogOpen}
-        pendingClient={activePendingClient}
       />
     </div>
   );
 }
 
+function getCardClassName(client: ClientType): string | undefined {
+  if (isClientAuthenticating(client)) {
+    return "border-amber-500/50";
+  }
+  if (isClientError(client)) {
+    return "border-red-500/50";
+  }
+  return undefined;
+}
+
 function ClientCard({
   client,
   onDelete,
-  onContinue,
 }: {
   client: ClientType;
   onDelete: () => void;
-  onContinue?: () => void;
-}) {
+}): React.ReactNode {
   const statusDisplay = getStatusDisplay(client);
-  const isPending = isClientPending(client);
-  const needsInput = clientNeedsUserInput(client);
 
   return (
-    <Card className={isPending ? "border-amber-500/50" : undefined}>
+    <Card className={getCardClassName(client)}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0">
         <div className="space-y-1">
           <CardTitle className="font-medium text-base">
@@ -285,18 +235,11 @@ function ClientCard({
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
-            <span className="text-muted-foreground text-sm">
-              {statusDisplay.label}
-            </span>
-          </div>
-          {isPending && needsInput && onContinue && (
-            <Button onClick={onContinue} size="sm" variant="outline">
-              Continue
-            </Button>
-          )}
+        <div className="flex items-center gap-2">
+          <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
+          <span className="text-muted-foreground text-sm">
+            {statusDisplay.label}
+          </span>
         </div>
       </CardContent>
     </Card>
