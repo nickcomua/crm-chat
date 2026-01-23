@@ -6,18 +6,29 @@ import {
   UserButton,
   useAuth,
 } from "@clerk/clerk-react";
-import { MessageSquare, Moon, Settings, Sun } from "lucide-react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MessageSquare, Moon, Search, Settings, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DbConnectionBuilder, Identity } from "spacetimedb";
 import { SpacetimeDBProvider } from "spacetimedb/react";
 
 import { ChatPage } from "./components/chat-page";
+import { SearchDialog } from "./components/search-dialog";
 import { TelegramClientsManager } from "./components/telegram-clients-manager";
 import { Button } from "./components/ui/button";
 import { env } from "./env";
 import { useTheme } from "./hooks/use-theme";
 import { DbConnection, type ErrorContext } from "./lib/spacetime";
 import { cn } from "./lib/utils";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function App() {
   return (
@@ -98,6 +109,7 @@ function Dashboard() {
   });
   const [connectionKey, setConnectionKey] = useState(0);
   const [activeTab, setActiveTab] = useState<"chats" | "settings">("chats");
+  const [searchOpen, setSearchOpen] = useState(false);
   const retryCountRef = useRef(0);
   const connectionBuilderRef = useRef<DbConnectionBuilder<DbConnection> | null>(
     null
@@ -264,67 +276,78 @@ function Dashboard() {
   }
 
   return (
-    <SpacetimeDBProvider
-      connectionBuilder={connectionState.builder}
-      key={connectionKey}
-    >
-      <div className="flex h-screen flex-col">
-        <header className="sticky top-0 z-50 border-border border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-14 items-center justify-between px-4">
-            <div className="flex items-center gap-6">
-              <h1 className="font-semibold text-xl">CRM Chat</h1>
-              <nav className="flex items-center gap-1">
-                <button
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                    activeTab === "chats"
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                  onClick={() => setActiveTab("chats")}
-                  type="button"
+    <QueryClientProvider client={queryClient}>
+      <SpacetimeDBProvider
+        connectionBuilder={connectionState.builder}
+        key={connectionKey}
+      >
+        <div className="flex h-screen flex-col">
+          <header className="sticky top-0 z-50 border-border border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="flex h-14 items-center justify-between px-4">
+              <div className="flex items-center gap-6">
+                <h1 className="font-semibold text-xl">CRM Chat</h1>
+                <nav className="flex items-center gap-1">
+                  <button
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                      activeTab === "chats"
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    onClick={() => setActiveTab("chats")}
+                    type="button"
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    Chats
+                  </button>
+                  <button
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                      activeTab === "settings"
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    onClick={() => setActiveTab("settings")}
+                    type="button"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </button>
+                </nav>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setSearchOpen(true)}
+                  size="icon"
+                  variant="ghost"
                 >
-                  <MessageSquare className="h-4 w-4" />
-                  Chats
-                </button>
-                <button
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                    activeTab === "settings"
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                  onClick={() => setActiveTab("settings")}
-                  type="button"
-                >
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </button>
-              </nav>
+                  <Search className="h-5 w-5" />
+                  <span className="sr-only">Search messages</span>
+                </Button>
+                <ThemeToggle />
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: "h-9 w-9",
+                    },
+                  }}
+                />
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <UserButton
-                appearance={{
-                  elements: {
-                    avatarBox: "h-9 w-9",
-                  },
-                }}
-              />
-            </div>
-          </div>
-        </header>
-        <main className="flex-1 overflow-hidden">
-          {activeTab === "chats" ? (
-            <ChatPage />
-          ) : (
-            <div className="container px-4 py-8">
-              <TelegramClientsManager />
-            </div>
-          )}
-        </main>
-      </div>
-    </SpacetimeDBProvider>
+          </header>
+          <main className="flex-1 overflow-hidden">
+            {activeTab === "chats" ? (
+              <ChatPage />
+            ) : (
+              <div className="container px-4 py-8">
+                <TelegramClientsManager />
+              </div>
+            )}
+          </main>
+        </div>
+        <SearchDialog onOpenChange={setSearchOpen} open={searchOpen} />
+      </SpacetimeDBProvider>
+    </QueryClientProvider>
   );
 }
 

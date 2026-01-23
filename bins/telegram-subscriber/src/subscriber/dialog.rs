@@ -1,6 +1,8 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::elasticsearch::{ElasticsearchClient, MessageDocument};
 use crate::ids::{TelegramChatId, TelegramMessageId};
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -32,10 +34,69 @@ impl std::fmt::Display for SyncError {
 
 impl std::error::Error for SyncError {}
 
+/// Helper function to build a MessageDocument for ES indexing
+#[allow(clippy::too_many_arguments)]
+fn build_message_document(
+    client: &Client,
+    dialog: &Chat,
+    message_id: &str,
+    external_id: &str,
+    sender_id: String,
+    text: &str,
+    outgoing: bool,
+    ts_secs: u64,
+) -> MessageDocument {
+    MessageDocument {
+        user_id: client.owner_user_id.to_string(),
+        client_id: client.id,
+        chat_id: dialog.id.clone(),
+        id: message_id.to_string(),
+        message_id: message_id.to_string(),
+        external_id: external_id.to_string(),
+        sender_id,
+        content: text.to_string(),
+        out: outgoing,
+        created_at: ts_secs,
+    }
+}
+
+/// Queue a document for ES bulk indexing, automatically flushing when batch size is reached
+async fn queue_es_doc(
+    es_client: &ElasticsearchClient,
+    es_docs: &mut Vec<MessageDocument>,
+    doc: MessageDocument,
+) {
+    es_docs.push(doc);
+
+    if es_docs.len() >= 100
+        && let Err(e) = es_client.bulk_index_messages(std::mem::take(es_docs)).await
+    {
+        eprintln!("Warning: Failed to bulk index messages to ES: {}", e);
+    }
+}
+
+/// Flush any remaining documents to ES
+async fn flush_es_docs(es_client: &ElasticsearchClient, mut es_docs: Vec<MessageDocument>) {
+    if es_docs.is_empty() {
+        return;
+    }
+
+    if let Err(e) = es_client
+        .bulk_index_messages(std::mem::take(&mut es_docs))
+        .await
+    {
+        eprintln!(
+            "Warning: Failed to bulk index remaining messages to ES: {}",
+            e
+        );
+    }
+}
+
 pub async fn sync_dialogs(
     conn: &DbConnection,
     client: &Client,
     tg_client: &TelegramClient,
+    es_client: Arc<ElasticsearchClient>,
 ) -> Result<Vec<Chat>, SyncError> {
     let dialogs_stream = tg_client
         .iter_dialogs()
@@ -105,6 +166,14 @@ pub async fn sync_dialogs(
     let db_dialogs: Vec<Chat> = conn.db.chat().iter().collect();
     let db_messages_ids: HashSet<String> = conn.db.message().iter().map(|m| m.id).collect();
 
+    println!(
+        "Fetched {} dialogs for client {}",
+        db_dialogs.len(),
+        client.id
+    );
+    // Collect messages for bulk ES indexing
+    let mut es_docs: Vec<MessageDocument> = Vec::new();
+
     for dialog in db_dialogs.clone() {
         let dialog_id: TelegramChatId = match dialog.id.clone().try_into() {
             Ok(id) => id,
@@ -144,8 +213,9 @@ pub async fn sync_dialogs(
                 dialog_external_id: dialog_id.dialog_external_id.clone(),
                 message_external_id: message.external_id.clone(),
             };
+            let message_id: String = id.clone().into();
 
-            if db_messages_ids.contains(&id.to_string()) {
+            if db_messages_ids.contains(&message_id) {
                 break;
             }
 
@@ -166,13 +236,14 @@ pub async fn sync_dialogs(
             };
 
             if let Err(e) = conn.reducers().upsert_message(Message {
-                id: id.into(),
+                id: message_id.clone(),
                 external_id: message.external_id.clone(),
                 owner_user_id: client.owner_user_id,
                 client_id: client.id,
                 chat_id: dialog.id.clone(),
                 deleted: false,
                 out: message.outgoing,
+                sender_id: message.sender_id.clone(),
                 media_id: None,
                 text: message.text.clone(),
                 ts: ts_secs,
@@ -182,9 +253,25 @@ pub async fn sync_dialogs(
                     message.external_id, client.id, e
                 );
                 // Continue with other messages instead of failing
+            } else if let Some(text) = &message.text {
+                // Queue for ES bulk indexing
+                let doc = build_message_document(
+                    client,
+                    &dialog,
+                    &message_id,
+                    &message.external_id,
+                    message.sender_id.clone(),
+                    text,
+                    message.outgoing,
+                    ts_secs,
+                );
+                queue_es_doc(&es_client, &mut es_docs, doc).await;
             }
         }
     }
+
+    // Index any remaining messages
+    flush_es_docs(&es_client, es_docs).await;
 
     Ok(db_dialogs)
 }

@@ -20,6 +20,8 @@
       flake = false;
     };
 
+    # Swagger UI fetched below via pkgs.fetchurl to preserve zip format
+
     # sccache = {
     #   url = "github:mozilla/sccache";
     #   inputs.nixpkgs.follows = "nixpkgs";
@@ -61,6 +63,18 @@
 
         spacetimedbPkg = import ./nix/spacetimedb.nix {inherit pkgs system;};
 
+        # Pre-fetch swagger-ui zip for utoipa-swagger-ui (preserves zip format for build.rs)
+        swaggerUiZipRaw = pkgs.fetchurl {
+          url = "https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip";
+          sha256 = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
+        };
+        # Wrap in a derivation with proper permissions
+        swaggerUiZip = pkgs.runCommand "swagger-ui-zip" {} ''
+          mkdir -p $out
+          cp ${swaggerUiZipRaw} $out/v5.17.14.zip
+          chmod 644 $out/v5.17.14.zip
+        '';
+
         inherit (pkgs) lib;
 
         # Use fenix to get a complete Rust toolchain with clippy and rustfmt
@@ -83,11 +97,20 @@
           inherit src;
           strictDeps = true;
 
+          # Copy swagger-ui zip to a writable location before build
+          preConfigure = ''
+            export SWAGGER_UI_ZIP_DIR=$(mktemp -d)
+            cp ${swaggerUiZip}/v5.17.14.zip $SWAGGER_UI_ZIP_DIR/
+            chmod 644 $SWAGGER_UI_ZIP_DIR/v5.17.14.zip
+            export SWAGGER_UI_DOWNLOAD_URL="file://$SWAGGER_UI_ZIP_DIR/v5.17.14.zip"
+          '';
+
           nativeBuildInputs = [
             spacetimedbPkg
             pkgs.lld
             pkgs.rustfmt
             pkgs.pkg-config
+            pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
           #   pkgs.llvmPackages.libclang
@@ -96,15 +119,16 @@
 
           buildInputs =
             [
-              
+
               pkgs.openssl
+              pkgs.cacert # Required for utoipa-swagger-ui to download over HTTPS
               # pkgs.pkg-config
               # Add additional build inputs here
               # pkgs.gtk3
               # pkgs.webkitgtk_4_1
               # pkgs.libsoup_3
               # pkgs.cairo
-              
+
               pkgs.sqlite
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
@@ -114,6 +138,9 @@
 
            # needed for spacetimedb-lib to build
            SPACETIMEDB_NIX_BUILD_GIT_COMMIT = self.rev or "development";
+           # Required for curl to verify SSL certificates during build
+           SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+           # Note: SWAGGER_UI_DOWNLOAD_URL is set dynamically in preConfigure above
         };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -135,6 +162,7 @@
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
               (craneLib.fileset.commonCargoSources ./bins/sdb_server)
+              (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./libs/sdb_api)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)

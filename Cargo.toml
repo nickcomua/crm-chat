@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "bins/sdb_server",
+  "bins/es-proxy",
   "libs/hack",
   "libs/sdb_api",
   "libs/messanger-interface",

@@ -11,6 +11,8 @@ pub struct MessageSummary {
     pub external_id: ExternalId,
     /// External identifier of the chat this message belongs to.
     pub chat_external_id: ExternalId,
+    /// External identifier of the sender of this message.
+    pub sender_id: ExternalId,
     /// Text content of the message (if available).
     pub text: Option<String>,
     /// Whether this message was sent by the authenticated user.
