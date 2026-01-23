@@ -9,7 +9,7 @@ use super::task_payload_type::TaskPayload;
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub(super) struct CompleteTaskArgs {
-    pub task_id: u64,
+    pub task_id: String,
     pub payload: TaskPayload,
 }
 
@@ -38,7 +38,7 @@ pub trait complete_task {
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed by listening for [`Self::on_complete_task`] callbacks.
-    fn complete_task(&self, task_id: u64, payload: TaskPayload) -> __sdk::Result<()>;
+    fn complete_task(&self, task_id: String, payload: TaskPayload) -> __sdk::Result<()>;
     /// Register a callback to run whenever we are notified of an invocation of the reducer `complete_task`.
     ///
     /// Callbacks should inspect the [`__sdk::ReducerEvent`] contained in the [`super::ReducerEventContext`]
@@ -48,7 +48,7 @@ pub trait complete_task {
     /// to cancel the callback.
     fn on_complete_task(
         &self,
-        callback: impl FnMut(&super::ReducerEventContext, &u64, &TaskPayload) + Send + 'static,
+        callback: impl FnMut(&super::ReducerEventContext, &String, &TaskPayload) + Send + 'static,
     ) -> CompleteTaskCallbackId;
     /// Cancel a callback previously registered by [`Self::on_complete_task`],
     /// causing it not to run in the future.
@@ -56,13 +56,13 @@ pub trait complete_task {
 }
 
 impl complete_task for super::RemoteReducers {
-    fn complete_task(&self, task_id: u64, payload: TaskPayload) -> __sdk::Result<()> {
+    fn complete_task(&self, task_id: String, payload: TaskPayload) -> __sdk::Result<()> {
         self.imp
             .call_reducer("complete_task", CompleteTaskArgs { task_id, payload })
     }
     fn on_complete_task(
         &self,
-        mut callback: impl FnMut(&super::ReducerEventContext, &u64, &TaskPayload) + Send + 'static,
+        mut callback: impl FnMut(&super::ReducerEventContext, &String, &TaskPayload) + Send + 'static,
     ) -> CompleteTaskCallbackId {
         CompleteTaskCallbackId(self.imp.on_reducer(
             "complete_task",

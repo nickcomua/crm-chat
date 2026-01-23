@@ -3,5 +3,17 @@
   "extends": ["ultracite/core", "ultracite/react"],
   "files": {
     "includes": ["!!src/lib/spacetime"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/routes/**/*.$*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -5,6 +5,7 @@
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 use super::qr_token_type::QrToken;
+use super::sign_in_success_type::SignInSuccess;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
@@ -13,7 +14,11 @@ pub enum GenerateQrCodeOutput {
 
     Token(QrToken),
 
-    AlreadyAuthorized,
+    Authorized(SignInSuccess),
+
+    AlreadyAuthorized(SignInSuccess),
+
+    Cancelled,
 
     Failed(String),
 }

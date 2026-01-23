@@ -140,7 +140,7 @@ spacetime generate --lang rust --out-dir ../../libs/sdb_api/src/module_bindings
 
 # TypeScript bindings for web frontend
 cd bins/crm-chat-web
-bun run gen
+npm run gen
 # or: spacetime generate --lang typescript --out-dir ./src/lib/spacetime --project-path ../sdb_server
 ```
 
@@ -150,29 +150,29 @@ All commands run from `bins/crm-chat-web/`:
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
 # Development server
-bun run dev
+npm run dev
 
 # Build for production
-bun run build
+npm run build
 
 # Preview production build
-bun run preview
+npm run preview
 
 # Lint/format with Ultracite (Biome)
-bun x ultracite fix
-bun x ultracite check
+npx ultracite fix
+npx ultracite check
 
 # Generate SpacetimeDB TypeScript bindings
-bun run gen
+npm run gen
 ```
 
 ### Frontend Code Standards
 
 The frontend follows Ultracite rules (see bins/crm-chat-web/.cursor/rules/ultracite.mdc):
-- Use Biome for linting/formatting (`bun x ultracite fix`)
+- Use Biome for linting/formatting (`npx ultracite fix`)
 - Explicit types for function parameters and return values
 - Arrow functions for callbacks
 - `async/await` over promise chains
@@ -216,7 +216,7 @@ Clients have a status enum (WaitingPhone, WaitingCode, WaitingPassword, Connecte
 
 These files are auto-generated and should not be manually edited:
 - `libs/sdb_api/src/module_bindings/` - Regenerate with `spacetime generate --lang rust`
-- `bins/crm-chat-web/src/lib/spacetime/` - Regenerate with `bun run gen`
+- `bins/crm-chat-web/src/lib/spacetime/` - Regenerate with `npm run gen`
 
 ### Environment Variables
 

@@ -31,8 +31,16 @@ import {
 } from "spacetimedb";
 
 // Import and reexport all reducer arg types
+import AssignTask from "./assign_task_reducer";
+export { AssignTask };
+import CancelTask from "./cancel_task_reducer";
+export { CancelTask };
 import ClientConnected from "./client_connected_reducer";
 export { ClientConnected };
+import CompleteTask from "./complete_task_reducer";
+export { CompleteTask };
+import CreateTask from "./create_task_reducer";
+export { CreateTask };
 import DeleteChat from "./delete_chat_reducer";
 export { DeleteChat };
 import DeleteClient from "./delete_client_reducer";
@@ -41,6 +49,8 @@ import IdentityDisconnected from "./identity_disconnected_reducer";
 export { IdentityDisconnected };
 import MarkMessageDeleted from "./mark_message_deleted_reducer";
 export { MarkMessageDeleted };
+import UpdateTask from "./update_task_reducer";
+export { UpdateTask };
 import UpsertChat from "./upsert_chat_reducer";
 export { UpsertChat };
 import UpsertClient from "./upsert_client_reducer";
@@ -55,12 +65,14 @@ import ChatRow from "./chat_table";
 export { ChatRow };
 import ClientRow from "./client_table";
 export { ClientRow };
+import HumanRow from "./human_table";
+export { HumanRow };
 import MessageRow from "./message_table";
 export { MessageRow };
 import RobotRow from "./robot_table";
 export { RobotRow };
-import UserRow from "./user_table";
-export { UserRow };
+import TaskRow from "./task_table";
+export { TaskRow };
 
 // Import and reexport all types
 import Chat from "./chat_type";
@@ -73,12 +85,56 @@ import ClientKind from "./client_kind_type";
 export { ClientKind };
 import ClientStatus from "./client_status_type";
 export { ClientStatus };
+import DisplayMessage from "./display_message_type";
+export { DisplayMessage };
+import DisplayMessageOutput from "./display_message_output_type";
+export { DisplayMessageOutput };
+import GenerateQrCode from "./generate_qr_code_type";
+export { GenerateQrCode };
+import GenerateQrCodeOutput from "./generate_qr_code_output_type";
+export { GenerateQrCodeOutput };
+import Human from "./human_type";
+export { Human };
+import LoginToken from "./login_token_type";
+export { LoginToken };
 import Message from "./message_type";
 export { Message };
+import MessageSeverity from "./message_severity_type";
+export { MessageSeverity };
+import PasswordToken from "./password_token_type";
+export { PasswordToken };
+import QrToken from "./qr_token_type";
+export { QrToken };
+import ReceiveLoginCode from "./receive_login_code_type";
+export { ReceiveLoginCode };
+import ReceiveLoginCodeOutput from "./receive_login_code_output_type";
+export { ReceiveLoginCodeOutput };
+import ReceivePassword from "./receive_password_type";
+export { ReceivePassword };
+import ReceivePasswordOutput from "./receive_password_output_type";
+export { ReceivePasswordOutput };
 import Robot from "./robot_type";
 export { Robot };
-import User from "./user_type";
-export { User };
+import SendLoginCode from "./send_login_code_type";
+export { SendLoginCode };
+import SendLoginCodeOutput from "./send_login_code_output_type";
+export { SendLoginCodeOutput };
+import SignInSuccess from "./sign_in_success_type";
+export { SignInSuccess };
+import Task from "./task_type";
+export { Task };
+import TaskPayload from "./task_payload_type";
+export { TaskPayload };
+import TaskStatus from "./task_status_type";
+export { TaskStatus };
+import VerifyLoginCode from "./verify_login_code_type";
+export { VerifyLoginCode };
+import VerifyLoginCodeOutput from "./verify_login_code_output_type";
+export { VerifyLoginCodeOutput };
+import VerifyPassword from "./verify_password_type";
+export { VerifyPassword };
+import VerifyPasswordOutput from "./verify_password_output_type";
+export { VerifyPasswordOutput };
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema(
@@ -124,6 +180,17 @@ const tablesSchema = __schema(
     ],
   }, ClientRow),
   __table({
+    name: 'human',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'human_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, HumanRow),
+  __table({
     name: 'message',
     indexes: [
       { name: 'chat_id', algorithm: 'btree', columns: [
@@ -168,23 +235,34 @@ const tablesSchema = __schema(
     ],
   }, RobotRow),
   __table({
-    name: 'user',
+    name: 'task',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
         'id',
       ] },
+      { name: 'owner_user_id', algorithm: 'btree', columns: [
+        'ownerUserId',
+      ] },
+      { name: 'status', algorithm: 'btree', columns: [
+        'status',
+      ] },
     ],
     constraints: [
-      { name: 'user_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'task_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, UserRow),
+  }, TaskRow),
 );
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("assign_task", AssignTask),
+  __reducerSchema("cancel_task", CancelTask),
+  __reducerSchema("complete_task", CompleteTask),
+  __reducerSchema("create_task", CreateTask),
   __reducerSchema("delete_chat", DeleteChat),
   __reducerSchema("delete_client", DeleteClient),
   __reducerSchema("mark_message_deleted", MarkMessageDeleted),
+  __reducerSchema("update_task", UpdateTask),
   __reducerSchema("upsert_chat", UpsertChat),
   __reducerSchema("upsert_client", UpsertClient),
   __reducerSchema("upsert_message", UpsertMessage),

@@ -33,6 +33,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
+
+    spacetimedb = {
+      url = "path:./nix/spacetimedb";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
   outputs = {
@@ -44,7 +50,7 @@
     advisory-db,
     # sccache,
     crm-chat-web-app,
-    # spacetimedb,
+    spacetimedb,
     ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -56,12 +62,7 @@
         };
         # pkgs = nixpkgs.legacyPackages.${system};
 
-        # spacetimedbPkg =
-        #   if pkgs.stdenv.isDarwin
-        #   then import ./nix/spacetimedb.nix {inherit pkgs system;}
-        #   else spacetimedb.packages.${system}.spacetime;
-
-        spacetimedbPkg = import ./nix/spacetimedb.nix {inherit pkgs system;};
+        spacetimedbPkg = spacetimedb.packages.${system}.default;
 
         # Pre-fetch swagger-ui zip for utoipa-swagger-ui (preserves zip format for build.rs)
         swaggerUiZipRaw = pkgs.fetchurl {
@@ -305,6 +306,7 @@
             cargo-hakari
             cargo-audit
             cargo-watch
+            cargo-sweep
             cargo-nextest
             biome
             pkg-config
