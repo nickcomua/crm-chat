@@ -12,6 +12,7 @@ pub struct Message {
     pub owner_user_id: __sdk::Identity,
     pub client_id: u64,
     pub chat_id: String,
+    pub sender_id: String,
     pub text: Option<String>,
     pub out: bool,
     pub deleted: bool,
