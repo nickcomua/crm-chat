@@ -1,6 +1,6 @@
 import { Loader2, QrCode, Smartphone } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTable } from "spacetimedb/react";
 import { tables } from "../lib/spacetime";
 import { GenerateQrCodeTask } from "./client/generate-qr-code-task";
@@ -43,17 +43,26 @@ const STEP_DESCRIPTIONS: Record<Step["type"], string> = {
 interface AddClientDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  resumePhone?: string | null;
 }
 
 export function AddClientDialog({
   open,
   onOpenChange,
+  resumePhone,
 }: AddClientDialogProps): React.ReactNode {
   const [step, setStep] = useState<Step>({ type: "choose" });
-  const [activePhone, setActivePhone] = useState<string | null>(null);
+  const [activePhone, setActivePhone] = useState<string | null>(resumePhone ?? null);
 
   // Watch for clients to track authentication progress
   const [clients] = useTable(tables.client);
+
+  // Handle resuming authentication for an existing client
+  useEffect(() => {
+    if (resumePhone && open) {
+      setActivePhone(resumePhone);
+    }
+  }, [resumePhone, open]);
 
   // Find the client being authenticated (if any)
   const activeClient = activePhone
@@ -188,6 +197,18 @@ export function AddClientDialog({
   };
 
   const renderContent = (): React.ReactNode => {
+    // If we have an active phone but no client yet, show loading (waiting for sync)
+    if (activePhone && !activeClient) {
+      return (
+        <div className="flex flex-col items-center justify-center space-y-4 py-8">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground text-sm">
+            Setting up authentication...
+          </p>
+        </div>
+      );
+    }
+
     return activeClient ? renderClientContent() : renderStepContent();
   };
 

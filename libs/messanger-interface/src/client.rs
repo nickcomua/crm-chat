@@ -4,8 +4,7 @@ use async_trait::async_trait;
 
 use crate::error::MessengerError;
 use crate::native::NativePayload;
-use crate::session::SessionStore;
-use crate::types::{AuthConfig, DialogStream, ExternalId, MessageStream, UpdateStream};
+use crate::types::{DialogStream, ExternalId, MessageStream, UpdateStream};
 
 /// Main trait for messenger client implementations.
 ///
@@ -106,18 +105,4 @@ pub trait MessengerClient: Send + Sync {
         chat_external_id: &ExternalId,
         message_external_id: &ExternalId,
     ) -> Result<(), MessengerError>;
-}
-
-/// Builder trait for creating messenger clients.
-#[async_trait]
-pub trait MessengerClientBuilder: Send + Sync {
-    /// The concrete client type this builder creates.
-    type Client: MessengerClient;
-
-    /// Create a new client with the given configuration.
-    async fn build(
-        &self,
-        auth_config: AuthConfig,
-        session_store: Option<Box<dyn SessionStore>>,
-    ) -> Result<Self::Client, MessengerError>;
 }

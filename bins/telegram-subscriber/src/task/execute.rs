@@ -59,11 +59,6 @@ impl TaskExecutionContext {
         user_id: Identity,
         client_id: &str,
     ) -> Result<Arc<TelegramClient>, TaskError> {
-        use messanger_interface::session::JsonSessionStore;
-        use messanger_interface::{AuthConfig, MessengerClientBuilder};
-        use messanger_telegram::TelegramClientBuilder;
-        use serde_json::json;
-
         let key = SessionKey {
             user_id,
             client_id: client_id.to_string(),
@@ -80,23 +75,16 @@ impl TaskExecutionContext {
 
         let session_path = crate::config::get_session_path(client_id, &user_id.to_string());
 
-        let client = TelegramClientBuilder
-            .build(
-                AuthConfig {
-                    credentials: json!({
-                        "api_id": self.config.api_id,
-                        "api_hash": self.config.api_hash,
-                    }),
-                },
-                Some(Box::new(JsonSessionStore::new(json!({
-                    "session_file": session_path,
-                })))),
-            )
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to build Telegram client");
-                TaskError::ClientBuildFailed(e.to_string())
-            })?;
+        let client = TelegramClient::new(
+            self.config.api_id,
+            self.config.api_hash.clone(),
+            session_path.to_string_lossy().to_string(),
+        )
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to build Telegram client");
+            TaskError::ClientBuildFailed(e.to_string())
+        })?;
 
         let client = Arc::new(client);
         sessions.insert(key, client.clone());

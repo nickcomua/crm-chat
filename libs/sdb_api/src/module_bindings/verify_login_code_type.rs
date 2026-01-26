@@ -4,12 +4,14 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+use super::login_token_type::LoginToken;
 use super::verify_login_code_output_type::VerifyLoginCodeOutput;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
 pub struct VerifyLoginCode {
     pub client_phone: String,
+    pub token: LoginToken,
     pub code: String,
     pub output: VerifyLoginCodeOutput,
 }

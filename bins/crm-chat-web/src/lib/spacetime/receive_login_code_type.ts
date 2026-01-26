@@ -9,11 +9,15 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import LoginToken from "./login_token_type";
 import ReceiveLoginCodeOutput from "./receive_login_code_output_type";
 
 
 export default __t.object("ReceiveLoginCode", {
   clientPhone: __t.string(),
+  get token() {
+    return LoginToken;
+  },
   get output() {
     return ReceiveLoginCodeOutput;
   },
