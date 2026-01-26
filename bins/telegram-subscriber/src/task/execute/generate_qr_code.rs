@@ -88,7 +88,6 @@ pub async fn execute(
         task.id.clone(),
         task.owner_user_id,
         tg_client,
-        ctx.config.api_id,
         cancel.clone(),
         sessions,
         session_key,
@@ -126,14 +125,13 @@ async fn qr_polling_loop(
     task_id: String,
     _owner_user_id: Identity,
     tg_client: Arc<TelegramClient>,
-    api_id: i32,
     cancel: CancellationToken,
     sessions: Arc<Mutex<HashMap<SessionKey, Arc<TelegramClient>>>>,
     session_key: SessionKey,
 ) {
     info!(task_id = %task_id, "Starting QR polling loop");
 
-    let mut stream = std::pin::pin!(tg_client.login_with_qr(api_id));
+    let mut stream = std::pin::pin!(tg_client.login_with_qr());
     let mut last_token_url: Option<String> = None;
 
     loop {

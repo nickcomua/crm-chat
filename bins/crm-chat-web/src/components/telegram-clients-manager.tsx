@@ -72,6 +72,7 @@ export function TelegramClientsManager(): React.ReactNode {
   const conn = getConnection<DbConnection>();
   const [clients] = useTable(tables.client);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [resumeClientPhone, setResumeClientPhone] = useState<string | null>(null);
 
   // Separate clients into connected and authenticating
   const connectedClients: ClientType[] = [];
@@ -93,11 +94,20 @@ export function TelegramClientsManager(): React.ReactNode {
   };
 
   const handleOpenAddDialog = (): void => {
+    setResumeClientPhone(null);
+    setIsAddDialogOpen(true);
+  };
+
+  const handleResumeClient = (phone: string): void => {
+    setResumeClientPhone(phone);
     setIsAddDialogOpen(true);
   };
 
   const handleDialogOpenChange = (open: boolean): void => {
     setIsAddDialogOpen(open);
+    if (!open) {
+      setResumeClientPhone(null);
+    }
   };
 
   if (!isActive) {
@@ -143,6 +153,7 @@ export function TelegramClientsManager(): React.ReactNode {
                 client={client}
                 key={client.id.toString()}
                 onDelete={() => handleDeleteClient(client.id)}
+                onResume={() => handleResumeClient(client.externalId)}
               />
             ))}
           </div>
@@ -189,6 +200,7 @@ export function TelegramClientsManager(): React.ReactNode {
       <AddClientDialog
         onOpenChange={handleDialogOpenChange}
         open={isAddDialogOpen}
+        resumePhone={resumeClientPhone}
       />
     </div>
   );
@@ -207,11 +219,18 @@ function getCardClassName(client: ClientType): string | undefined {
 function ClientCard({
   client,
   onDelete,
+  onResume,
 }: {
   client: ClientType;
   onDelete: () => void;
+  onResume?: () => void;
 }): React.ReactNode {
   const statusDisplay = getStatusDisplay(client);
+
+  // Check if this client needs user interaction
+  const needsUserAction =
+    client.status.tag === "ReceivingLoginCode" ||
+    client.status.tag === "ReceivingPassword";
 
   return (
     <Card className={getCardClassName(client)}>
@@ -235,11 +254,18 @@ function ClientCard({
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center gap-2">
-          <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
-          <span className="text-muted-foreground text-sm">
-            {statusDisplay.label}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
+            <span className="text-muted-foreground text-sm">
+              {statusDisplay.label}
+            </span>
+          </div>
+          {needsUserAction && onResume && (
+            <Button onClick={onResume} size="sm" variant="outline">
+              Continue
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

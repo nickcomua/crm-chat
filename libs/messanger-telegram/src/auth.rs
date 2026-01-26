@@ -98,11 +98,9 @@ impl TelegramClient {
 
         // We invoke SendCode directly to capture the phone_code_hash,
         // since grammers' LoginToken has private fields we can't access.
-        // Note: api_id is stored in the client internally, but we need to use 0 here
-        // as we're invoking the raw request. The client's invoke will use the configured api_id.
         let request = tl::functions::auth::SendCode {
             phone_number: phone.to_string(),
-            api_id: 0, // Will be ignored since we're using client.invoke
+            api_id: self.api_id,
             api_hash: self.api_hash.clone(),
             settings: tl::types::CodeSettings {
                 allow_flashcall: false,
@@ -334,9 +332,6 @@ impl TelegramClient {
     /// The stream will yield `QrLoginToken::Token` with URLs to display, and finally
     /// `QrLoginToken::Success` when login completes.
     ///
-    /// # Arguments
-    /// * `api_id` - Your Telegram API ID
-    ///
     /// # Returns
     /// A stream of `QrLoginToken` events
     ///
@@ -344,7 +339,7 @@ impl TelegramClient {
     /// ```ignore
     /// use futures::StreamExt;
     ///
-    /// let mut stream = client.login_with_qr(api_id);
+    /// let mut stream = client.login_with_qr();
     /// while let Some(result) = stream.next().await {
     ///     match result? {
     ///         QrLoginToken::Token { url, expires } => {
@@ -363,7 +358,6 @@ impl TelegramClient {
     /// ```
     pub fn login_with_qr(
         &self,
-        api_id: i32,
     ) -> impl futures::Stream<Item = Result<QrLoginToken, MessengerError>> + '_ {
         use async_stream::stream;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -380,7 +374,7 @@ impl TelegramClient {
             loop {
                 // Request a new login token
                 let request = tl::functions::auth::ExportLoginToken {
-                    api_id,
+                    api_id: self.api_id,
                     api_hash: self.api_hash.clone(),
                     except_ids: except_ids.clone(),
                 };

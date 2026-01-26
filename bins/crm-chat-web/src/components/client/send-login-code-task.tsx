@@ -39,6 +39,7 @@ export function SendLoginCodeTask({
   const [phone, setPhone] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [hasSucceeded, setHasSucceeded] = useState(false);
 
   const normalizedPhone = normalizePhone(phone);
   const { createTask, task } = useTask<SendLoginCodePayload>();
@@ -47,20 +48,33 @@ export function SendLoginCodeTask({
   const output = task?.payload.value.output as
     | SendLoginCodeOutputType
     | undefined;
-  const isSubmitting = hasSubmitted && (!task || output?.tag === "Pending");
+  // Only show submitting state if we have a task and it's still pending
+  const isSubmitting = hasSubmitted && task !== null && output?.tag === "Pending";
   const taskError = output?.tag === "Failed" ? output.value : null;
   const error = validationError ?? taskError;
 
   // Handle task output changes
   if (output && output.tag !== "Pending" && output.tag !== "Failed") {
     if (output.tag === "Success") {
-      onResult(
-        { status: "success", loginToken: output.value },
-        normalizedPhone
-      );
+      if (!hasSucceeded) {
+        setHasSucceeded(true);
+        onResult(
+          { status: "success", loginToken: output.value },
+          normalizedPhone
+        );
+      }
+      // Return null and let parent handle the transition
+      return null;
     } else if (output.tag === "AlreadyAuthorized") {
       onResult({ status: "already_authorized" }, normalizedPhone);
+      // Return null to let parent handle the "already authorized" state
+      return null;
     }
+  }
+
+  // If we previously succeeded but task is now gone, let parent handle it
+  if (hasSucceeded) {
+    return null;
   }
 
   const handleSubmit = (): void => {
