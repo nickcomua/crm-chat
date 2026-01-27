@@ -493,7 +493,6 @@ pub fn cleanup_human_tasks(ctx: &ReducerContext, human_id: Identity) {
             TaskPayload::GenerateQrCode(_)
                 | TaskPayload::ReceiveLoginCode(_)
                 | TaskPayload::ReceivePassword(_)
-                | TaskPayload::DisplayMessage(_)
         );
 
         if !should_cleanup {

@@ -1,7 +1,9 @@
 import { Loader2, QrCode, Smartphone } from "lucide-react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import type { Infer } from "spacetimedb";
 import { useTable } from "spacetimedb/react";
+import type { Client } from "../lib/spacetime";
 import { tables } from "../lib/spacetime";
 import { GenerateQrCodeTask } from "./client/generate-qr-code-task";
 import { ReceiveLoginCodeTask } from "./client/receive-login-code-task";
@@ -17,157 +19,63 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 
-type Step =
-  | { type: "choose" }
-  | { type: "phone" }
-  | { type: "qr" }
-  | { type: "complete" };
-
-const CLIENT_STATUS_DESCRIPTIONS: Record<string, string> = {
-  SendingLoginCode: "Sending verification code...",
-  ReceivingLoginCode: "Enter the verification code sent to your phone",
-  VerifyingLoginCode: "Verifying code...",
-  ReceivingPassword: "Enter your two-factor authentication password",
-  VerifyingPassword: "Verifying password...",
-  GeneratingQrCode: "Scan the QR code with your Telegram app",
-  Connected: "Your Telegram client has been added",
-};
-
-const STEP_DESCRIPTIONS: Record<Step["type"], string> = {
-  choose: "Choose how you want to log in",
-  phone: "Enter your phone number to get started",
-  qr: "Scan the QR code with your Telegram app",
-  complete: "Your Telegram client has been added",
-};
+type FlowType = "choose" | "phone" | "qr";
 
 interface AddClientDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  resumePhone?: string | null;
+  /** Optional clientId to resume an existing client's auth flow */
+  resumeClientId?: bigint;
 }
 
 export function AddClientDialog({
   open,
   onOpenChange,
-  resumePhone,
+  resumeClientId,
 }: AddClientDialogProps): React.ReactNode {
-  const [step, setStep] = useState<Step>({ type: "choose" });
-  const [activePhone, setActivePhone] = useState<string | null>(resumePhone ?? null);
+  const [flowType, setFlowType] = useState<FlowType>("choose");
 
-  // Watch for clients to track authentication progress
-  const [clients] = useTable(tables.client);
-
-  // Handle resuming authentication for an existing client
-  useEffect(() => {
-    if (resumePhone && open) {
-      setActivePhone(resumePhone);
-    }
-  }, [resumePhone, open]);
-
-  // Find the client being authenticated (if any)
-  const activeClient = activePhone
-    ? clients.find((c) => c.externalId === activePhone)
-    : null;
+  // If resumeClientId is provided, we're in phone flow mode (resuming)
+  const isResuming = resumeClientId !== undefined;
+  const effectiveFlowType = isResuming ? "phone" : flowType;
 
   const handleClose = (): void => {
-    setStep({ type: "choose" });
-    setActivePhone(null);
+    setFlowType("choose");
     onOpenChange(false);
   };
 
   const handleChoosePhone = (): void => {
-    setStep({ type: "phone" });
+    setFlowType("phone");
   };
 
   const handleChooseQr = (): void => {
-    setStep({ type: "qr" });
+    setFlowType("qr");
   };
 
   const handleBackToChoose = (): void => {
-    setStep({ type: "choose" });
-    setActivePhone(null);
+    setFlowType("choose");
   };
 
-  const handleSendLoginCodeResult = (
-    result: SendLoginCodeResult,
-    phone: string
-  ): void => {
-    if (result.status === "success") {
-      // Backend will create client with status tracking the task
-      // We just need to track which phone we're authenticating
-      setActivePhone(phone);
-    } else if (result.status === "already_authorized") {
-      setStep({ type: "complete" });
+  const getDescription = (): string => {
+    if (isResuming) {
+      return "Continue authentication";
     }
-  };
-
-  const handleQrCodeResult = (result: GenerateQrCodeResult): void => {
-    if (
-      result.status === "already_authorized" ||
-      result.status === "authorized"
-    ) {
-      setStep({ type: "complete" });
-    }
-  };
-
-  const handleAbort = (): void => {
-    handleBackToChoose();
-  };
-
-  // Determine what to render based on client status
-  const getDialogDescription = (): string => {
-    if (activeClient) {
-      const { tag } = activeClient.status;
-      if (tag === "Error") {
-        return `Error: ${activeClient.status.value}`;
+    switch (effectiveFlowType) {
+      case "choose":
+        return "Choose how you want to log in";
+      case "phone":
+        return "Enter your phone number to get started";
+      case "qr":
+        return "Scan the QR code with your Telegram app";
+      default: {
+        const _exhaustive: never = effectiveFlowType;
+        return _exhaustive;
       }
-      return CLIENT_STATUS_DESCRIPTIONS[tag] ?? "";
-    }
-    return STEP_DESCRIPTIONS[step.type];
-  };
-
-  // Render content based on active client status
-  const renderClientContent = (): React.ReactNode => {
-    if (!activeClient) {
-      return null;
-    }
-
-    const status = activeClient.status;
-
-    switch (status.tag) {
-      case "Connected":
-        return <CompleteStep onClose={handleClose} />;
-      case "ReceivingLoginCode":
-        return (
-          <ReceiveLoginCodeTask onAbort={handleAbort} taskId={status.value} />
-        );
-      case "ReceivingPassword":
-        return (
-          <ReceivePasswordTask onAbort={handleAbort} taskId={status.value} />
-        );
-      case "Error":
-        return (
-          <div className="space-y-4 text-center">
-            <p className="text-destructive">{status.value}</p>
-            <Button onClick={handleBackToChoose} variant="outline">
-              Try Again
-            </Button>
-          </div>
-        );
-      default:
-        // Robot tasks: show loading state
-        return (
-          <div className="flex flex-col items-center justify-center space-y-4 py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-muted-foreground text-sm">Processing...</p>
-          </div>
-        );
     }
   };
 
-  // Render content based on step (when no active client)
-  const renderStepContent = (): React.ReactNode => {
-    switch (step.type) {
+  const renderContent = (): React.ReactNode => {
+    switch (effectiveFlowType) {
       case "choose":
         return (
           <ChooseMethodStep
@@ -177,78 +85,226 @@ export function AddClientDialog({
         );
       case "phone":
         return (
-          <SendLoginCodeTask
-            onBack={handleBackToChoose}
-            onResult={handleSendLoginCodeResult}
+          <PhoneAuthFlow
+            onBack={isResuming ? handleClose : handleBackToChoose}
+            onComplete={handleClose}
+            resumeClientId={resumeClientId}
           />
         );
       case "qr":
         return (
-          <GenerateQrCodeTask
+          <QrCodeAuthFlow
             onBack={handleBackToChoose}
-            onResult={handleQrCodeResult}
+            onComplete={handleClose}
           />
         );
-      case "complete":
-        return <CompleteStep onClose={handleClose} />;
-      default:
-        return null;
-    }
-  };
-
-  const renderContent = (): React.ReactNode => {
-    // If we have an active phone but no client yet, show loading (waiting for sync)
-    if (activePhone && !activeClient) {
-      return (
-        <div className="flex flex-col items-center justify-center space-y-4 py-8">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-muted-foreground text-sm">
-            Setting up authentication...
-          </p>
-        </div>
-      );
-    }
-
-    return activeClient ? renderClientContent() : renderStepContent();
-  };
-
-  // Get step for progress indicator
-  const getCurrentStepType = (): Step["type"] => {
-    if (activeClient) {
-      const { tag } = activeClient.status;
-      switch (tag) {
-        case "SendingLoginCode":
-        case "ReceivingLoginCode":
-        case "VerifyingLoginCode":
-        case "ReceivingPassword":
-        case "VerifyingPassword":
-          return "phone";
-        case "GeneratingQrCode":
-          return "qr";
-        case "Connected":
-          return "complete";
-        default:
-          return "choose";
+      default: {
+        const _exhaustive: never = effectiveFlowType;
+        return _exhaustive;
       }
     }
-    return step.type;
   };
 
   return (
     <Dialog onOpenChange={handleClose} open={open}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Telegram Client</DialogTitle>
-          <DialogDescription>{getDialogDescription()}</DialogDescription>
+          <DialogTitle>
+            {isResuming ? "Continue Authentication" : "Add Telegram Client"}
+          </DialogTitle>
+          <DialogDescription>{getDescription()}</DialogDescription>
         </DialogHeader>
 
         <div className="mt-4">{renderContent()}</div>
-
-        <StepIndicator currentStep={getCurrentStepType()} />
       </DialogContent>
     </Dialog>
   );
 }
+
+// =============================================================================
+// QR Code Auth Flow - Self-contained, no client state tracking needed
+// =============================================================================
+
+interface QrCodeAuthFlowProps {
+  onBack: () => void;
+  onComplete: () => void;
+}
+
+function QrCodeAuthFlow({
+  onBack,
+  onComplete,
+}: QrCodeAuthFlowProps): React.ReactNode {
+  const [isComplete, setIsComplete] = useState(false);
+
+  const handleResult = (result: GenerateQrCodeResult): void => {
+    if (
+      result.status === "authorized" ||
+      result.status === "already_authorized"
+    ) {
+      setIsComplete(true);
+    }
+    // For "token" status, the GenerateQrCodeTask handles displaying the QR
+    // For "failed" status, the GenerateQrCodeTask handles displaying the error
+  };
+
+  if (isComplete) {
+    return <CompleteStep onClose={onComplete} />;
+  }
+
+  return <GenerateQrCodeTask onBack={onBack} onResult={handleResult} />;
+}
+
+// =============================================================================
+// Phone Auth Flow - Uses client from SpacetimeDB for state management
+// =============================================================================
+
+interface PhoneAuthFlowProps {
+  onBack: () => void;
+  onComplete: () => void;
+  /** Optional clientId to resume an existing client's auth flow */
+  resumeClientId?: bigint;
+}
+
+type PhoneAuthStep =
+  | { type: "enter_phone" }
+  | { type: "tracking_by_id"; clientId: bigint }
+  | { type: "tracking_by_phone"; clientPhone: string };
+
+function PhoneAuthFlow({
+  onBack,
+  onComplete,
+  resumeClientId,
+}: PhoneAuthFlowProps): React.ReactNode {
+  const [clients] = useTable(tables.client);
+  const [step, setStep] = useState<PhoneAuthStep>(
+    resumeClientId !== undefined
+      ? { type: "tracking_by_id", clientId: resumeClientId }
+      : { type: "enter_phone" }
+  );
+
+  // Find client based on tracking method
+  const client: Infer<typeof Client> | undefined = (() => {
+    switch (step.type) {
+      case "tracking_by_id":
+        return clients.find((c) => c.id === step.clientId);
+      case "tracking_by_phone":
+        return clients.find((c) => c.externalId === step.clientPhone);
+      default:
+        return undefined;
+    }
+  })();
+
+  const handleSendLoginCodeResult = (
+    result: SendLoginCodeResult,
+    phone: string
+  ): void => {
+    if (result.status === "success") {
+      // Start tracking the client by phone number
+      setStep({ type: "tracking_by_phone", clientPhone: phone });
+    } else if (result.status === "already_authorized") {
+      // Client already exists and is authorized
+      onComplete();
+    }
+    // For "failed" status, SendLoginCodeTask handles displaying the error
+  };
+
+  const handleAbort = (): void => {
+    setStep({ type: "enter_phone" });
+  };
+
+  // Step 1: Enter phone number
+  if (step.type === "enter_phone") {
+    return (
+      <SendLoginCodeTask onBack={onBack} onResult={handleSendLoginCodeResult} />
+    );
+  }
+
+  // Step 2+: Track client status from SpacetimeDB
+  // Waiting for client to appear in the database
+  if (!client) {
+    return (
+      <div className="flex flex-col items-center justify-center space-y-4 py-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-muted-foreground text-sm">
+          Setting up authentication...
+        </p>
+      </div>
+    );
+  }
+
+  // Render based on client status
+  return (
+    <PhoneAuthClientStatus
+      client={client}
+      onAbort={handleAbort}
+      onComplete={onComplete}
+    />
+  );
+}
+
+// Sub-component to render UI based on client status
+interface PhoneAuthClientStatusProps {
+  client: Infer<typeof Client>;
+  onAbort: () => void;
+  onComplete: () => void;
+}
+
+function PhoneAuthClientStatus({
+  client,
+  onAbort,
+  onComplete,
+}: PhoneAuthClientStatusProps): React.ReactNode {
+  const { status } = client;
+
+  switch (status.tag) {
+    case "Connected":
+      return <CompleteStep onClose={onComplete} />;
+
+    case "ReceivingLoginCode":
+      return <ReceiveLoginCodeTask onAbort={onAbort} taskId={status.value} />;
+
+    case "ReceivingPassword":
+      return <ReceivePasswordTask onAbort={onAbort} taskId={status.value} />;
+
+    case "Error":
+      return (
+        <div className="space-y-4 text-center">
+          <p className="text-destructive">{status.value}</p>
+          <Button onClick={onAbort} variant="outline">
+            Try Again
+          </Button>
+        </div>
+      );
+
+    // Loading states: SendingLoginCode, VerifyingLoginCode, VerifyingPassword
+    default:
+      return (
+        <div className="flex flex-col items-center justify-center space-y-4 py-8">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground text-sm">
+            {getStatusDescription(status.tag)}
+          </p>
+        </div>
+      );
+  }
+}
+
+function getStatusDescription(statusTag: string): string {
+  switch (statusTag) {
+    case "SendingLoginCode":
+      return "Sending verification code...";
+    case "VerifyingLoginCode":
+      return "Verifying code...";
+    case "VerifyingPassword":
+      return "Verifying password...";
+    default:
+      return "Processing...";
+  }
+}
+
+// =============================================================================
+// Shared Components
+// =============================================================================
 
 function ChooseMethodStep({
   onChoosePhone,
@@ -320,35 +376,6 @@ function CompleteStep({ onClose }: { onClose: () => void }): React.ReactNode {
       <Button className="w-full" onClick={onClose}>
         Done
       </Button>
-    </div>
-  );
-}
-
-function StepIndicator({
-  currentStep,
-}: {
-  currentStep: Step["type"];
-}): React.ReactNode {
-  const steps: Step["type"][] = ["choose", "phone", "complete"];
-
-  const getStepIndex = (step: Step["type"]): number => {
-    if (step === "qr") {
-      return 1; // QR is equivalent to phone step in the indicator
-    }
-    const index = steps.indexOf(step);
-    return index >= 0 ? index : 0;
-  };
-
-  const currentIndex = getStepIndex(currentStep);
-
-  return (
-    <div className="mt-6 flex justify-center gap-2">
-      {steps.map((step, index) => (
-        <div
-          className={`h-1.5 w-8 rounded-full transition-colors ${index <= currentIndex ? "bg-primary" : "bg-muted"}`}
-          key={step}
-        />
-      ))}
     </div>
   );
 }

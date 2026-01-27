@@ -9,7 +9,7 @@ import { MessageList } from "./message-list";
 export function ChatsPage(): React.ReactNode {
   const params = useParams({ strict: false });
   const navigate = useNavigate();
-  const selectedChatId = (params as { chatId?: string }).chatId ?? null;
+  const selectedChatId = params.chatId ?? null;
 
   const [clients] = useTable(tables.client);
   const [humans] = useTable(tables.human);

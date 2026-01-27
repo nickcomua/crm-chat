@@ -2,7 +2,7 @@
 
 use spacetimedb::{reducer, Identity, ReducerContext, Table};
 
-use crate::{TaskId, robot::robot};
+use crate::{TaskId, cancel_task, robot::robot, task::task};
 
 // === Client Kind ===
 
@@ -41,34 +41,32 @@ pub struct Client {
     pub status: ClientStatus,
 }
 
-// === Client Reducers ===
-
-#[reducer]
-pub fn upsert_client(ctx: &ReducerContext, client: Client) -> Result<(), String> {
-    let is_robot = ctx.db.robot().id().find(ctx.sender).is_some();
-    if !is_robot {
-        return Err("unauthorized: only robots can modify clients".to_string());
-    }
-
-    if let Some(existing) = ctx
-        .db
-        .client()
-        .user_client_pair()
-        .filter((&client.owner_user_id.clone(), &client.external_id.clone()))
-        .next()
-    {
-        ctx.db.client().id().update(Client {
-            id: existing.id,
-            ..client
-        });
-    } else {
-        ctx.db.client().insert(client);
-    }
-    Ok(())
-}
-
 #[reducer]
 pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String> {
+    let client = ctx.db.client().id().find(client_id);
+    if client.is_none() {
+        return Err("client not found".to_string());
+    }
+    let client = client.unwrap();
+
+    if client.owner_user_id != ctx.sender {
+        return Err("client not owned by this user".to_string());
+    }
+
+    let task_id = match client.status {
+        ClientStatus::SendingLoginCode(task_id) => Some(task_id),
+        ClientStatus::ReceivingLoginCode(task_id) => Some(task_id),
+        ClientStatus::VerifyingLoginCode(task_id) => Some(task_id),
+        ClientStatus::ReceivingPassword(task_id) => Some(task_id),
+        ClientStatus::VerifyingPassword(task_id) => Some(task_id),
+        ClientStatus::GeneratingQrCode(task_id) => Some(task_id),
+        ClientStatus::Connected => None,
+        ClientStatus::Error(_) => None,
+    };
+    if let Some(task_id) = task_id {
+        ctx.db.task().id().delete(task_id);
+    }
+
     ctx.db.client().id().delete(client_id);
     Ok(())
 }

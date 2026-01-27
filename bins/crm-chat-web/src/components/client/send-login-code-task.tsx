@@ -42,14 +42,15 @@ export function SendLoginCodeTask({
   const [hasSucceeded, setHasSucceeded] = useState(false);
 
   const normalizedPhone = normalizePhone(phone);
-  const { createTask, task } = useTask<SendLoginCodePayload>();
+  const { createTask, task } = useTask<SendLoginCodePayload>({ id: undefined });
 
   // Derive state from task
   const output = task?.payload.value.output as
     | SendLoginCodeOutputType
     | undefined;
   // Only show submitting state if we have a task and it's still pending
-  const isSubmitting = hasSubmitted && task !== null && output?.tag === "Pending";
+  const isSubmitting =
+    hasSubmitted && task !== null && output?.tag === "Pending";
   const taskError = output?.tag === "Failed" ? output.value : null;
   const error = validationError ?? taskError;
 
@@ -65,7 +66,8 @@ export function SendLoginCodeTask({
       }
       // Return null and let parent handle the transition
       return null;
-    } else if (output.tag === "AlreadyAuthorized") {
+    }
+    if (output.tag === "AlreadyAuthorized") {
       onResult({ status: "already_authorized" }, normalizedPhone);
       // Return null to let parent handle the "already authorized" state
       return null;
@@ -88,7 +90,7 @@ export function SendLoginCodeTask({
     }
 
     setHasSubmitted(true);
-    createTask({
+    createTask(crypto.randomUUID(), {
       tag: "SendLoginCode",
       value: { clientPhone: normalized, output: { tag: "Pending" } },
     });

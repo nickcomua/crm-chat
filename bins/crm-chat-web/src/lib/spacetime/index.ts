@@ -53,8 +53,6 @@ import UpdateTask from "./update_task_reducer";
 export { UpdateTask };
 import UpsertChat from "./upsert_chat_reducer";
 export { UpsertChat };
-import UpsertClient from "./upsert_client_reducer";
-export { UpsertClient };
 import UpsertMessage from "./upsert_message_reducer";
 export { UpsertMessage };
 
@@ -264,7 +262,6 @@ const reducersSchema = __reducers(
   __reducerSchema("mark_message_deleted", MarkMessageDeleted),
   __reducerSchema("update_task", UpdateTask),
   __reducerSchema("upsert_chat", UpsertChat),
-  __reducerSchema("upsert_client", UpsertClient),
   __reducerSchema("upsert_message", UpsertMessage),
 );
 

@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Infer } from "spacetimedb";
-import { useTaskWithCleanup } from "../../hooks/use-task";
+import { useTask } from "../../hooks/use-task";
 import type {
   GenerateQrCode,
   GenerateQrCodeOutput,
@@ -36,12 +36,13 @@ export function GenerateQrCodeTask({
   const expirationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTokenUrlRef = useRef<string | null>(null);
 
-  const { createTask, task, cancelTask } =
-    useTaskWithCleanup<GenerateQrCodePayload>();
+  const { createTask, task, cancelTask } = useTask<GenerateQrCodePayload>({
+    id: undefined,
+  });
 
   // Create task on mount (using state to track if we've created it)
   if (!hasCreated) {
-    createTask({
+    createTask(crypto.randomUUID(), {
       tag: "GenerateQrCode",
       value: { output: { tag: "Pending" } },
     });
