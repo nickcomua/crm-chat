@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Infer } from "spacetimedb";
-import { useSpacetimeDB, useTable } from "spacetimedb/react";
+import { useReducer, useTable } from "spacetimedb/react";
 import {
-  type DbConnection,
+  reducers,
   type Task,
   type TaskPayload,
   tables,
@@ -17,120 +17,49 @@ export type TaskWithPayload<T extends TaskPayloadType = TaskPayloadType> = Omit<
   "payload"
 > & { payload: T };
 
-/**
- * Hook for managing a single task.
- * TaskId is generated internally when createTask is called.
- *
- * @returns Object with createTask function, completeTask function, cancelTask function, and the current task
- */
-export function useTask<T extends TaskPayloadType>(): {
-  createTask: (payload: T) => string;
+export function useTask<T extends TaskPayloadType>({
+  id,
+}: {
+  id: string | undefined;
+}): {
+  createTask: (id: string, payload: T) => void;
   completeTask: (payload: T) => void;
   cancelTask: () => void;
   task: TaskWithPayload<T> | undefined;
-  taskId: string | null;
-  resetTask: () => void;
 } {
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const { getConnection } = useSpacetimeDB();
-  const conn = getConnection<DbConnection>();
+  const [taskId, setTaskId] = useState<string | undefined>(id);
+  useEffect(() => {
+    setTaskId(id);
+  }, [id]);
+  const cancelTaskReducer = useReducer(reducers.cancelTask);
+  const completeTaskReducer = useReducer(reducers.completeTask);
+  const createTaskReducer = useReducer(reducers.createTask);
   const [tasks] = useTable(tables.task);
-
   const task = taskId
     ? (tasks.find((t) => t.id === taskId) as TaskWithPayload<T> | undefined)
     : undefined;
 
-  const createTask = (payload: T): string => {
-    if (!conn) {
-      throw new Error("No connection available");
-    }
-    const newTaskId = crypto.randomUUID();
-    setTaskId(newTaskId);
-    conn.reducers.createTask({ id: newTaskId, payload });
-    return newTaskId;
+  const createTask = (id: string, payload: T) => {
+    createTaskReducer({ id, payload });
+    setTaskId(id);
   };
-
-  const completeTask = (payload: T): void => {
+  const cancelTask = () => {
+    if (taskId) {
+      cancelTaskReducer({ taskId });
+    }
+  };
+  const completeTask = (payload: T) => {
     if (!taskId) {
       throw new Error("No task to complete");
     }
-    if (!conn) {
-      throw new Error("No connection available");
-    }
-    conn.reducers.completeTask({ taskId, payload });
+    completeTaskReducer({ taskId, payload });
   };
-
-  const cancelTask = (): void => {
-    if (!taskId) {
-      return; // No task to cancel
-    }
-    if (!conn) {
-      throw new Error("No connection available");
-    }
-    // cancelTask reducer may not exist yet - check before calling
-    if ("cancelTask" in conn.reducers) {
-      conn.reducers.cancelTask({ taskId });
-    }
-    setTaskId(null);
-  };
-
-  const resetTask = (): void => {
-    setTaskId(null);
-  };
-
-  return { createTask, completeTask, cancelTask, task, taskId, resetTask };
-}
-
-/**
- * Hook for managing a task with automatic cancellation on unmount.
- * Use this for tasks that should be cancelled when the component is unmounted.
- */
-export function useTaskWithCleanup<T extends TaskPayloadType>(): {
-  createTask: (payload: T) => string;
-  completeTask: (payload: T) => void;
-  cancelTask: () => void;
-  task: TaskWithPayload<T> | undefined;
-  taskId: string | null;
-  resetTask: () => void;
-} {
-  const taskHook = useTask<T>();
-  const taskIdRef = useRef<string | null>(null);
-  const connRef = useRef<DbConnection | null>(null);
-  const { getConnection } = useSpacetimeDB();
-
-  // Keep refs up to date
-  taskIdRef.current = taskHook.taskId;
-  connRef.current = getConnection<DbConnection>();
-
   // Cancel task on unmount
   useEffect(() => {
     return () => {
-      const currentTaskId = taskIdRef.current;
-      const conn = connRef.current;
-      if (currentTaskId && conn && "cancelTask" in conn.reducers) {
-        (
-          conn.reducers as unknown as {
-            cancelTask: (params: { taskId: string }) => void;
-          }
-        ).cancelTask({ taskId: currentTaskId });
-      }
+      cancelTask();
     };
-  }, []);
+  }, [cancelTask]);
 
-  return taskHook;
-}
-
-/**
- * Hook to watch a task by its ID (for tasks created elsewhere, e.g., by the backend).
- */
-export function useWatchTask<T extends TaskPayloadType>(
-  taskId: string | null
-): TaskWithPayload<T> | undefined {
-  const [tasks] = useTable(tables.task);
-
-  if (!taskId) {
-    return undefined;
-  }
-
-  return tasks.find((t) => t.id === taskId) as TaskWithPayload<T> | undefined;
+  return { task, createTask, completeTask, cancelTask };
 }

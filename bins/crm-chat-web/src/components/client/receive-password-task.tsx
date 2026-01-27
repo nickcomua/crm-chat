@@ -3,7 +3,7 @@ import type React from "react";
 import { useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useSpacetimeDB } from "spacetimedb/react";
-import { useWatchTask } from "../../hooks/use-task";
+import { useTask } from "../../hooks/use-task";
 import type {
   DbConnection,
   ReceivePassword,
@@ -34,7 +34,7 @@ export function ReceivePasswordTask({
 
   const { getConnection } = useSpacetimeDB();
   const conn = getConnection<DbConnection>();
-  const task = useWatchTask<ReceivePasswordPayload>(taskId);
+  const { task } = useTask<ReceivePasswordPayload>({ id: taskId });
 
   const output = task?.payload.value.output as
     | ReceivePasswordOutputType

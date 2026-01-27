@@ -3,7 +3,7 @@ import type React from "react";
 import { useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useSpacetimeDB } from "spacetimedb/react";
-import { useWatchTask } from "../../hooks/use-task";
+import { useTask } from "../../hooks/use-task";
 import type {
   DbConnection,
   ReceiveLoginCode,
@@ -41,7 +41,7 @@ export function ReceiveLoginCodeTask({
 
   const { getConnection } = useSpacetimeDB();
   const conn = getConnection<DbConnection>();
-  const task = useWatchTask<ReceiveLoginCodePayload>(taskId);
+  const { task } = useTask<ReceiveLoginCodePayload>({ id: taskId });
 
   const output = task?.payload.value.output as
     | ReceiveLoginCodeOutputType
@@ -71,6 +71,7 @@ export function ReceiveLoginCodeTask({
         tag: "ReceiveLoginCode",
         value: {
           clientPhone: task.payload.value.clientPhone,
+          token: task.payload.value.token,
           output: { tag: "Success", value: trimmedCode },
         },
       },
@@ -94,6 +95,7 @@ export function ReceiveLoginCodeTask({
         tag: "ReceiveLoginCode",
         value: {
           clientPhone: task.payload.value.clientPhone,
+          token: task.payload.value.token,
           output: { tag: "Aborted" },
         },
       },

@@ -49,7 +49,6 @@ pub mod task_table;
 pub mod task_type;
 pub mod update_task_reducer;
 pub mod upsert_chat_reducer;
-pub mod upsert_client_reducer;
 pub mod upsert_message_reducer;
 pub mod verify_login_code_output_type;
 pub mod verify_login_code_type;
@@ -109,9 +108,6 @@ pub use task_table::*;
 pub use task_type::Task;
 pub use update_task_reducer::{UpdateTaskCallbackId, set_flags_for_update_task, update_task};
 pub use upsert_chat_reducer::{UpsertChatCallbackId, set_flags_for_upsert_chat, upsert_chat};
-pub use upsert_client_reducer::{
-    UpsertClientCallbackId, set_flags_for_upsert_client, upsert_client,
-};
 pub use upsert_message_reducer::{
     UpsertMessageCallbackId, set_flags_for_upsert_message, upsert_message,
 };
@@ -160,9 +156,6 @@ pub enum Reducer {
     UpsertChat {
         chat: Chat,
     },
-    UpsertClient {
-        client: Client,
-    },
     UpsertMessage {
         message: Message,
     },
@@ -186,7 +179,6 @@ impl __sdk::Reducer for Reducer {
             Reducer::MarkMessageDeleted { .. } => "mark_message_deleted",
             Reducer::UpdateTask { .. } => "update_task",
             Reducer::UpsertChat { .. } => "upsert_chat",
-            Reducer::UpsertClient { .. } => "upsert_client",
             Reducer::UpsertMessage { .. } => "upsert_message",
             _ => unreachable!(),
         }
@@ -258,10 +250,6 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 )?
                 .into(),
             ),
-            "upsert_client" => Ok(__sdk::parse_reducer_args::<
-                upsert_client_reducer::UpsertClientArgs,
-            >("upsert_client", &value.args)?
-            .into()),
             "upsert_message" => Ok(__sdk::parse_reducer_args::<
                 upsert_message_reducer::UpsertMessageArgs,
             >("upsert_message", &value.args)?

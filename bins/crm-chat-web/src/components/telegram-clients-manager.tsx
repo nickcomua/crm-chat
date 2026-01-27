@@ -1,8 +1,8 @@
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { Infer } from "spacetimedb";
-import { useSpacetimeDB, useTable } from "spacetimedb/react";
-import { type Client, type DbConnection, tables } from "../lib/spacetime";
+import { useReducer, useTable } from "spacetimedb/react";
+import { type Client, reducers, tables } from "../lib/spacetime";
 import { AddClientDialog } from "./add-client-dialog";
 import { Button } from "./ui/button";
 import {
@@ -68,61 +68,32 @@ function getStatusDisplay(client: ClientType): {
 }
 
 export function TelegramClientsManager(): React.ReactNode {
-  const { getConnection, isActive } = useSpacetimeDB();
-  const conn = getConnection<DbConnection>();
   const [clients] = useTable(tables.client);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [resumeClientPhone, setResumeClientPhone] = useState<string | null>(null);
-
+  const deleteClient = useReducer(reducers.deleteClient);
   // Separate clients into connected and authenticating
-  const connectedClients: ClientType[] = [];
-  const authenticatingClients: ClientType[] = [];
+  const connectedClients = clients.filter(isClientConnected);
+  const authenticatingClients = clients.filter(
+    (client) => isClientAuthenticating(client) || isClientError(client)
+  );
 
-  for (const client of clients) {
-    if (isClientConnected(client)) {
-      connectedClients.push(client);
-    } else if (isClientAuthenticating(client) || isClientError(client)) {
-      authenticatingClients.push(client);
-    }
-  }
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    resumeClientId?: bigint;
+  }>({ open: false });
 
-  const handleDeleteClient = (clientId: bigint): void => {
-    if (!conn) {
-      return;
-    }
-    conn.reducers.deleteClient({ clientId });
+  const openDialog = (): void => {
+    setDialogState({ open: true });
   };
 
-  const handleOpenAddDialog = (): void => {
-    setResumeClientPhone(null);
-    setIsAddDialogOpen(true);
+  const openDialogForResume = (clientId: bigint): void => {
+    setDialogState({ open: true, resumeClientId: clientId });
   };
 
-  const handleResumeClient = (phone: string): void => {
-    setResumeClientPhone(phone);
-    setIsAddDialogOpen(true);
-  };
-
-  const handleDialogOpenChange = (open: boolean): void => {
-    setIsAddDialogOpen(open);
+  const closeDialog = (open: boolean): void => {
     if (!open) {
-      setResumeClientPhone(null);
+      setDialogState({ open: false });
     }
   };
-
-  if (!isActive) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-muted-foreground">
-          Connecting to SpacetimeDB...
-        </span>
-      </div>
-    );
-  }
-
-  const hasNoClients =
-    connectedClients.length === 0 && authenticatingClients.length === 0;
 
   return (
     <div className="space-y-6">
@@ -135,7 +106,7 @@ export function TelegramClientsManager(): React.ReactNode {
             Manage your connected Telegram accounts
           </p>
         </div>
-        <Button onClick={handleOpenAddDialog}>
+        <Button onClick={openDialog}>
           <Plus className="mr-2 h-4 w-4" />
           Add Client
         </Button>
@@ -152,8 +123,8 @@ export function TelegramClientsManager(): React.ReactNode {
               <ClientCard
                 client={client}
                 key={client.id.toString()}
-                onDelete={() => handleDeleteClient(client.id)}
-                onResume={() => handleResumeClient(client.externalId)}
+                onDelete={() => deleteClient({ clientId: client.id })}
+                onResume={() => openDialogForResume(client.id)}
               />
             ))}
           </div>
@@ -173,7 +144,7 @@ export function TelegramClientsManager(): React.ReactNode {
               <ClientCard
                 client={client}
                 key={client.id.toString()}
-                onDelete={() => handleDeleteClient(client.id)}
+                onDelete={() => deleteClient({ clientId: client.id })}
               />
             ))}
           </div>
@@ -181,15 +152,11 @@ export function TelegramClientsManager(): React.ReactNode {
       )}
 
       {/* Empty State */}
-      {hasNoClients && (
+      {clients.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <p className="text-muted-foreground">No Telegram clients yet</p>
-            <Button
-              className="mt-4"
-              onClick={handleOpenAddDialog}
-              variant="outline"
-            >
+            <Button className="mt-4" onClick={openDialog} variant="outline">
               <Plus className="mr-2 h-4 w-4" />
               Add your first client
             </Button>
@@ -198,9 +165,9 @@ export function TelegramClientsManager(): React.ReactNode {
       )}
 
       <AddClientDialog
-        onOpenChange={handleDialogOpenChange}
-        open={isAddDialogOpen}
-        resumePhone={resumeClientPhone}
+        onOpenChange={closeDialog}
+        open={dialogState.open}
+        resumeClientId={dialogState.resumeClientId}
       />
     </div>
   );
