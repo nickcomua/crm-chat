@@ -1,7 +1,9 @@
-import { Trash2, Users } from "lucide-react";
+import { Plus, Trash2, QrCode } from "lucide-react";
+import { useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useReducer, useTable } from "spacetimedb/react";
 import { type Client, reducers, tables } from "../lib/spacetime";
+import { QrAuth } from "./client/qr-auth";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -10,6 +12,13 @@ import {
   CardHeader,
   CardTitle,
 } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 
 type ClientType = Infer<typeof Client>;
 
@@ -38,9 +47,18 @@ function getStatusDisplay(client: ClientType): {
 export function TelegramClientsManager(): React.ReactNode {
   const [clients] = useTable(tables.client);
   const deleteClient = useReducer(reducers.deleteClient);
+  const [showAddDialog, setShowAddDialog] = useState(false);
 
   const connectedClients = clients.filter(isClientConnected);
   const otherClients = clients.filter((c) => !isClientConnected(c));
+
+  const handleAddSuccess = () => {
+    setShowAddDialog(false);
+  };
+
+  const handleAddCancel = () => {
+    setShowAddDialog(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -53,6 +71,10 @@ export function TelegramClientsManager(): React.ReactNode {
             Your connected Telegram accounts
           </p>
         </div>
+        <Button onClick={() => setShowAddDialog(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Client
+        </Button>
       </div>
 
       {/* Connected Clients */}
@@ -92,11 +114,28 @@ export function TelegramClientsManager(): React.ReactNode {
       {clients.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <Users className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">No Telegram clients connected</p>
+            <QrCode className="h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground mb-4">No Telegram clients connected</p>
+            <Button onClick={() => setShowAddDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Your First Client
+            </Button>
           </CardContent>
         </Card>
       )}
+
+      {/* Add Client Dialog */}
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Telegram Client</DialogTitle>
+            <DialogDescription>
+              Scan this QR code with your Telegram app to connect your account.
+            </DialogDescription>
+          </DialogHeader>
+          <QrAuth onSuccess={handleAddSuccess} onCancel={handleAddCancel} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
