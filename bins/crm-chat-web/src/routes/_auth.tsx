@@ -1,8 +1,6 @@
-import { SignedIn, SignedOut, UserButton, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
-  Navigate,
   Outlet,
   useNavigate,
   useRouterState,
@@ -48,20 +46,6 @@ function ThemeToggle(): React.ReactNode {
 }
 
 function AuthLayout(): React.ReactNode {
-  return (
-    <>
-      <SignedOut>
-        <Navigate to="/" />
-      </SignedOut>
-      <SignedIn>
-        <AuthenticatedContent />
-      </SignedIn>
-    </>
-  );
-}
-
-function AuthenticatedContent(): React.ReactNode {
-  const { getToken, isLoaded } = useAuth();
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     status: "loading",
   });
@@ -78,10 +62,6 @@ function AuthenticatedContent(): React.ReactNode {
   const currentPath = routerState.location.pathname;
 
   useEffect(() => {
-    if (!isLoaded) {
-      return;
-    }
-
     let cancelled = false;
 
     const onConnect = (
@@ -105,58 +85,6 @@ function AuthenticatedContent(): React.ReactNode {
       }
     };
 
-    const handleTokenRetry = async (
-      onConnectError: (ctx: ErrorContext, err: Error | Event) => Promise<void>
-    ) => {
-      retryCountRef.current += 1;
-      if (import.meta.env.DEV) {
-        console.log(
-          `Token error detected, refreshing token (attempt ${retryCountRef.current}/${maxRetries})...`
-        );
-      }
-
-      try {
-        const newToken = await getToken({ skipCache: true });
-        if (cancelled) {
-          return;
-        }
-
-        const newBuilder = DbConnection.builder()
-          .withUri(env.VITE_SPACETIMEDB_HOST)
-          .withModuleName(env.VITE_SPACETIMEDB_MODULE)
-          .withToken(newToken ?? undefined)
-          .onConnect(onConnect)
-          .onDisconnect(onDisconnect)
-          .onConnectError(onConnectError);
-
-        connectionBuilderRef.current = newBuilder;
-        setConnectionState({ status: "ready", builder: newBuilder });
-        setConnectionKey((k) => k + 1);
-      } catch {
-        if (!cancelled) {
-          setConnectionState({
-            status: "error",
-            message:
-              "Failed to refresh authentication. Please refresh the page.",
-          });
-        }
-      }
-    };
-
-    const isTokenRelatedError = (err: Error | Event): boolean => {
-      if (err instanceof Event) {
-        return false;
-      }
-      const errorMessage =
-        (err as Error & { message?: string })?.message?.toLowerCase() ?? "";
-      return (
-        errorMessage.includes("token") ||
-        errorMessage.includes("auth") ||
-        errorMessage.includes("unauthorized") ||
-        errorMessage.includes("401")
-      );
-    };
-
     const onConnectError = async (_ctx: ErrorContext, err: Error | Event) => {
       console.error("Error connecting to SpacetimeDB:", err);
 
@@ -164,26 +92,29 @@ function AuthenticatedContent(): React.ReactNode {
         return;
       }
 
-      const isTokenError = isTokenRelatedError(err);
-      const errorMessage =
-        (err as Error & { message?: string })?.message?.toLowerCase() ??
-        "unknown error";
-
-      if (isTokenError && retryCountRef.current < maxRetries) {
-        await handleTokenRetry(onConnectError);
+      retryCountRef.current += 1;
+      
+      if (retryCountRef.current < maxRetries && !cancelled) {
+        // Retry connection
+        setTimeout(() => {
+          if (!cancelled) {
+            setConnectionKey((k) => k + 1);
+          }
+        }, 1000 * retryCountRef.current);
       } else if (!cancelled) {
+        const errorMessage =
+          (err as Error & { message?: string })?.message ?? "unknown error";
         setConnectionState({
           status: "error",
-          message: isTokenError
-            ? "Failed to authenticate after multiple attempts. Please refresh the page."
-            : `Connection error: ${errorMessage}`,
+          message: `Connection error: ${errorMessage}`,
         });
       }
     };
 
     const initConnection = async () => {
       try {
-        const authToken = await getToken({ skipCache: true });
+        // Get stored token or use undefined to get a new identity
+        const storedToken = localStorage.getItem("auth_token") || undefined;
 
         if (cancelled) {
           return;
@@ -192,7 +123,7 @@ function AuthenticatedContent(): React.ReactNode {
         const builder = DbConnection.builder()
           .withUri(env.VITE_SPACETIMEDB_HOST)
           .withModuleName(env.VITE_SPACETIMEDB_MODULE)
-          .withToken(authToken ?? undefined)
+          .withToken(storedToken)
           .onConnect(onConnect)
           .onDisconnect(onDisconnect)
           .onConnectError(onConnectError);
@@ -204,7 +135,7 @@ function AuthenticatedContent(): React.ReactNode {
           console.error("Failed to initialize connection:", error);
           setConnectionState({
             status: "error",
-            message: "Failed to get authentication token",
+            message: "Failed to initialize connection",
           });
         }
       }
@@ -215,9 +146,9 @@ function AuthenticatedContent(): React.ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, getToken]);
+  }, [connectionKey]);
 
-  if (!isLoaded || connectionState.status === "loading") {
+  if (connectionState.status === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-muted-foreground">Loading...</div>
@@ -289,13 +220,6 @@ function AuthenticatedContent(): React.ReactNode {
                 <span className="sr-only">Search messages</span>
               </Button>
               <ThemeToggle />
-              <UserButton
-                appearance={{
-                  elements: {
-                    avatarBox: "h-9 w-9",
-                  },
-                }}
-              />
             </div>
           </div>
         </header>
