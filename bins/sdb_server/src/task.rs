@@ -380,6 +380,34 @@ pub fn update_task(
     Ok(())
 }
 
+/// Simple reducer for users to start QR code authentication
+/// This avoids the complex nested enum serialization from the frontend
+#[reducer]
+pub fn create_qr_auth_task(ctx: &ReducerContext, task_id: TaskId) -> Result<(), String> {
+    let payload = TaskPayload::GenerateQrCode(GenerateQrCode {
+        output: GenerateQrCodeOutput::Pending,
+    });
+
+    let task = Task {
+        id: task_id.clone(),
+        owner_user_id: ctx.sender,
+        status: TaskStatus::Unassigned,
+        payload,
+        created_at: ctx.timestamp,
+        updated_at: ctx.timestamp,
+    };
+
+    ctx.db.task().insert(task);
+
+    log::info!(
+        "QR auth task created: id={}, owner_user_id={}",
+        task_id,
+        ctx.sender
+    );
+
+    Ok(())
+}
+
 /// Reducer for users to cancel their own tasks (e.g., aborting QR login)
 #[reducer]
 pub fn cancel_task(ctx: &ReducerContext, task_id: TaskId) -> Result<(), String> {

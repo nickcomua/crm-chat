@@ -11,34 +11,30 @@ interface UseTaskOptions {
   autoCleanup?: boolean;
 }
 
-interface UseTaskReturn<T extends TaskPayloadType> {
+interface UseTaskReturn {
   /** The current task, if any */
   task: TaskType | null;
   /** Whether a task is currently active */
   isActive: boolean;
-  /** Create a new task with the given payload */
-  createTask: (payload: T) => void;
+  /** Start a new QR auth task */
+  startQrAuth: () => void;
   /** Cancel the current task */
   cancelTask: () => void;
   /** Get the typed payload from the task */
-  getPayload: () => T | null;
+  getPayload: <T extends TaskPayloadType>() => T | null;
 }
 
 /**
- * Hook for managing SpacetimeDB tasks with typed payloads.
+ * Hook for managing SpacetimeDB QR auth tasks.
  * 
- * @param taskTag - The tag of the task payload type (e.g., "GenerateQrCode")
  * @param options - Configuration options
  */
-export function useTask<T extends TaskPayloadType>(
-  taskTag: T["tag"],
-  options: UseTaskOptions = {}
-): UseTaskReturn<T> {
+export function useQrAuthTask(options: UseTaskOptions = {}): UseTaskReturn {
   const { autoCleanup = true } = options;
   
   const [taskId, setTaskId] = useState<string | null>(null);
   const [tasks] = useTable(tables.task);
-  const createTaskReducer = useReducer(reducers.createTask);
+  const createQrAuthTask = useReducer(reducers.createQrAuthTask);
   const cancelTaskReducer = useReducer(reducers.cancelTask);
 
   // Find our task by ID
@@ -47,15 +43,12 @@ export function useTask<T extends TaskPayloadType>(
   // Check if task is active (not Done)
   const isActive = task !== null && task.status.tag !== "Done";
 
-  // Create a new task
-  const createTask = useCallback(
-    (payload: T) => {
-      const id = crypto.randomUUID();
-      setTaskId(id);
-      createTaskReducer({ id, payload });
-    },
-    [createTaskReducer]
-  );
+  // Start a new QR auth task
+  const startQrAuth = useCallback(() => {
+    const id = crypto.randomUUID();
+    setTaskId(id);
+    createQrAuthTask({ taskId: id });
+  }, [createQrAuthTask]);
 
   // Cancel the current task
   const cancelTask = useCallback(() => {
@@ -66,10 +59,10 @@ export function useTask<T extends TaskPayloadType>(
   }, [taskId, cancelTaskReducer]);
 
   // Get typed payload
-  const getPayload = useCallback((): T | null => {
-    if (!task || task.payload.tag !== taskTag) return null;
+  const getPayload = useCallback(<T extends TaskPayloadType>(): T | null => {
+    if (!task) return null;
     return task.payload as T;
-  }, [task, taskTag]);
+  }, [task]);
 
   // Auto-cleanup on unmount
   useEffect(() => {
@@ -84,7 +77,7 @@ export function useTask<T extends TaskPayloadType>(
   return {
     task,
     isActive,
-    createTask,
+    startQrAuth,
     cancelTask,
     getPayload,
   };
