@@ -2,7 +2,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useMemo, useState } from "react";
 import type { Infer } from "spacetimedb";
 import { Loader2, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
-import { useTask } from "../../hooks/use-task";
+import { useQrAuthTask } from "../../hooks/use-task";
 import { type TaskPayload, type GenerateQrCodeOutput } from "../../lib/spacetime";
 import { Button } from "../ui/button";
 
@@ -15,22 +15,19 @@ interface QrAuthProps {
 }
 
 export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
-  const { createTask, cancelTask, getPayload } = useTask<GenerateQrCodePayload>("GenerateQrCode");
+  const { startQrAuth, cancelTask, getPayload } = useQrAuthTask();
   const [hasStarted, setHasStarted] = useState(false);
 
   // Start task on mount
   useEffect(() => {
     if (!hasStarted) {
       setHasStarted(true);
-      createTask({
-        tag: "GenerateQrCode",
-        value: { output: { tag: "Pending" } },
-      });
+      startQrAuth();
     }
-  }, [hasStarted, createTask]);
+  }, [hasStarted, startQrAuth]);
 
   // Get the current output state
-  const payload = getPayload();
+  const payload = getPayload<GenerateQrCodePayload>();
   const output: QrCodeOutput | null = payload?.value?.output ?? null;
 
   // Handle success
@@ -53,12 +50,9 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
   useEffect(() => {
     if (output?.tag === "Token" && expiresIn <= 0) {
       // Token expired, create new task
-      createTask({
-        tag: "GenerateQrCode",
-        value: { output: { tag: "Pending" } },
-      });
+      startQrAuth();
     }
-  }, [output, expiresIn, createTask]);
+  }, [output, expiresIn, startQrAuth]);
 
   const handleCancel = () => {
     cancelTask();
@@ -66,10 +60,7 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
   };
 
   const handleRetry = () => {
-    createTask({
-      tag: "GenerateQrCode",
-      value: { output: { tag: "Pending" } },
-    });
+    startQrAuth();
   };
 
   // Render based on output state

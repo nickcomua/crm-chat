@@ -39,6 +39,8 @@ import ClientConnected from "./client_connected_reducer";
 export { ClientConnected };
 import CompleteTask from "./complete_task_reducer";
 export { CompleteTask };
+import CreateQrAuthTask from "./create_qr_auth_task_reducer";
+export { CreateQrAuthTask };
 import CreateTask from "./create_task_reducer";
 export { CreateTask };
 import DeleteChat from "./delete_chat_reducer";
@@ -256,6 +258,7 @@ const reducersSchema = __reducers(
   __reducerSchema("assign_task", AssignTask),
   __reducerSchema("cancel_task", CancelTask),
   __reducerSchema("complete_task", CompleteTask),
+  __reducerSchema("create_qr_auth_task", CreateQrAuthTask),
   __reducerSchema("create_task", CreateTask),
   __reducerSchema("delete_chat", DeleteChat),
   __reducerSchema("delete_client", DeleteClient),
