@@ -17,6 +17,7 @@ pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
 pub mod complete_task_reducer;
+pub mod create_qr_auth_task_reducer;
 pub mod create_task_reducer;
 pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
@@ -69,6 +70,9 @@ pub use client_table::*;
 pub use client_type::Client;
 pub use complete_task_reducer::{
     CompleteTaskCallbackId, complete_task, set_flags_for_complete_task,
+};
+pub use create_qr_auth_task_reducer::{
+    CreateQrAuthTaskCallbackId, create_qr_auth_task, set_flags_for_create_qr_auth_task,
 };
 pub use create_task_reducer::{CreateTaskCallbackId, create_task, set_flags_for_create_task};
 pub use delete_chat_reducer::{DeleteChatCallbackId, delete_chat, set_flags_for_delete_chat};
@@ -135,6 +139,9 @@ pub enum Reducer {
         task_id: String,
         payload: TaskPayload,
     },
+    CreateQrAuthTask {
+        task_id: String,
+    },
     CreateTask {
         id: String,
         payload: TaskPayload,
@@ -172,6 +179,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::CancelTask { .. } => "cancel_task",
             Reducer::ClientConnected => "client_connected",
             Reducer::CompleteTask { .. } => "complete_task",
+            Reducer::CreateQrAuthTask { .. } => "create_qr_auth_task",
             Reducer::CreateTask { .. } => "create_task",
             Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
@@ -209,6 +217,10 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
             "complete_task" => Ok(__sdk::parse_reducer_args::<
                 complete_task_reducer::CompleteTaskArgs,
             >("complete_task", &value.args)?
+            .into()),
+            "create_qr_auth_task" => Ok(__sdk::parse_reducer_args::<
+                create_qr_auth_task_reducer::CreateQrAuthTaskArgs,
+            >("create_qr_auth_task", &value.args)?
             .into()),
             "create_task" => Ok(
                 __sdk::parse_reducer_args::<create_task_reducer::CreateTaskArgs>(
