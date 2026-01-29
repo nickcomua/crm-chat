@@ -6,7 +6,11 @@ import {
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { routeTree } from "./routeTree.gen";
+import { initSentry, Sentry } from "./lib/sentry";
 import "./index.css";
+
+// Initialize Sentry as early as possible
+initSentry();
 
 // Create hash history for static hosting (no server-side routing needed)
 const hashHistory = createHashHistory();
@@ -30,7 +34,9 @@ if (rootElement && !rootElement.innerHTML) {
   const root = createRoot(rootElement);
   root.render(
     <StrictMode>
-      <RouterProvider router={router} />
+      <Sentry.ErrorBoundary fallback={<p>Something went wrong</p>}>
+        <RouterProvider router={router} />
+      </Sentry.ErrorBoundary>
     </StrictMode>
   );
 }
