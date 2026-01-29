@@ -92,6 +92,20 @@ function AuthLayout(): React.ReactNode {
         return;
       }
 
+      // Check if it's a token validation error
+      const errorMessage = (err as Error & { message?: string })?.message ?? "";
+      if (errorMessage.includes("Unauthorized") || errorMessage.includes("verify token")) {
+        // Clear invalid token and retry once
+        if (localStorage.getItem("auth_token")) {
+          console.log("Clearing invalid auth token and retrying...");
+          localStorage.removeItem("auth_token");
+          if (!cancelled) {
+            setConnectionKey((k) => k + 1);
+            return;
+          }
+        }
+      }
+
       retryCountRef.current += 1;
       
       if (retryCountRef.current < maxRetries && !cancelled) {
@@ -102,8 +116,6 @@ function AuthLayout(): React.ReactNode {
           }
         }, 1000 * retryCountRef.current);
       } else if (!cancelled) {
-        const errorMessage =
-          (err as Error & { message?: string })?.message ?? "unknown error";
         setConnectionState({
           status: "error",
           message: `Connection error: ${errorMessage}`,
