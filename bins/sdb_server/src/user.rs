@@ -179,43 +179,18 @@ impl User for Robot {
 
 #[reducer(client_connected)]
 pub fn client_connected(ctx: &ReducerContext) -> Result<(), String> {
+    let jwt = ctx
+        .sender_auth()
+        .jwt()
+        .ok_or("Authentication required".to_string())?;
+
     log::info!("Client connecting with identity: {:?}", ctx.sender);
 
-    // Check if JWT is present
-    if let Some(jwt) = ctx.sender_auth().jwt() {
-        // Authenticated connection - route based on issuer
-        if jwt.issuer() == "localhost" {
-            Robot::on_connect(ctx)
-        } else {
-            Human::on_connect(ctx)
-        }
+    // Route to appropriate User implementation based on issuer
+    if jwt.issuer() == "localhost" {
+        Robot::on_connect(ctx)
     } else {
-        // Anonymous connection - create a basic human record
-        if let Some(human) = ctx.db.human().id().find(ctx.sender) {
-            // Check if human is already connected
-            if human.online {
-                return Err("Human already connected".to_string());
-            }
-            // Returning anonymous user: update online status
-            ctx.db.human().id().update(Human {
-                online: true,
-                updated_at: ctx.timestamp,
-                ..human
-            });
-        } else {
-            // New anonymous user: create record
-            ctx.db.human().insert(Human {
-                id: ctx.sender,
-                username: None,
-                display_name: None,
-                created_at: ctx.timestamp,
-                updated_at: ctx.timestamp,
-                online: true,
-            });
-        }
-        
-        log::info!("Anonymous human connected: {:?}", ctx.sender);
-        Ok(())
+        Human::on_connect(ctx)
     }
 }
 

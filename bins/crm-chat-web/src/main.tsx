@@ -1,3 +1,4 @@
+import { ClerkProvider } from "@clerk/clerk-react";
 import {
   createHashHistory,
   createRouter,
@@ -7,6 +8,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { routeTree } from "./routeTree.gen";
 import { initSentry, Sentry } from "./lib/sentry";
+import { env } from "./env";
 import "./index.css";
 
 // Initialize Sentry as early as possible
@@ -31,12 +33,18 @@ declare module "@tanstack/react-router" {
 
 const rootElement = document.getElementById("root");
 if (rootElement && !rootElement.innerHTML) {
+  const clerkPubKey = env.VITE_CLERK_PUBLISHABLE_KEY;
+  if (!clerkPubKey) {
+    console.error("Missing VITE_CLERK_PUBLISHABLE_KEY");
+  }
   const root = createRoot(rootElement);
   root.render(
     <StrictMode>
-      <Sentry.ErrorBoundary fallback={<p>Something went wrong</p>}>
-        <RouterProvider router={router} />
-      </Sentry.ErrorBoundary>
+      <ClerkProvider publishableKey={clerkPubKey ?? ""}>
+        <Sentry.ErrorBoundary fallback={<p>Something went wrong</p>}>
+          <RouterProvider router={router} />
+        </Sentry.ErrorBoundary>
+      </ClerkProvider>
     </StrictMode>
   );
 }
