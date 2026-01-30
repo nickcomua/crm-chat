@@ -1,3 +1,4 @@
+import { useAuth, RedirectToSignIn } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
@@ -46,6 +47,7 @@ function ThemeToggle(): React.ReactNode {
 }
 
 function AuthLayout(): React.ReactNode {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     status: "loading",
   });
@@ -92,20 +94,6 @@ function AuthLayout(): React.ReactNode {
         return;
       }
 
-      // Check if it's a token validation error
-      const errorMessage = (err as Error & { message?: string })?.message ?? "";
-      if (errorMessage.includes("Unauthorized") || errorMessage.includes("verify token")) {
-        // Clear invalid token and retry once
-        if (localStorage.getItem("auth_token")) {
-          console.log("Clearing invalid auth token and retrying...");
-          localStorage.removeItem("auth_token");
-          if (!cancelled) {
-            setConnectionKey((k) => k + 1);
-            return;
-          }
-        }
-      }
-
       retryCountRef.current += 1;
       
       if (retryCountRef.current < maxRetries && !cancelled) {
@@ -116,6 +104,8 @@ function AuthLayout(): React.ReactNode {
           }
         }, 1000 * retryCountRef.current);
       } else if (!cancelled) {
+        const errorMessage =
+          (err as Error & { message?: string })?.message ?? "unknown error";
         setConnectionState({
           status: "error",
           message: `Connection error: ${errorMessage}`,
@@ -125,8 +115,20 @@ function AuthLayout(): React.ReactNode {
 
     const initConnection = async () => {
       try {
-        // Get stored token or use undefined to get a new identity
-        const storedToken = localStorage.getItem("auth_token") || undefined;
+        // Wait for Clerk to load
+        if (!isLoaded) {
+          return;
+        }
+
+        // Get Clerk session token for SpacetimeDB auth
+        let token: string | undefined;
+        if (isSignedIn) {
+          // Use Clerk JWT for authenticated users
+          token = (await getToken()) ?? undefined;
+        } else {
+          // Fall back to stored token for anonymous/returning users
+          token = localStorage.getItem("auth_token") ?? undefined;
+        }
 
         if (cancelled) {
           return;
@@ -135,7 +137,7 @@ function AuthLayout(): React.ReactNode {
         const builder = DbConnection.builder()
           .withUri(env.VITE_SPACETIMEDB_HOST)
           .withModuleName(env.VITE_SPACETIMEDB_MODULE)
-          .withToken(storedToken)
+          .withToken(token)
           .onConnect(onConnect)
           .onDisconnect(onDisconnect)
           .onConnectError(onConnectError);
@@ -158,12 +160,26 @@ function AuthLayout(): React.ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [connectionKey]);
+  }, [connectionKey, isLoaded, isSignedIn, getToken]);
+
+  // Wait for Clerk to load
+  if (!isLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  // Require sign-in
+  if (!isSignedIn) {
+    return <RedirectToSignIn />;
+  }
 
   if (connectionState.status === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="text-muted-foreground">Connecting...</div>
       </div>
     );
   }
