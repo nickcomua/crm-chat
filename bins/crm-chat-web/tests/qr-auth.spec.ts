@@ -1,9 +1,14 @@
 import { test, expect } from "@playwright/test";
 
-// Test credentials from environment
-const TEST_CLERK_USERNAME = process.env.TEST_CLERK_USERNAME || "tester";
-const TEST_CLERK_PASSWORD =
-  process.env.TEST_CLERK_PASSWORD || "dhye7e73urnueu2jr7u3h2";
+// Test credentials from environment (required)
+const TEST_CLERK_USERNAME = process.env.TEST_CLERK_USERNAME;
+const TEST_CLERK_PASSWORD = process.env.TEST_CLERK_PASSWORD;
+
+if (!TEST_CLERK_USERNAME || !TEST_CLERK_PASSWORD) {
+  throw new Error(
+    "TEST_CLERK_USERNAME and TEST_CLERK_PASSWORD environment variables are required"
+  );
+}
 
 test.describe("QR Code Authentication", () => {
   test.beforeEach(async ({ page }) => {
