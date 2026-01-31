@@ -37,10 +37,16 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 
 ## Running Tests
 
-### Run all tests
+### Run against local dev server
 ```bash
 cd bins/crm-chat-web
 npm test
+```
+
+### Run against deployed web
+```bash
+cd bins/crm-chat-web
+TEST_BASE_URL=https://crm-chat.kaminazuma.com npm test
 ```
 
 ### Run with UI (interactive mode)
@@ -63,5 +69,13 @@ npm run test:headed
 
 Tests are configured in `playwright.config.ts`:
 - Uses Chromium browser
-- Runs against `http://localhost:5173` (Vite dev server)
-- Auto-starts dev server if not running
+- By default runs against `http://localhost:5173` (Vite dev server)
+- Auto-starts dev server if not running (unless `TEST_BASE_URL` is set)
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `TEST_BASE_URL` | Override base URL to test against (e.g., `https://crm-chat.kaminazuma.com`) |
+| `TEST_CLERK_USERNAME` | Clerk test user username |
+| `TEST_CLERK_PASSWORD` | Clerk test user password |
