@@ -8,11 +8,7 @@ export const Route = createFileRoute("/sign-in")({
 function SignInPage(): React.ReactNode {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <SignIn
-        routing="hash"
-        signUpUrl="/sign-up"
-        afterSignInUrl="/#/"
-      />
+      <SignIn afterSignInUrl="/#/" routing="hash" signUpUrl="/sign-up" />
     </div>
   );
 }

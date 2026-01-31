@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useReducer, useTable } from "spacetimedb/react";
-import { type Task, type TaskPayload, reducers, tables } from "../lib/spacetime";
+import {
+  reducers,
+  type Task,
+  type TaskPayload,
+  tables,
+} from "../lib/spacetime";
 
 type TaskType = Infer<typeof Task>;
 type TaskPayloadType = Infer<typeof TaskPayload>;
@@ -26,20 +31,20 @@ interface UseTaskReturn {
 
 /**
  * Hook for managing SpacetimeDB QR auth tasks.
- * 
+ *
  * @param options - Configuration options
  */
 export function useQrAuthTask(options: UseTaskOptions = {}): UseTaskReturn {
   const { autoCleanup = true } = options;
-  
+
   const [taskId, setTaskId] = useState<string | null>(null);
   const [tasks] = useTable(tables.task);
   const createQrAuthTask = useReducer(reducers.createQrAuthTask);
   const cancelTaskReducer = useReducer(reducers.cancelTask);
 
   // Find our task by ID
-  const task = taskId ? tasks.find((t) => t.id === taskId) ?? null : null;
-  
+  const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
+
   // Check if task is active (not Done)
   const isActive = task !== null && task.status.tag !== "Done";
 
@@ -60,7 +65,9 @@ export function useQrAuthTask(options: UseTaskOptions = {}): UseTaskReturn {
 
   // Get typed payload
   const getPayload = useCallback(<T extends TaskPayloadType>(): T | null => {
-    if (!task) return null;
+    if (!task) {
+      return null;
+    }
     return task.payload as T;
   }, [task]);
 

@@ -6,9 +6,9 @@ import {
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { routeTree } from "./routeTree.gen";
-import { initSentry, Sentry } from "./lib/sentry";
 import { env } from "./env";
+import { initSentry, Sentry } from "./lib/sentry";
+import { routeTree } from "./routeTree.gen";
 import "./index.css";
 
 // Initialize Sentry as early as possible
