@@ -1,4 +1,4 @@
-import { useAuth, RedirectToSignIn } from "@clerk/clerk-react";
+import { RedirectToSignIn, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
@@ -95,7 +95,7 @@ function AuthLayout(): React.ReactNode {
       }
 
       retryCountRef.current += 1;
-      
+
       if (retryCountRef.current < maxRetries && !cancelled) {
         // Retry connection
         setTimeout(() => {
