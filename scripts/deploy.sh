@@ -60,7 +60,7 @@ echo -e "${YELLOW}Deploying to Dokploy...${NC}"
 # Trigger web deployment
 echo "Deploying crm-chat-web..."
 curl -s -X POST "$DOKPLOY_URL/api/application.deploy" \
-  -H "Authorization: Bearer $DOKPLOY_API_KEY" \
+  -H "x-api-key: $DOKPLOY_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"applicationId\": \"$DOKPLOY_WEB_APP_ID\"}"
 
@@ -68,7 +68,7 @@ curl -s -X POST "$DOKPLOY_URL/api/application.deploy" \
 if [ -n "$DOKPLOY_SUBSCRIBER_APP_ID" ]; then
   echo "Deploying telegram-subscriber..."
   curl -s -X POST "$DOKPLOY_URL/api/application.deploy" \
-    -H "Authorization: Bearer $DOKPLOY_API_KEY" \
+    -H "x-api-key: $DOKPLOY_API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"applicationId\": \"$DOKPLOY_SUBSCRIBER_APP_ID\"}"
 fi
