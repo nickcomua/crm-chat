@@ -3,10 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { Infer } from "spacetimedb";
 import { Loader2, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import { useQrAuthTask } from "../../hooks/use-task";
-import { type TaskPayload, type GenerateQrCodeOutput } from "../../lib/spacetime";
+import { type GenerateQrCodeOutput } from "../../lib/spacetime";
 import { Button } from "../ui/button";
 
-type GenerateQrCodePayload = Infer<typeof TaskPayload> & { tag: "GenerateQrCode" };
 type QrCodeOutput = Infer<typeof GenerateQrCodeOutput>;
 
 interface QrAuthProps {
@@ -15,7 +14,7 @@ interface QrAuthProps {
 }
 
 export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
-  const { startQrAuth, cancelTask, getPayload } = useQrAuthTask();
+  const { task, startQrAuth, cancelTask } = useQrAuthTask();
   const [hasStarted, setHasStarted] = useState(false);
 
   // Start task on mount
@@ -26,9 +25,11 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
     }
   }, [hasStarted, startQrAuth]);
 
-  // Get the current output state
-  const payload = getPayload<GenerateQrCodePayload>();
-  const output: QrCodeOutput | null = payload?.value?.output ?? null;
+  // Get the current output state - compute directly from task to ensure reactivity
+  const output: QrCodeOutput | null =
+    task?.payload?.tag === "GenerateQrCode"
+      ? task.payload.value.output
+      : null;
 
   // Handle success
   useEffect(() => {
