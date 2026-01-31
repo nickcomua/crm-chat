@@ -46,7 +46,6 @@ export function useQrAuthTask(options: UseTaskOptions = {}): UseTaskReturn {
   // Start a new QR auth task
   const startQrAuth = useCallback(() => {
     const id = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    console.log('Creating QR auth task with ID:', id);
     setTaskId(id);
     createQrAuthTask({ taskId: id });
   }, [createQrAuthTask]);
