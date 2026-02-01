@@ -87,7 +87,7 @@ function AuthLayout(): React.ReactNode {
       }
     };
 
-    const onConnectError = async (_ctx: ErrorContext, err: Error | Event) => {
+    const onConnectError = (_ctx: ErrorContext, err: Error | Event): void => {
       console.error("Error connecting to SpacetimeDB:", err);
 
       if (err instanceof Event) {
