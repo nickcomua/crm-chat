@@ -1,4 +1,4 @@
-import { Plus, Trash2, QrCode } from "lucide-react";
+import { Plus, QrCode, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { Infer } from "spacetimedb";
 import { useReducer, useTable } from "spacetimedb/react";
@@ -72,7 +72,7 @@ export function TelegramClientsManager(): React.ReactNode {
           </p>
         </div>
         <Button onClick={() => setShowAddDialog(true)}>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="mr-2 h-4 w-4" />
           Add Client
         </Button>
       </div>
@@ -114,10 +114,12 @@ export function TelegramClientsManager(): React.ReactNode {
       {clients.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <QrCode className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground mb-4">No Telegram clients connected</p>
+            <QrCode className="mb-4 h-12 w-12 text-muted-foreground" />
+            <p className="mb-4 text-muted-foreground">
+              No Telegram clients connected
+            </p>
             <Button onClick={() => setShowAddDialog(true)}>
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="mr-2 h-4 w-4" />
               Add Your First Client
             </Button>
           </CardContent>
@@ -125,7 +127,7 @@ export function TelegramClientsManager(): React.ReactNode {
       )}
 
       {/* Add Client Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog onOpenChange={setShowAddDialog} open={showAddDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add Telegram Client</DialogTitle>
@@ -133,7 +135,7 @@ export function TelegramClientsManager(): React.ReactNode {
               Scan this QR code with your Telegram app to connect your account.
             </DialogDescription>
           </DialogHeader>
-          <QrAuth onSuccess={handleAddSuccess} onCancel={handleAddCancel} />
+          <QrAuth onCancel={handleAddCancel} onSuccess={handleAddSuccess} />
         </DialogContent>
       </Dialog>
     </div>
