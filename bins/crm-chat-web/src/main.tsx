@@ -7,7 +7,7 @@ import {
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { env } from "./env";
-import { initSentry, Sentry } from "./lib/sentry";
+import { ErrorBoundary, initSentry } from "./lib/sentry";
 import { routeTree } from "./routeTree.gen";
 import "./index.css";
 
@@ -41,9 +41,9 @@ if (rootElement && !rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <ClerkProvider publishableKey={clerkPubKey ?? ""}>
-        <Sentry.ErrorBoundary fallback={<p>Something went wrong</p>}>
+        <ErrorBoundary fallback={<p>Something went wrong</p>}>
           <RouterProvider router={router} />
-        </Sentry.ErrorBoundary>
+        </ErrorBoundary>
       </ClerkProvider>
     </StrictMode>
   );
