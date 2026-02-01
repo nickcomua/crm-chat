@@ -23,7 +23,7 @@
           src = pkgs.lib.cleanSource ./.;
 
           # Nix will tell you the correct hash to put here after the first build attempt.
-          npmDepsHash = "sha256-p4AGxP0UDgaswr7KUnCVuL53WgorcmsMClwlpRBKUUg=";
+          npmDepsHash = "sha256-1is7N9GM2plMSji6xhuYnWjoPaq6BqKaXRBOQUrao0k=";
 
           # Avoid npm/vite trying to write to read-only paths
           # makeCacheWritable = true;
@@ -58,7 +58,9 @@
           window.import.meta.env = {
             VITE_CLERK_PUBLISHABLE_KEY: "''${VITE_CLERK_PUBLISHABLE_KEY:-}",
             VITE_SPACETIMEDB_HOST: "''${VITE_SPACETIMEDB_HOST:-}",
-            VITE_SPACETIMEDB_MODULE: "''${VITE_SPACETIMEDB_MODULE:-}"
+            VITE_SPACETIMEDB_MODULE: "''${VITE_SPACETIMEDB_MODULE:-}",
+            VITE_SENTRY_DSN: "''${VITE_SENTRY_DSN:-}",
+            VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT:-production}"
           };
           console.log('Runtime env loaded:', window.import.meta.env);
           EOF
@@ -121,6 +123,8 @@
               "VITE_CLERK_PUBLISHABLE_KEY="
               "VITE_SPACETIMEDB_HOST="
               "VITE_SPACETIMEDB_MODULE="
+              "VITE_SENTRY_DSN="
+              "VITE_SENTRY_ENVIRONMENT=production"
             ];
             WorkingDir = "/tmp/www";
           };
@@ -138,7 +142,7 @@
             version = "0.0.0";
             src = pkgs.lib.cleanSource ./.;
 
-            npmDepsHash = "sha256-p4AGxP0UDgaswr7KUnCVuL53WgorcmsMClwlpRBKUUg=";
+            npmDepsHash = "sha256-1is7N9GM2plMSji6xhuYnWjoPaq6BqKaXRBOQUrao0k=";
             makeCacheWritable = true;
 
             nativeBuildInputs = [

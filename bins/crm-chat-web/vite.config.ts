@@ -1,17 +1,18 @@
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-
-// // @ts-expect-error biome-ignore lint/correctness/noUnusedImports: for build time envs checks
-// // biome-ignore lint/correctness/noUnusedImports: for build time envs checks
-// import {env} from "./src/env";
 
 const ReactCompilerConfig = {};
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: true,
+    }),
     react({
       babel: {
         plugins: [["babel-plugin-react-compiler", ReactCompilerConfig]],

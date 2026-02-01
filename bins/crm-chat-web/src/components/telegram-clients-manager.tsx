@@ -1,9 +1,9 @@
-import { Loader2, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Plus, QrCode, Trash2 } from "lucide-react";
+import { useState } from "react";
 import type { Infer } from "spacetimedb";
-import { useSpacetimeDB, useTable } from "spacetimedb/react";
-import { type Client, type DbConnection, tables } from "../lib/spacetime";
-import { AddClientDialog } from "./add-client-dialog";
+import { useReducer, useTable } from "spacetimedb/react";
+import { type Client, reducers, tables } from "../lib/spacetime";
+import { QrAuth } from "./client/qr-auth";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -12,27 +12,19 @@ import {
   CardHeader,
   CardTitle,
 } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 
 type ClientType = Infer<typeof Client>;
 
 // Helper to check if a client is connected
 function isClientConnected(client: ClientType): boolean {
   return client.status.tag === "Connected";
-}
-
-// Helper to check if a client needs user input (status without value)
-function clientNeedsUserInput(client: ClientType): boolean {
-  const status = client.status;
-  // Client needs input when status is WaitingCode or WaitingPassword without a value
-  return (
-    (status.tag === "WaitingCode" || status.tag === "WaitingPassword") &&
-    status.value === undefined
-  );
-}
-
-// Helper to check if a client is pending (not connected)
-function isClientPending(client: ClientType): boolean {
-  return !isClientConnected(client);
 }
 
 // Get status display info
@@ -42,121 +34,31 @@ function getStatusDisplay(client: ClientType): {
 } {
   const status = client.status;
 
-  if (status.tag === "Connected") {
-    return { label: "Connected", color: "bg-emerald-500" };
+  switch (status.tag) {
+    case "Connected":
+      return { label: "Connected", color: "bg-emerald-500" };
+    case "Error":
+      return { label: `Error: ${status.value}`, color: "bg-red-500" };
+    default:
+      return { label: status.tag, color: "bg-amber-500" };
   }
-  if (status.tag === "WaitingPhone") {
-    if (status.value !== undefined) {
-      return { label: "Sending code...", color: "bg-amber-500" };
-    }
-    return { label: "Enter phone", color: "bg-amber-500" };
-  }
-  if (status.tag === "WaitingCode") {
-    if (status.value !== undefined) {
-      return { label: "Verifying code...", color: "bg-amber-500" };
-    }
-    return { label: "Enter code", color: "bg-amber-500" };
-  }
-  if (status.tag === "WaitingPassword") {
-    if (status.value !== undefined) {
-      return { label: "Verifying password...", color: "bg-amber-500" };
-    }
-    return { label: "Enter password", color: "bg-amber-500" };
-  }
-
-  return { label: "Unknown", color: "bg-gray-500" };
 }
 
-export function TelegramClientsManager() {
-  const { getConnection, isActive } = useSpacetimeDB();
-  const conn = getConnection<DbConnection>();
+export function TelegramClientsManager(): React.ReactNode {
   const [clients] = useTable(tables.client);
-  const [users] = useTable(tables.user);
-  console.log(users, clients);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [selectedPendingClientId, setSelectedPendingClientId] = useState<
-    bigint | null
-  >(null);
+  const deleteClient = useReducer(reducers.deleteClient);
+  const [showAddDialog, setShowAddDialog] = useState(false);
 
-  // Separate clients into connected and pending
-  const { connectedClients, pendingClients } = (() => {
-    const connected: ClientType[] = [];
-    const pending: ClientType[] = [];
+  const connectedClients = clients.filter(isClientConnected);
+  const otherClients = clients.filter((c) => !isClientConnected(c));
 
-    for (const client of clients) {
-      if (isClientConnected(client)) {
-        connected.push(client);
-      } else {
-        pending.push(client);
-      }
-    }
-
-    return { connectedClients: connected, pendingClients: pending };
-  })();
-
-  // Find the pending client that needs user input or the selected one
-  const activePendingClient = (() => {
-    // First check if we have a selected pending client
-    if (selectedPendingClientId) {
-      const selected = pendingClients.find(
-        (c) => c.id === selectedPendingClientId
-      );
-      if (selected) {
-        return selected;
-      }
-    }
-
-    // Otherwise find any client that needs user input
-    return pendingClients.find(clientNeedsUserInput) ?? null;
-  })();
-
-  // Auto-open dialog when a pending client needs user input
-  useEffect(() => {
-    if (activePendingClient && clientNeedsUserInput(activePendingClient)) {
-      const timer = setTimeout(() => {
-        setIsAddDialogOpen(true);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [activePendingClient]);
-
-  const handleDeleteClient = (clientId: bigint) => {
-    if (!conn) {
-      return;
-    }
-    conn.reducers.deleteClient({ clientId });
+  const handleAddSuccess = () => {
+    setShowAddDialog(false);
   };
 
-  const handleOpenAddDialog = () => {
-    setSelectedPendingClientId(null);
-    setIsAddDialogOpen(true);
+  const handleAddCancel = () => {
+    setShowAddDialog(false);
   };
-
-  const handleDialogOpenChange = (open: boolean) => {
-    setIsAddDialogOpen(open);
-    if (!open) {
-      setSelectedPendingClientId(null);
-    }
-  };
-
-  const handleContinuePendingClient = (client: ClientType) => {
-    setSelectedPendingClientId(client.id);
-    setIsAddDialogOpen(true);
-  };
-
-  if (!isActive) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-muted-foreground">
-          Connecting to SpacetimeDB...
-        </span>
-      </div>
-    );
-  }
-
-  const hasNoClients =
-    connectedClients.length === 0 && pendingClients.length === 0;
 
   return (
     <div className="space-y-6">
@@ -166,48 +68,42 @@ export function TelegramClientsManager() {
             Telegram Clients
           </h2>
           <p className="text-muted-foreground">
-            Manage your connected Telegram accounts
+            Your connected Telegram accounts
           </p>
         </div>
-        <Button onClick={handleOpenAddDialog}>
+        <Button onClick={() => setShowAddDialog(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Add Client
         </Button>
       </div>
 
-      {/* Pending Clients Section */}
-      {pendingClients.length > 0 && (
+      {/* Connected Clients */}
+      {connectedClients.length > 0 && (
         <div className="space-y-3">
-          <h3 className="font-semibold text-lg text-muted-foreground">
-            Pending Authentication
-          </h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {pendingClients.map((client) => (
+            {connectedClients.map((client) => (
               <ClientCard
                 client={client}
                 key={client.id.toString()}
-                onContinue={() => handleContinuePendingClient(client)}
-                onDelete={() => handleDeleteClient(client.id)}
+                onDelete={() => deleteClient({ clientId: client.id })}
               />
             ))}
           </div>
         </div>
       )}
 
-      {/* Connected Clients Section */}
-      {connectedClients.length > 0 && (
+      {/* Other Clients (pending, error, etc) */}
+      {otherClients.length > 0 && (
         <div className="space-y-3">
-          {pendingClients.length > 0 && (
-            <h3 className="font-semibold text-lg text-muted-foreground">
-              Connected Clients
-            </h3>
-          )}
+          <h3 className="font-semibold text-lg text-muted-foreground">
+            Pending
+          </h3>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {connectedClients.map((client) => (
+            {otherClients.map((client) => (
               <ClientCard
                 client={client}
                 key={client.id.toString()}
-                onDelete={() => handleDeleteClient(client.id)}
+                onDelete={() => deleteClient({ clientId: client.id })}
               />
             ))}
           </div>
@@ -215,28 +111,33 @@ export function TelegramClientsManager() {
       )}
 
       {/* Empty State */}
-      {hasNoClients && (
+      {clients.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground">No Telegram clients yet</p>
-            <Button
-              className="mt-4"
-              onClick={handleOpenAddDialog}
-              variant="outline"
-            >
+            <QrCode className="mb-4 h-12 w-12 text-muted-foreground" />
+            <p className="mb-4 text-muted-foreground">
+              No Telegram clients connected
+            </p>
+            <Button onClick={() => setShowAddDialog(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              Add your first client
+              Add Your First Client
             </Button>
           </CardContent>
         </Card>
       )}
 
-      <AddClientDialog
-        connection={conn}
-        onOpenChange={handleDialogOpenChange}
-        open={isAddDialogOpen}
-        pendingClient={activePendingClient}
-      />
+      {/* Add Client Dialog */}
+      <Dialog onOpenChange={setShowAddDialog} open={showAddDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Telegram Client</DialogTitle>
+            <DialogDescription>
+              Scan this QR code with your Telegram app to connect your account.
+            </DialogDescription>
+          </DialogHeader>
+          <QrAuth onCancel={handleAddCancel} onSuccess={handleAddSuccess} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -244,18 +145,14 @@ export function TelegramClientsManager() {
 function ClientCard({
   client,
   onDelete,
-  onContinue,
 }: {
   client: ClientType;
   onDelete: () => void;
-  onContinue?: () => void;
-}) {
+}): React.ReactNode {
   const statusDisplay = getStatusDisplay(client);
-  const isPending = isClientPending(client);
-  const needsInput = clientNeedsUserInput(client);
 
   return (
-    <Card className={isPending ? "border-amber-500/50" : undefined}>
+    <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0">
         <div className="space-y-1">
           <CardTitle className="font-medium text-base">
@@ -276,18 +173,11 @@ function ClientCard({
         </Button>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
-            <span className="text-muted-foreground text-sm">
-              {statusDisplay.label}
-            </span>
-          </div>
-          {isPending && needsInput && onContinue && (
-            <Button onClick={onContinue} size="sm" variant="outline">
-              Continue
-            </Button>
-          )}
+        <div className="flex items-center gap-2">
+          <div className={`h-2 w-2 rounded-full ${statusDisplay.color}`} />
+          <span className="text-muted-foreground text-sm">
+            {statusDisplay.label}
+          </span>
         </div>
       </CardContent>
     </Card>

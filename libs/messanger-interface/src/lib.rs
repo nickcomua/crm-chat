@@ -10,24 +10,20 @@ pub mod error;
 pub mod media;
 pub mod message;
 pub mod native;
-pub mod session;
 pub mod types;
 pub mod update;
 
 pub use chat::ChatSummary;
-pub use client::{MessengerClient, MessengerClientBuilder};
+pub use client::MessengerClient;
 pub use error::MessengerError;
 pub use media::{MediaKind, MediaSummary};
 pub use message::MessageSummary;
 pub use native::NativePayload;
-pub use session::SessionStore;
-pub use types::{AuthConfig, DialogStream, ExternalId, MessageStream, UpdateStream};
+pub use types::{DialogStream, ExternalId, MessageStream, UpdateStream};
 pub use update::Update;
 
 #[cfg(test)]
 mod tests {
-    use crate::session::JsonSessionStore;
-
     use super::*;
     use async_trait::async_trait;
     use serde_json::Value as JsonValue;
@@ -149,16 +145,16 @@ mod tests {
 
     #[async_trait]
     impl MessengerClient for MockMessengerClient {
-        async fn login<'callback, F, Fut>(
-            &self,
-            _question_callback: F,
-        ) -> Result<(), MessengerError>
-        where
-            F: Send + Sync + Fn(String) -> Fut + 'callback,
-            Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
-        {
-            Ok(())
-        }
+        // async fn login<'callback, F, Fut>(
+        //     &self,
+        //     _question_callback: F,
+        // ) -> Result<(), MessengerError>
+        // where
+        //     F: Send + Sync + Fn(String) -> Fut + 'callback,
+        //     Fut: std::future::Future<Output = Option<String>> + Send + 'callback,
+        // {
+        //     Ok(())
+        // }
 
         async fn is_authorized(&self) -> Result<bool, MessengerError> {
             Ok(self.authorized)
@@ -325,23 +321,6 @@ mod tests {
                 )))
             }
         }
-    }
-
-    #[tokio::test]
-    async fn test_session_store() {
-        let store = JsonSessionStore::default();
-
-        // Test save and load
-        let session_data = serde_json::json!({"token": "test_token"});
-        store.save(&session_data).await.unwrap();
-
-        let loaded = store.load().await.unwrap();
-        assert_eq!(loaded, Some(session_data));
-
-        // Test delete
-        store.delete().await.unwrap();
-        let loaded = store.load().await.unwrap();
-        assert_eq!(loaded, None);
     }
 
     #[tokio::test]
