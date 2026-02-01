@@ -3,12 +3,8 @@
 //! These tests require valid Telegram API credentials and will make actual
 //! API calls to Telegram. Set up your test configuration before running these tests.
 
-use messanger_interface::{
-    session::JsonSessionStore, AuthConfig, MessengerClient, MessengerClientBuilder, SessionStore,
-    Update,
-};
-use messanger_telegram::TelegramClientBuilder;
-use serde_json::json;
+use messanger_interface::{MessengerClient, Update};
+use messanger_telegram::TelegramClient;
 use serial_test::serial;
 use std::time::Duration;
 use tokio_stream::StreamExt;
@@ -59,20 +55,6 @@ impl TestConfig {
         ))
     }
 
-    fn to_auth_config(&self) -> AuthConfig {
-        AuthConfig {
-            credentials: json!({
-                "api_id": self.api_id,
-                "api_hash": self.api_hash,
-            }),
-        }
-    }
-
-    fn to_session_config(&self) -> Option<Box<dyn SessionStore>> {
-        Some(Box::new(JsonSessionStore::new(json!({
-            "session_file": &self.session_file
-        }))))
-    }
 }
 
 #[tokio::test]
@@ -87,19 +69,23 @@ async fn test_client_creation() {
         }
 
         let (config1, config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
-
         // Create first client
-        let client1 = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client1 = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Create second client
-        let client2 = builder
-            .build(config2.to_auth_config(), config2.to_session_config())
-            .await
-            .expect("Failed to create second client");
+        let client2 = TelegramClient::new(
+            config2.api_id as i32,
+            config2.api_hash.clone(),
+            config2.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create second client");
 
         // Test that clients are created
         assert!(client1.is_authorized().await.is_ok());
@@ -121,19 +107,23 @@ async fn test_client_external_ids() {
         }
 
         let (config1, config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
-
         // Create first client
-        let client1 = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client1 = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Create second client
-        let client2 = builder
-            .build(config2.to_auth_config(), config2.to_session_config())
-            .await
-            .expect("Failed to create second client");
+        let client2 = TelegramClient::new(
+            config2.api_id as i32,
+            config2.api_hash.clone(),
+            config2.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create second client");
 
         // Get external IDs (should be different for different accounts)
         let id1 = client1
@@ -172,13 +162,15 @@ async fn test_iter_dialogs() {
         }
 
         let (config1, _config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
 
         // Create first client
-        let client = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Check authorization first
         let is_authorized = client
@@ -239,13 +231,15 @@ async fn test_iter_messages() {
         }
 
         let (config1, _config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
 
         // Create first client
-        let client = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Check authorization
         let is_authorized = client
@@ -347,13 +341,15 @@ async fn test_native_chat_access() {
         }
 
         let (config1, _config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
 
         // Create first client
-        let client = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
         // Check authorization
         let is_authorized = client
             .is_authorized()
@@ -409,13 +405,15 @@ async fn test_native_message_access() {
         }
 
         let (config1, _config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
 
         // Create first client
-        let client = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Check authorization
         let is_authorized = client
@@ -426,38 +424,46 @@ async fn test_native_message_access() {
         if !is_authorized {
             panic!("Client is not authorized");
         }
-
+        println!("Client is authorized");
         // Get first dialog
-        let mut dialogs = client
-            .iter_dialogs()
-            .await
-            .expect("Failed to get dialogs stream");
+        let first_dialog = {
+            let mut dialogs = client
+                .iter_dialogs()
+                .await
+                .expect("Failed to get dialogs stream");
 
-        let first_dialog = match dialogs.next().await {
-            Some(Ok(dialog)) => dialog,
-            Some(Err(e)) => {
-                panic!("Failed to get first dialog: {}", e);
-            }
-            None => {
-                panic!("No dialogs found");
+            match dialogs.next().await {
+                Some(Ok(dialog)) => dialog,
+                Some(Err(e)) => {
+                    panic!("Failed to get first dialog: {}", e);
+                }
+                None => {
+                    panic!("No dialogs found");
+                }
             }
         };
+        dbg!("First dialog: {}", &first_dialog);
+        // Drop dialogs stream to release the mutex lock held by the spawned task
+        // drop(dialogs);
 
         // Get first message
-        let mut messages = client
-            .iter_messages(&first_dialog.external_id)
-            .await
-            .expect("Failed to get messages stream");
+        let first_message = {
+            let mut messages = client
+                .iter_messages(&first_dialog.external_id)
+                .await
+                .expect("Failed to get messages stream");
 
-        let first_message = match messages.next().await {
-            Some(Ok(message)) => message,
-            Some(Err(e)) => {
-                panic!("Failed to get first message: {}", e);
-            }
-            None => {
-                panic!("No messages found in dialog");
+            match messages.next().await {
+                Some(Ok(message)) => message,
+                Some(Err(e)) => {
+                    panic!("Failed to get first message: {}", e);
+                }
+                None => {
+                    panic!("No messages found in dialog");
+                }
             }
         };
+        dbg!("First message: {}", &first_message);
 
         // Get native message payload
         // Note: message external_id format is "message_id" in our implementation
@@ -492,19 +498,23 @@ async fn test_send_edit_delete_messages_with_update_stream() {
         }
 
         let (config1, config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
-
         // Create first client
-        let client1 = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client1 = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Create second client
-        let client2 = builder
-            .build(config2.to_auth_config(), config2.to_session_config())
-            .await
-            .expect("Failed to create second client");
+        let client2 = TelegramClient::new(
+            config2.api_id as i32,
+            config2.api_hash.clone(),
+            config2.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create second client");
 
         // Check authorization
         let is_authorized1 = client1
@@ -726,13 +736,15 @@ async fn test_get_messages_count() {
         }
 
         let (config1, _config2) = configs.unwrap();
-        let builder = TelegramClientBuilder::new();
 
         // Create first client
-        let client = builder
-            .build(config1.to_auth_config(), config1.to_session_config())
-            .await
-            .expect("Failed to create first client");
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create first client");
 
         // Check authorization
         let is_authorized = client

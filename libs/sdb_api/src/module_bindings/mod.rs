@@ -6,6 +6,8 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+pub mod assign_task_reducer;
+pub mod cancel_task_reducer;
 pub mod chat_table;
 pub mod chat_type;
 pub mod chat_type_type;
@@ -14,20 +16,48 @@ pub mod client_kind_type;
 pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
+pub mod complete_task_reducer;
+pub mod create_qr_auth_task_reducer;
+pub mod create_task_reducer;
 pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
+pub mod display_message_output_type;
+pub mod display_message_type;
+pub mod generate_qr_code_output_type;
+pub mod generate_qr_code_type;
+pub mod human_table;
+pub mod human_type;
 pub mod identity_disconnected_reducer;
+pub mod login_token_type;
 pub mod mark_message_deleted_reducer;
+pub mod message_severity_type;
 pub mod message_table;
 pub mod message_type;
+pub mod password_token_type;
+pub mod qr_token_type;
+pub mod receive_login_code_output_type;
+pub mod receive_login_code_type;
+pub mod receive_password_output_type;
+pub mod receive_password_type;
 pub mod robot_table;
 pub mod robot_type;
+pub mod send_login_code_output_type;
+pub mod send_login_code_type;
+pub mod sign_in_success_type;
+pub mod task_payload_type;
+pub mod task_status_type;
+pub mod task_table;
+pub mod task_type;
+pub mod update_task_reducer;
 pub mod upsert_chat_reducer;
-pub mod upsert_client_reducer;
 pub mod upsert_message_reducer;
-pub mod user_table;
-pub mod user_type;
+pub mod verify_login_code_output_type;
+pub mod verify_login_code_type;
+pub mod verify_password_output_type;
+pub mod verify_password_type;
 
+pub use assign_task_reducer::{AssignTaskCallbackId, assign_task, set_flags_for_assign_task};
+pub use cancel_task_reducer::{CancelTaskCallbackId, cancel_task, set_flags_for_cancel_task};
 pub use chat_table::*;
 pub use chat_type::Chat;
 pub use chat_type_type::ChatType;
@@ -38,29 +68,57 @@ pub use client_kind_type::ClientKind;
 pub use client_status_type::ClientStatus;
 pub use client_table::*;
 pub use client_type::Client;
+pub use complete_task_reducer::{
+    CompleteTaskCallbackId, complete_task, set_flags_for_complete_task,
+};
+pub use create_qr_auth_task_reducer::{
+    CreateQrAuthTaskCallbackId, create_qr_auth_task, set_flags_for_create_qr_auth_task,
+};
+pub use create_task_reducer::{CreateTaskCallbackId, create_task, set_flags_for_create_task};
 pub use delete_chat_reducer::{DeleteChatCallbackId, delete_chat, set_flags_for_delete_chat};
 pub use delete_client_reducer::{
     DeleteClientCallbackId, delete_client, set_flags_for_delete_client,
 };
+pub use display_message_output_type::DisplayMessageOutput;
+pub use display_message_type::DisplayMessage;
+pub use generate_qr_code_output_type::GenerateQrCodeOutput;
+pub use generate_qr_code_type::GenerateQrCode;
+pub use human_table::*;
+pub use human_type::Human;
 pub use identity_disconnected_reducer::{
     IdentityDisconnectedCallbackId, identity_disconnected, set_flags_for_identity_disconnected,
 };
+pub use login_token_type::LoginToken;
 pub use mark_message_deleted_reducer::{
     MarkMessageDeletedCallbackId, mark_message_deleted, set_flags_for_mark_message_deleted,
 };
+pub use message_severity_type::MessageSeverity;
 pub use message_table::*;
 pub use message_type::Message;
+pub use password_token_type::PasswordToken;
+pub use qr_token_type::QrToken;
+pub use receive_login_code_output_type::ReceiveLoginCodeOutput;
+pub use receive_login_code_type::ReceiveLoginCode;
+pub use receive_password_output_type::ReceivePasswordOutput;
+pub use receive_password_type::ReceivePassword;
 pub use robot_table::*;
 pub use robot_type::Robot;
+pub use send_login_code_output_type::SendLoginCodeOutput;
+pub use send_login_code_type::SendLoginCode;
+pub use sign_in_success_type::SignInSuccess;
+pub use task_payload_type::TaskPayload;
+pub use task_status_type::TaskStatus;
+pub use task_table::*;
+pub use task_type::Task;
+pub use update_task_reducer::{UpdateTaskCallbackId, set_flags_for_update_task, update_task};
 pub use upsert_chat_reducer::{UpsertChatCallbackId, set_flags_for_upsert_chat, upsert_chat};
-pub use upsert_client_reducer::{
-    UpsertClientCallbackId, set_flags_for_upsert_client, upsert_client,
-};
 pub use upsert_message_reducer::{
     UpsertMessageCallbackId, set_flags_for_upsert_message, upsert_message,
 };
-pub use user_table::*;
-pub use user_type::User;
+pub use verify_login_code_output_type::VerifyLoginCodeOutput;
+pub use verify_login_code_type::VerifyLoginCode;
+pub use verify_password_output_type::VerifyPasswordOutput;
+pub use verify_password_type::VerifyPassword;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -70,14 +128,44 @@ pub use user_type::User;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
+    AssignTask {
+        task_id: String,
+    },
+    CancelTask {
+        task_id: String,
+    },
     ClientConnected,
-    DeleteChat { chat_id: String },
-    DeleteClient { client_id: u64 },
+    CompleteTask {
+        task_id: String,
+        payload: TaskPayload,
+    },
+    CreateQrAuthTask {
+        task_id: String,
+    },
+    CreateTask {
+        id: String,
+        payload: TaskPayload,
+    },
+    DeleteChat {
+        chat_id: String,
+    },
+    DeleteClient {
+        client_id: u64,
+    },
     IdentityDisconnected,
-    MarkMessageDeleted { external_message_id: String },
-    UpsertChat { chat: Chat },
-    UpsertClient { client: Client },
-    UpsertMessage { message: Message },
+    MarkMessageDeleted {
+        external_message_id: String,
+    },
+    UpdateTask {
+        task_id: String,
+        payload: TaskPayload,
+    },
+    UpsertChat {
+        chat: Chat,
+    },
+    UpsertMessage {
+        message: Message,
+    },
 }
 
 impl __sdk::InModule for Reducer {
@@ -87,13 +175,18 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
+            Reducer::AssignTask { .. } => "assign_task",
+            Reducer::CancelTask { .. } => "cancel_task",
             Reducer::ClientConnected => "client_connected",
+            Reducer::CompleteTask { .. } => "complete_task",
+            Reducer::CreateQrAuthTask { .. } => "create_qr_auth_task",
+            Reducer::CreateTask { .. } => "create_task",
             Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
             Reducer::IdentityDisconnected => "identity_disconnected",
             Reducer::MarkMessageDeleted { .. } => "mark_message_deleted",
+            Reducer::UpdateTask { .. } => "update_task",
             Reducer::UpsertChat { .. } => "upsert_chat",
-            Reducer::UpsertClient { .. } => "upsert_client",
             Reducer::UpsertMessage { .. } => "upsert_message",
             _ => unreachable!(),
         }
@@ -103,10 +196,39 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
     type Error = __sdk::Error;
     fn try_from(value: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> __sdk::Result<Self> {
         match &value.reducer_name[..] {
+            "assign_task" => Ok(
+                __sdk::parse_reducer_args::<assign_task_reducer::AssignTaskArgs>(
+                    "assign_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
+            "cancel_task" => Ok(
+                __sdk::parse_reducer_args::<cancel_task_reducer::CancelTaskArgs>(
+                    "cancel_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "client_connected" => Ok(__sdk::parse_reducer_args::<
                 client_connected_reducer::ClientConnectedArgs,
             >("client_connected", &value.args)?
             .into()),
+            "complete_task" => Ok(__sdk::parse_reducer_args::<
+                complete_task_reducer::CompleteTaskArgs,
+            >("complete_task", &value.args)?
+            .into()),
+            "create_qr_auth_task" => Ok(__sdk::parse_reducer_args::<
+                create_qr_auth_task_reducer::CreateQrAuthTaskArgs,
+            >("create_qr_auth_task", &value.args)?
+            .into()),
+            "create_task" => Ok(
+                __sdk::parse_reducer_args::<create_task_reducer::CreateTaskArgs>(
+                    "create_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "delete_chat" => Ok(
                 __sdk::parse_reducer_args::<delete_chat_reducer::DeleteChatArgs>(
                     "delete_chat",
@@ -126,6 +248,13 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 mark_message_deleted_reducer::MarkMessageDeletedArgs,
             >("mark_message_deleted", &value.args)?
             .into()),
+            "update_task" => Ok(
+                __sdk::parse_reducer_args::<update_task_reducer::UpdateTaskArgs>(
+                    "update_task",
+                    &value.args,
+                )?
+                .into(),
+            ),
             "upsert_chat" => Ok(
                 __sdk::parse_reducer_args::<upsert_chat_reducer::UpsertChatArgs>(
                     "upsert_chat",
@@ -133,10 +262,6 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 )?
                 .into(),
             ),
-            "upsert_client" => Ok(__sdk::parse_reducer_args::<
-                upsert_client_reducer::UpsertClientArgs,
-            >("upsert_client", &value.args)?
-            .into()),
             "upsert_message" => Ok(__sdk::parse_reducer_args::<
                 upsert_message_reducer::UpsertMessageArgs,
             >("upsert_message", &value.args)?
@@ -157,9 +282,10 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
 pub struct DbUpdate {
     chat: __sdk::TableUpdate<Chat>,
     client: __sdk::TableUpdate<Client>,
+    human: __sdk::TableUpdate<Human>,
     message: __sdk::TableUpdate<Message>,
     robot: __sdk::TableUpdate<Robot>,
-    user: __sdk::TableUpdate<User>,
+    task: __sdk::TableUpdate<Task>,
 }
 
 impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
@@ -174,15 +300,18 @@ impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
                 "client" => db_update
                     .client
                     .append(client_table::parse_table_update(table_update)?),
+                "human" => db_update
+                    .human
+                    .append(human_table::parse_table_update(table_update)?),
                 "message" => db_update
                     .message
                     .append(message_table::parse_table_update(table_update)?),
                 "robot" => db_update
                     .robot
                     .append(robot_table::parse_table_update(table_update)?),
-                "user" => db_update
-                    .user
-                    .append(user_table::parse_table_update(table_update)?),
+                "task" => db_update
+                    .task
+                    .append(task_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -215,14 +344,17 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.client = cache
             .apply_diff_to_table::<Client>("client", &self.client)
             .with_updates_by_pk(|row| &row.id);
+        diff.human = cache
+            .apply_diff_to_table::<Human>("human", &self.human)
+            .with_updates_by_pk(|row| &row.id);
         diff.message = cache
             .apply_diff_to_table::<Message>("message", &self.message)
             .with_updates_by_pk(|row| &row.id);
         diff.robot = cache
             .apply_diff_to_table::<Robot>("robot", &self.robot)
             .with_updates_by_pk(|row| &row.id);
-        diff.user = cache
-            .apply_diff_to_table::<User>("user", &self.user)
+        diff.task = cache
+            .apply_diff_to_table::<Task>("task", &self.task)
             .with_updates_by_pk(|row| &row.id);
 
         diff
@@ -235,9 +367,10 @@ impl __sdk::DbUpdate for DbUpdate {
 pub struct AppliedDiff<'r> {
     chat: __sdk::TableAppliedDiff<'r, Chat>,
     client: __sdk::TableAppliedDiff<'r, Client>,
+    human: __sdk::TableAppliedDiff<'r, Human>,
     message: __sdk::TableAppliedDiff<'r, Message>,
     robot: __sdk::TableAppliedDiff<'r, Robot>,
-    user: __sdk::TableAppliedDiff<'r, User>,
+    task: __sdk::TableAppliedDiff<'r, Task>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -253,9 +386,10 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     ) {
         callbacks.invoke_table_row_callbacks::<Chat>("chat", &self.chat, event);
         callbacks.invoke_table_row_callbacks::<Client>("client", &self.client, event);
+        callbacks.invoke_table_row_callbacks::<Human>("human", &self.human, event);
         callbacks.invoke_table_row_callbacks::<Message>("message", &self.message, event);
         callbacks.invoke_table_row_callbacks::<Robot>("robot", &self.robot, event);
-        callbacks.invoke_table_row_callbacks::<User>("user", &self.user, event);
+        callbacks.invoke_table_row_callbacks::<Task>("task", &self.task, event);
     }
 }
 
@@ -977,8 +1111,9 @@ impl __sdk::SpacetimeModule for RemoteModule {
     fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
         chat_table::register_table(client_cache);
         client_table::register_table(client_cache);
+        human_table::register_table(client_cache);
         message_table::register_table(client_cache);
         robot_table::register_table(client_cache);
-        user_table::register_table(client_cache);
+        task_table::register_table(client_cache);
     }
 }

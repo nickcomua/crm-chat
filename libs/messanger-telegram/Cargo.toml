@@ -6,6 +6,7 @@ description = "Telegram messenger client implementation for messanger-interface"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+async-stream = "0.3"
 async-trait = "0.1"
 base64 = "0.22"
 futures = "0.3"
@@ -22,6 +23,7 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

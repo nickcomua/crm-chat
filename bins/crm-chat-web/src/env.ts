@@ -15,10 +15,12 @@ const getRuntimeEnv = () => {
 export const env = createEnv({
   clientPrefix: "VITE_",
   client: {
-    VITE_CLERK_PUBLISHABLE_KEY: z.string().min(1),
-    VITE_SPACETIMEDB_HOST: z.url(),
+    VITE_CLERK_PUBLISHABLE_KEY: z.string().optional(),
+    VITE_SPACETIMEDB_HOST: z.string().url(),
     VITE_SPACETIMEDB_MODULE: z.string().min(1),
     VITE_ES_PROXY_URL: z.string().url().default("http://localhost:3001"),
+    VITE_SENTRY_DSN: z.string().url().optional(),
+    VITE_SENTRY_ENVIRONMENT: z.string().optional(),
   },
   runtimeEnv: getRuntimeEnv(),
   emptyStringAsUndefined: true,

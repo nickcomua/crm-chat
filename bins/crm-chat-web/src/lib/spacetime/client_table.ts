@@ -24,5 +24,4 @@ export default __t.row({
   get status() {
     return ClientStatus;
   },
-  session: __t.string(),
 });
