@@ -1,4 +1,4 @@
-import { useAuth, RedirectToSignIn } from "@clerk/clerk-react";
+import { RedirectToSignIn, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
@@ -87,7 +87,7 @@ function AuthLayout(): React.ReactNode {
       }
     };
 
-    const onConnectError = async (_ctx: ErrorContext, err: Error | Event) => {
+    const onConnectError = (_ctx: ErrorContext, err: Error | Event): void => {
       console.error("Error connecting to SpacetimeDB:", err);
 
       if (err instanceof Event) {
@@ -95,7 +95,7 @@ function AuthLayout(): React.ReactNode {
       }
 
       retryCountRef.current += 1;
-      
+
       if (retryCountRef.current < maxRetries && !cancelled) {
         // Retry connection
         setTimeout(() => {

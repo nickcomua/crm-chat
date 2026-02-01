@@ -11,7 +11,10 @@
     "gen": "spacetime generate --lang typescript --out-dir ./src/lib/spacetime --project-path ../sdb_server",
     "gen:api": "openapi-typescript http://localhost:3001/openapi.json -o ./src/lib/api/schema.d.ts",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.59.2",
@@ -37,6 +40,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.3.12",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.58.1",
     "@tailwindcss/vite": "^4.1.8",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
