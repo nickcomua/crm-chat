@@ -11,12 +11,7 @@ import {
 } from "spacetimedb";
 
 // The tagged union or sum type for the algebraic type `ClientStatus`.
-const ClientStatus = __t.enum("ClientStatus", {SendingLoginCode: __t.string(),
-  ReceivingLoginCode: __t.string(),
-  VerifyingLoginCode: __t.string(),
-  ReceivingPassword: __t.string(),
-  VerifyingPassword: __t.string(),
-  GeneratingQrCode: __t.string(),
+const ClientStatus = __t.enum("ClientStatus", {Authenticating: __t.unit(),
   Connected: __t.unit(),
   Error: __t.string(),
 });
