@@ -1,7 +1,7 @@
 //! Telegram subscriber service for CRM Chat.
 //!
-//! This service subscribes to SpacetimeDB task events and processes robot tasks
-//! for Telegram client authentication.
+//! This service subscribes to SpacetimeDB phone_auth and qr_auth events and
+//! processes robot tasks for Telegram client authentication.
 
 mod config;
 mod error;
@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use config::{get_session_dir, TelegramConfig};
 use sdb_api::module_bindings::{
-    DbConnection, ErrorContext, SubscriptionEventContext, Task, TaskTableAccess,
+    DbConnection, ErrorContext, PhoneAuth, PhoneAuthStep, PhoneAuthTableAccess, QrAuth, QrAuthStep,
+    QrAuthTableAccess, SubscriptionEventContext,
 };
 use spacetimedb_sdk::{DbContext, Error, Table, TableWithPrimaryKey};
 use tokio::sync::mpsc;
@@ -21,33 +22,41 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use crate::task::{execute_task, is_robot_task, pick_task, TaskExecutionContext};
+use crate::task::{
+    claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth, TaskExecutionContext,
+};
 
-/// Events from the task table.
+/// Events from the phone_auth and qr_auth tables.
 #[derive(Debug, Clone)]
-pub enum TaskEvent {
-    Insert(Task),
-    Update { old: Task, new: Task },
-}
-
-impl TaskEvent {
-    pub fn task(&self) -> &Task {
-        match self {
-            TaskEvent::Insert(t) => t,
-            TaskEvent::Update { new, .. } => new,
-        }
-    }
+pub enum AuthEvent {
+    PhoneAuthInsert(PhoneAuth),
+    PhoneAuthUpdate { old: PhoneAuth, new: PhoneAuth },
+    QrAuthInsert(QrAuth),
+    QrAuthUpdate { old: QrAuth, new: QrAuth },
 }
 
 fn on_sub_applied(ctx: &SubscriptionEventContext) {
-    let tasks: Vec<_> = ctx.db.task().iter().collect();
-    info!(task_count = tasks.len(), "Subscription applied");
-    for task in &tasks {
+    let phone_auths: Vec<_> = ctx.db.phone_auth().iter().collect();
+    let qr_auths: Vec<_> = ctx.db.qr_auth().iter().collect();
+    info!(
+        phone_auth_count = phone_auths.len(),
+        qr_auth_count = qr_auths.len(),
+        "Subscription applied"
+    );
+    for auth in &phone_auths {
         debug!(
-            task_id = %task.id,
-            status = ?task.status,
-            payload_type = ?std::mem::discriminant(&task.payload),
-            "Found existing task"
+            auth_id = auth.id,
+            step = ?auth.step,
+            assigned_robot = ?auth.assigned_robot,
+            "Found existing phone auth"
+        );
+    }
+    for auth in &qr_auths {
+        debug!(
+            auth_id = auth.id,
+            step = ?auth.step,
+            assigned_robot = ?auth.assigned_robot,
+            "Found existing QR auth"
         );
     }
 }
@@ -98,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(identity = %my_identity, "Robot identity loaded from DIRTY_IDENTITY");
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<TaskEvent>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<AuthEvent>();
     let token = env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set");
     let conn = DbConnection::builder()
         .with_module_name(
@@ -111,31 +120,51 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Connected to SpacetimeDB");
 
-    // Set up callbacks for task table events
-    let tx_insert = tx.clone();
-    conn.db.task().on_insert(move |_ctx, row| {
-        debug!(task_id = %row.id, "Task inserted");
-        if let Err(e) = tx_insert.send(TaskEvent::Insert(row.clone())) {
-            error!(error = %e, "Failed to send task insert event");
+    // Set up callbacks for phone_auth table events
+    let tx_pa_insert = tx.clone();
+    conn.db.phone_auth().on_insert(move |_ctx, row| {
+        debug!(auth_id = row.id, step = ?row.step, "PhoneAuth inserted");
+        if let Err(e) = tx_pa_insert.send(AuthEvent::PhoneAuthInsert(row.clone())) {
+            error!(error = %e, "Failed to send phone auth insert event");
         }
     });
 
-    let tx_update = tx.clone();
-    conn.db.task().on_update(move |_ctx, old, new| {
-        debug!(task_id = %new.id, old_status = ?old.status, new_status = ?new.status, "Task updated");
-        if let Err(e) = tx_update.send(TaskEvent::Update {
+    let tx_pa_update = tx.clone();
+    conn.db.phone_auth().on_update(move |_ctx, old, new| {
+        debug!(auth_id = new.id, old_step = ?old.step, new_step = ?new.step, "PhoneAuth updated");
+        if let Err(e) = tx_pa_update.send(AuthEvent::PhoneAuthUpdate {
             old: old.clone(),
             new: new.clone(),
         }) {
-            error!(error = %e, "Failed to send task update event");
+            error!(error = %e, "Failed to send phone auth update event");
         }
     });
 
-    // Subscribe to tasks
+    // Set up callbacks for qr_auth table events
+    let tx_qr_insert = tx.clone();
+    conn.db.qr_auth().on_insert(move |_ctx, row| {
+        debug!(auth_id = row.id, step = ?row.step, "QrAuth inserted");
+        if let Err(e) = tx_qr_insert.send(AuthEvent::QrAuthInsert(row.clone())) {
+            error!(error = %e, "Failed to send QR auth insert event");
+        }
+    });
+
+    let tx_qr_update = tx.clone();
+    conn.db.qr_auth().on_update(move |_ctx, old, new| {
+        debug!(auth_id = new.id, old_step = ?old.step, new_step = ?new.step, "QrAuth updated");
+        if let Err(e) = tx_qr_update.send(AuthEvent::QrAuthUpdate {
+            old: old.clone(),
+            new: new.clone(),
+        }) {
+            error!(error = %e, "Failed to send QR auth update event");
+        }
+    });
+
+    // Subscribe to auth tables
     conn.subscription_builder()
         .on_applied(on_sub_applied)
         .on_error(on_sub_error)
-        .subscribe(["SELECT * FROM task"]);
+        .subscribe(["SELECT * FROM phone_auth", "SELECT * FROM qr_auth"]);
 
     info!(session_dir = ?get_session_dir(), "Session files stored in");
 
@@ -163,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             Some(event) = rx.recv() => {
-                process_task_event(&ctx, event).await;
+                process_auth_event(&ctx, event).await;
             }
             _ = tokio::signal::ctrl_c() => {
                 info!("Shutting down...");
@@ -175,70 +204,123 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Process a task event (insert or update).
-async fn process_task_event(ctx: &TaskExecutionContext, event: TaskEvent) {
-    let task = event.task();
+/// Process an auth event (insert or update on phone_auth/qr_auth tables).
+async fn process_auth_event(ctx: &TaskExecutionContext, event: AuthEvent) {
+    match event {
+        AuthEvent::PhoneAuthInsert(auth) => {
+            process_phone_auth(ctx, None, &auth).await;
+        }
+        AuthEvent::PhoneAuthUpdate { old, new } => {
+            process_phone_auth(ctx, Some(&old), &new).await;
+        }
+        AuthEvent::QrAuthInsert(auth) => {
+            process_qr_auth(ctx, None, &auth).await;
+        }
+        AuthEvent::QrAuthUpdate { old, new } => {
+            process_qr_auth(ctx, Some(&old), &new).await;
+        }
+    }
+}
 
-    // Skip non-robot tasks entirely
-    if !is_robot_task(&task.payload) {
+/// Process a phone_auth row change.
+///
+/// For inserts (including initial subscription), `old` is None.
+/// For updates, `old` is the previous state.
+async fn process_phone_auth(ctx: &TaskExecutionContext, old: Option<&PhoneAuth>, new: &PhoneAuth) {
+    let is_mine = new.assigned_robot.as_ref() == Some(&ctx.my_identity);
+
+    // Unclaimed SendingCode → try to claim
+    if new.step == PhoneAuthStep::SendingCode && new.assigned_robot.is_none() {
+        debug!(auth_id = new.id, "Attempting to claim phone auth");
+        if let Err(e) = claim_phone_auth(&ctx.conn, new.id) {
+            warn!(auth_id = new.id, error = %e, "Failed to claim phone auth");
+        }
         return;
     }
 
-    match &task.status {
-        sdb_api::module_bindings::TaskStatus::Unassigned => {
-            // Try to pick (assign) the task
-            debug!(task_id = %task.id, "Attempting to pick unassigned task");
-            match pick_task(&ctx.conn, task, ctx.my_identity) {
-                Ok(true) => {
-                    info!(task_id = %task.id, "Successfully picked task");
-                    // Don't execute yet - wait for the update event with Assigned status
-                }
-                Ok(false) => {
-                    debug!(
-                        task_id = %task.id,
-                        "Task not picked (already assigned or not a robot task)"
-                    );
-                }
-                Err(e) => {
-                    warn!(task_id = %task.id, error = %e, "Failed to pick task");
-                }
-            }
-        }
-        sdb_api::module_bindings::TaskStatus::Assigned(robot_id)
-            if *robot_id == ctx.my_identity =>
-        {
-            // Only execute if this is a fresh assignment (transition from Unassigned)
-            // Skip if this is just an update to an already-assigned task (e.g., QR token update)
-            let should_execute = match &event {
-                TaskEvent::Insert(_) => true,
-                TaskEvent::Update { old, .. } => {
-                    matches!(old.status, sdb_api::module_bindings::TaskStatus::Unassigned)
-                }
-            };
+    // Only process further if assigned to us
+    if !is_mine {
+        return;
+    }
 
-            if should_execute {
-                info!(task_id = %task.id, "Executing newly assigned task");
-                if let Err(e) = execute_task(ctx, task).await {
-                    error!(task_id = %task.id, error = %e, "Failed to execute task");
-                }
-            } else {
-                debug!(task_id = %task.id, "Skipping execution - task already being processed");
-            }
-        }
-        sdb_api::module_bindings::TaskStatus::Assigned(_) => {
-            // Task is assigned to another robot - ignore
-            debug!(task_id = %task.id, "Task assigned to another robot, ignoring");
-        }
-        sdb_api::module_bindings::TaskStatus::Done => {
-            // Task is done - cancel any active QR polling for this task
-            debug!(task_id = %task.id, "Task is done");
+    // Check if this event represents a state change we should act on
+    let is_actionable = match old {
+        None => true, // Insert (or initial subscription) → always process
+        Some(old) => old.step != new.step || old.assigned_robot != new.assigned_robot,
+    };
 
-            // Check if this task has an active QR polling loop and cancel it
-            let mut polling_tasks = ctx.qr_polling_tasks.lock().await;
-            if let Some(handle) = polling_tasks.remove(&task.id) {
-                info!(task_id = %task.id, "Cancelling QR polling for completed/cancelled task");
-                handle.cancel.cancel();
+    if !is_actionable {
+        return;
+    }
+
+    // Dispatch based on current step (only robot-actionable steps)
+    match new.step {
+        PhoneAuthStep::SendingCode
+        | PhoneAuthStep::VerifyingCode
+        | PhoneAuthStep::VerifyingPassword => {
+            info!(auth_id = new.id, step = ?new.step, "Executing phone auth step");
+            if let Err(e) = execute_phone_auth(ctx, new).await {
+                error!(auth_id = new.id, error = %e, "Failed to execute phone auth step");
             }
+        }
+        _ => {
+            // WaitingCode, WaitingPassword, Connected, Failed, Cancelled → no robot action
+            debug!(auth_id = new.id, step = ?new.step, "No robot action for this step");
+        }
+    }
+}
+
+/// Process a qr_auth row change.
+///
+/// For inserts (including initial subscription), `old` is None.
+/// For updates, `old` is the previous state.
+async fn process_qr_auth(ctx: &TaskExecutionContext, old: Option<&QrAuth>, new: &QrAuth) {
+    let is_mine = new.assigned_robot.as_ref() == Some(&ctx.my_identity);
+    let is_terminal = matches!(
+        new.step,
+        QrAuthStep::Authorized
+            | QrAuthStep::AlreadyAuthorized
+            | QrAuthStep::Failed
+            | QrAuthStep::Cancelled
+    );
+
+    // Cancel QR polling on terminal states
+    if is_terminal {
+        ctx.cancel_qr_polling(new.id).await;
+        return;
+    }
+
+    // Unclaimed Pending → try to claim
+    if new.step == QrAuthStep::Pending && new.assigned_robot.is_none() {
+        debug!(auth_id = new.id, "Attempting to claim QR auth");
+        if let Err(e) = claim_qr_auth(&ctx.conn, new.id) {
+            warn!(auth_id = new.id, error = %e, "Failed to claim QR auth");
+        }
+        return;
+    }
+
+    if !is_mine {
+        return;
+    }
+
+    let is_actionable = match old {
+        None => true,
+        Some(old) => old.step != new.step || old.assigned_robot != new.assigned_robot,
+    };
+
+    if !is_actionable {
+        return;
+    }
+
+    match new.step {
+        QrAuthStep::Generating => {
+            info!(auth_id = new.id, "Executing QR auth");
+            if let Err(e) = execute_qr_auth(ctx, new).await {
+                error!(auth_id = new.id, error = %e, "Failed to execute QR auth");
+            }
+        }
+        _ => {
+            debug!(auth_id = new.id, step = ?new.step, "No robot action for this QR step");
         }
     }
 }

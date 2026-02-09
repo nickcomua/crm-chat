@@ -1,41 +1,19 @@
 import { AlertCircle, AlertTriangle, Info, X } from "lucide-react";
 import type { Infer } from "spacetimedb";
-import { useSpacetimeDB, useTable } from "spacetimedb/react";
+import { useReducer, useSpacetimeDB, useTable } from "spacetimedb/react";
 import {
-  type DbConnection,
-  type Task,
-  TaskPayload,
+  type MessageSeverity,
+  type Notification,
+  reducers,
   tables,
 } from "@/lib/spacetime";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 
-type TaskType = Infer<typeof Task>;
+type NotificationType = Infer<typeof Notification>;
+type SeverityTag = Infer<typeof MessageSeverity>["tag"];
 
-type DisplayMessagePayload = Extract<
-  Infer<typeof TaskPayload>,
-  { tag: "DisplayMessage" }
->["value"];
-
-function getDisplayMessageTasks(
-  tasks: readonly TaskType[]
-): Array<{ task: TaskType; message: DisplayMessagePayload }> {
-  const result: Array<{ task: TaskType; message: DisplayMessagePayload }> = [];
-  for (const task of tasks) {
-    if (task.payload.tag === "DisplayMessage") {
-      const message = task.payload.value;
-      // Only show pending messages
-      if (message.output.tag === "Pending") {
-        result.push({ task, message });
-      }
-    }
-  }
-  return result;
-}
-
-function getSeverityIcon(
-  severity: DisplayMessagePayload["severity"]["tag"]
-): React.ReactNode {
+function getSeverityIcon(severity: SeverityTag): React.ReactNode {
   switch (severity) {
     case "Error":
       return <AlertCircle className="h-5 w-5 text-destructive" />;
@@ -48,9 +26,7 @@ function getSeverityIcon(
   }
 }
 
-function getSeverityBorderColor(
-  severity: DisplayMessagePayload["severity"]["tag"]
-): string {
+function getSeverityBorderColor(severity: SeverityTag): string {
   switch (severity) {
     case "Error":
       return "border-l-destructive";
@@ -64,33 +40,13 @@ function getSeverityBorderColor(
 }
 
 export function NotificationsPanel(): React.ReactNode {
-  const { getConnection, isActive } = useSpacetimeDB();
-  const conn = getConnection<DbConnection>();
-  const [tasks] = useTable(tables.task);
+  const { isActive } = useSpacetimeDB();
+  const [notifications] = useTable(tables.notification);
+  const dismissNotification = useReducer(reducers.dismissNotification);
 
-  const notifications = getDisplayMessageTasks(tasks);
-
-  if (import.meta.env.DEV) {
-    console.log({ notificationsTasks: tasks, notifications });
-  }
-
-  const handleDismiss = (
-    taskId: string,
-    message: DisplayMessagePayload
-  ): void => {
-    if (!conn) {
-      return;
-    }
-    // Complete the task with Dismissed output
-    conn.reducers.completeTask({
-      taskId,
-      payload: TaskPayload.DisplayMessage({
-        severity: message.severity,
-        message: message.message,
-        output: { tag: "Dismissed" },
-      }),
-    });
-  };
+  const pendingNotifications = notifications.filter(
+    (n: NotificationType) => !n.dismissed
+  );
 
   if (!isActive) {
     return (
@@ -102,27 +58,29 @@ export function NotificationsPanel(): React.ReactNode {
 
   return (
     <div className="space-y-2 p-4">
-      {notifications.length === 0 ? (
+      {pendingNotifications.length === 0 ? (
         <p className="text-muted-foreground text-xs">No notifications</p>
       ) : (
         <div className="space-y-2">
-          {notifications.map(({ task, message }) => (
+          {pendingNotifications.map((notification: NotificationType) => (
             <div
               className={cn(
                 "flex items-start gap-3 rounded-md border border-l-4 bg-card p-3",
-                getSeverityBorderColor(message.severity.tag)
+                getSeverityBorderColor(notification.severity.tag)
               )}
-              key={task.id}
+              key={notification.id.toString()}
             >
               <div className="flex-shrink-0 pt-0.5">
-                {getSeverityIcon(message.severity.tag)}
+                {getSeverityIcon(notification.severity.tag)}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm">{message.message}</p>
+                <p className="text-sm">{notification.message}</p>
               </div>
               <Button
                 className="h-6 w-6 flex-shrink-0 text-muted-foreground hover:text-foreground"
-                onClick={() => handleDismiss(task.id, message)}
+                onClick={() =>
+                  dismissNotification({ notificationId: notification.id })
+                }
                 size="icon"
                 variant="ghost"
               >

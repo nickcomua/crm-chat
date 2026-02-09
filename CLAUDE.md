@@ -58,13 +58,16 @@ This is a Rust/TypeScript monorepo with a SpacetimeDB backend and React frontend
 
 ### Backend (Rust)
 - **bins/sdb_server**: SpacetimeDB module defining the database schema, tables, and reducers
-  - Contains the core data model (User, Client, Chat, Message, Media, Board, QA, Note tables)
-  - Implements reducers for database operations (upsert_client, add_messages, client_connected, etc.)
+  - Contains the core data model (User, Client, Chat, Message, Media, Board, QA, Note, PhoneAuth, QrAuth, Notification tables)
+  - Auth is modeled as table-based state machines (`phone_auth.rs`, `qr_auth.rs`) rather than a task queue
   - See bins/sdb_server/README.md for the ER diagram and RLS (Row Level Security) overview
 - **bins/telegram-subscriber**: Service that subscribes to SpacetimeDB client events and spawns Telegram client connections
+- **bins/es-proxy**: Elasticsearch proxy for semantic search / embeddings
+- **bins/qr-login-test**: QR login testing utility
 - **libs/sdb_api**: Generated Rust bindings for the SpacetimeDB module (auto-generated, do not edit manually)
 - **libs/messanger-interface**: Platform-agnostic traits for messenger clients (MessengerClient, ChatSummary, MessageSummary, etc.)
 - **libs/messanger-telegram**: Telegram-specific implementation of the messenger interface using grammers
+- **libs/hack**: Shared utilities
 
 ### Frontend (TypeScript/React)
 - **bins/crm-chat-web**: React + Vite web application
@@ -187,30 +190,33 @@ The frontend follows Ultracite rules (see bins/crm-chat-web/.cursor/rules/ultrac
 
 The frontend uses SpacetimeDB React SDK:
 - Generated TypeScript bindings are in `bins/crm-chat-web/src/lib/spacetime/`
-- Use the `useSpacetime()` hook to access connection state
-- Tables are reactive and automatically update UI when data changes
-- Reducers are called to modify data (e.g., `upsert_client_reducer`, `add_messages_reducer`)
+- Use `useTable()` from `spacetimedb/react` for reactive table subscriptions
+- Use `useReducer()` from `spacetimedb/react` to call reducers
+- Import `tables` and `reducers` from `@/lib/spacetime`
 
 Example pattern:
 ```typescript
-import { useSpacetime } from "@/hooks/use-spacetime";
-import { Client } from "@/lib/spacetime";
+import { useReducer, useTable } from "spacetimedb/react";
+import { tables, reducers } from "@/lib/spacetime";
 
 function Component() {
-  const { connection, identity } = useSpacetime();
-  const clients = connection.db.client.getAll(); // Reactive query
+  const [clients] = useTable(tables.client);
+  const [chats] = useTable(tables.chat);
+  const deleteClient = useReducer(reducers.deleteClient);
 
   // Call a reducer
-  connection.reducers.upsertClient({ /* args */ });
+  deleteClient(clientId);
 }
 ```
 
-### Client Status Flow
+### Authentication & Client Status
 
-Clients have a status enum (WaitingPhone, WaitingCode, WaitingPassword, Connected):
-- Frontend displays appropriate UI based on client.status
-- telegram-subscriber watches for client inserts/updates and manages authentication
-- Session data is stored in client.session field
+Client status is `Authenticating | Connected | Error(String)`. Detailed auth state lives in separate tables:
+- **PhoneAuth**: State machine with steps `SendingCode → WaitingCode → VerifyingCode → WaitingPassword → VerifyingPassword → Connected/Failed/Cancelled`
+- **QrAuth**: QR-code-based login flow with its own step progression
+- **Notification**: Replaces the old DisplayMessage task; used for user-facing messages with severity (Info/Warning/Error)
+
+telegram-subscriber watches for PhoneAuth/QrAuth inserts and drives the authentication flow via `robot_*` reducers.
 
 ### Generated Code
 
@@ -221,8 +227,12 @@ These files are auto-generated and should not be manually edited:
 ### Environment Variables
 
 See `.env.example` for required environment variables:
+- `VITE_SPACETIMEDB_MODULE`, `VITE_SPACETIMEDB_HOST`: SpacetimeDB connection
+- `VITE_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`: Clerk authentication
 - `TG_ID`, `TG_HASH`: Telegram API credentials
-- `SURREAL_*`: SurrealDB connection (legacy, may be removed)
+- `OPENROUTER_API_KEY`: OpenRouter for embeddings
+- `ES_*`: Elasticsearch configuration (optional)
+- `SENTRY_URL`: Sentry error tracking (optional)
 
 Frontend env vars are validated with `@t3-oss/env-core` and Zod in `bins/crm-chat-web/src/env.ts`.
 

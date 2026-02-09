@@ -3015,7 +3015,6 @@ dependencies = [
  "serde",
  "serde_json",
  "spacetimedb",
- "uuid",
 ]
 
 [[package]]

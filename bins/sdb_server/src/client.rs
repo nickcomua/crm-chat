@@ -1,8 +1,9 @@
 //! Client table and reducers for messenger connections.
 
-use spacetimedb::{reducer, Identity, ReducerContext, Table};
+use spacetimedb::{reducer, Identity, ReducerContext};
 
-use crate::{TaskId, cancel_task, robot::robot, task::task};
+use crate::phone_auth::phone_auth;
+use crate::PhoneAuthStep;
 
 // === Client Kind ===
 
@@ -15,12 +16,7 @@ pub enum ClientKind {
 
 #[derive(Clone, Debug, spacetimedb::SpacetimeType)]
 pub enum ClientStatus {
-    SendingLoginCode(TaskId),
-    ReceivingLoginCode(TaskId),
-    VerifyingLoginCode(TaskId),
-    ReceivingPassword(TaskId),
-    VerifyingPassword(TaskId),
-    GeneratingQrCode(TaskId),
+    Authenticating,
     Connected,
     Error(String),
 }
@@ -43,29 +39,36 @@ pub struct Client {
 
 #[reducer]
 pub fn delete_client(ctx: &ReducerContext, client_id: u64) -> Result<(), String> {
-    let client = ctx.db.client().id().find(client_id);
-    if client.is_none() {
-        return Err("client not found".to_string());
-    }
-    let client = client.unwrap();
+    let client = ctx
+        .db
+        .client()
+        .id()
+        .find(client_id)
+        .ok_or("client not found")?;
 
     if client.owner_user_id != ctx.sender {
         return Err("client not owned by this user".to_string());
     }
 
-    let task_id = match client.status {
-        ClientStatus::SendingLoginCode(task_id) => Some(task_id),
-        ClientStatus::ReceivingLoginCode(task_id) => Some(task_id),
-        ClientStatus::VerifyingLoginCode(task_id) => Some(task_id),
-        ClientStatus::ReceivingPassword(task_id) => Some(task_id),
-        ClientStatus::VerifyingPassword(task_id) => Some(task_id),
-        ClientStatus::GeneratingQrCode(task_id) => Some(task_id),
-        ClientStatus::Connected => None,
-        ClientStatus::Error(_) => None,
-    };
-    if let Some(task_id) = task_id {
-        ctx.db.task().id().delete(task_id);
+    // Cancel any active phone auth sessions for this client
+    let phone_auths: Vec<_> = ctx
+        .db
+        .phone_auth()
+        .owner_user_id()
+        .filter(&ctx.sender)
+        .filter(|auth| auth.client_id == client_id && !auth.step.is_terminal())
+        .collect();
+    for auth in phone_auths {
+        ctx.db.phone_auth().id().update(crate::PhoneAuth {
+            step: PhoneAuthStep::Cancelled,
+            updated_at: ctx.timestamp,
+            ..auth
+        });
     }
+
+    // Cancel any active QR auth sessions owned by this user that aren't terminal
+    // (QR auths don't have a client_id since client is created on success)
+    // We don't cancel QR auths here since they're not tied to a specific client
 
     ctx.db.client().id().delete(client_id);
     Ok(())

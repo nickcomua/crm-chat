@@ -1,31 +1,15 @@
 import { Bell, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useState } from "react";
-import type { Infer } from "spacetimedb";
 import { useTable } from "spacetimedb/react";
-import { type Task, tables } from "@/lib/spacetime";
+import { tables } from "@/lib/spacetime";
 import { NotificationsPanel } from "./notifications-panel";
 import { Button } from "./ui/button";
 
-type TaskType = Infer<typeof Task>;
-
-function countPendingNotifications(tasks: readonly TaskType[]): number {
-  let count = 0;
-  for (const task of tasks) {
-    if (
-      task.payload.tag === "DisplayMessage" &&
-      task.payload.value.output.tag === "Pending"
-    ) {
-      count++;
-    }
-  }
-  return count;
-}
-
 export function RightSidebar(): React.ReactNode {
   const [isOpen, setIsOpen] = useState(true);
-  const [tasks] = useTable(tables.task);
+  const [notifications] = useTable(tables.notification);
 
-  const pendingCount = countPendingNotifications(tasks);
+  const pendingCount = notifications.filter((n) => !n.dismissed).length;
 
   return (
     <>
@@ -53,13 +37,15 @@ export function RightSidebar(): React.ReactNode {
 
       {/* Expanded state - full sidebar */}
       {isOpen && (
-        <div className="flex h-full w-80 flex-col border-l bg-background">
+        <div className="flex h-full w-80 flex-col border-l bg-card/50">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div className="flex items-center gap-2">
-              <Bell className="h-5 w-5 text-muted-foreground" />
-              <h2 className="font-semibold text-sm">Notifications</h2>
+              <Bell className="h-4 w-4 text-primary" />
+              <h2 className="font-display font-semibold text-sm">
+                Notifications
+              </h2>
               {pendingCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 font-medium text-destructive-foreground text-xs">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 font-medium text-primary-foreground text-xs">
                   {pendingCount}
                 </span>
               )}

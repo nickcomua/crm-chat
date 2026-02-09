@@ -1,6 +1,6 @@
-//! Task execution logic for robot tasks.
+//! Auth execution logic for robot tasks.
 //!
-//! This module contains the actual business logic for executing tasks
+//! This module contains the actual business logic for executing auth steps
 //! that have been assigned to this robot.
 
 mod generate_qr_code;
@@ -12,17 +12,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use messanger_telegram::TelegramClient;
-use sdb_api::module_bindings::{DbConnection, Task, TaskPayload, TaskStatus};
+use sdb_api::module_bindings::{DbConnection, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
 use spacetimedb_sdk::Identity;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{info, instrument, warn};
 
 use crate::config::TelegramConfig;
 use crate::error::TaskError;
 
 /// Key for identifying a Telegram client session.
-/// Uses (user_id, client_identifier) where client_identifier is phone number or task_id for QR.
+/// Uses (user_id, client_identifier) where client_identifier is phone number or auth_id for QR.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SessionKey {
     pub user_id: Identity,
@@ -39,8 +39,8 @@ pub struct TaskExecutionContext {
     pub config: TelegramConfig,
     /// Active Telegram client sessions keyed by (user_id, client_identifier)
     pub sessions: Arc<Mutex<HashMap<SessionKey, Arc<TelegramClient>>>>,
-    /// Active QR polling tasks keyed by task_id
-    pub qr_polling_tasks: Arc<Mutex<HashMap<String, QrPollingHandle>>>,
+    /// Active QR polling tasks keyed by qr_auth id
+    pub qr_polling_tasks: Arc<Mutex<HashMap<u64, QrPollingHandle>>>,
 }
 
 /// Handle for a running QR polling task.
@@ -52,7 +52,7 @@ impl TaskExecutionContext {
     /// Get or create a Telegram client for the given user and client identifier.
     ///
     /// For phone login, `client_id` should be the phone number.
-    /// For QR login, `client_id` should be the task_id (since we don't know the user_id yet).
+    /// For QR login, `client_id` should be the auth_id (since we don't know the user_id yet).
     #[instrument(skip(self), fields(user_id = %user_id, client_id = %client_id))]
     pub async fn get_or_create_client(
         &self,
@@ -67,7 +67,7 @@ impl TaskExecutionContext {
         let mut sessions = self.sessions.lock().await;
 
         if let Some(client) = sessions.get(&key) {
-            debug!("Reusing existing Telegram client");
+            tracing::debug!("Reusing existing Telegram client");
             return Ok(client.clone());
         }
 
@@ -82,7 +82,7 @@ impl TaskExecutionContext {
         )
         .await
         .map_err(|e| {
-            error!(error = %e, "Failed to build Telegram client");
+            tracing::error!(error = %e, "Failed to build Telegram client");
             TaskError::ClientBuildFailed(e.to_string())
         })?;
 
@@ -93,65 +93,44 @@ impl TaskExecutionContext {
         Ok(client)
     }
 
-    /// Remove a session from the cache.
-    pub async fn remove_session(&self, user_id: Identity, client_id: &str) {
-        let key = SessionKey {
-            user_id,
-            client_id: client_id.to_string(),
-        };
-        let mut sessions = self.sessions.lock().await;
-        sessions.remove(&key);
+    /// Cancel QR polling for the given auth_id.
+    pub async fn cancel_qr_polling(&self, auth_id: u64) {
+        let mut polling_tasks = self.qr_polling_tasks.lock().await;
+        if let Some(handle) = polling_tasks.remove(&auth_id) {
+            info!(auth_id = auth_id, "Cancelling QR polling");
+            handle.cancel.cancel();
+        }
     }
 }
 
-/// Execute an assigned robot task.
-///
-/// This function should only be called for tasks that:
-/// 1. Are assigned to this robot (`TaskStatus::Assigned(my_identity)`)
-/// 2. Are robot tasks (SendLoginCode, VerifyLoginCode, VerifyPassword, GenerateQrCode)
-///
-/// The function will call the appropriate Telegram API and complete/update the task.
-///
-/// # Arguments
-/// * `ctx` - Task execution context
-/// * `task` - The task to execute
-///
-/// # Returns
-/// * `Ok(())` - Task was executed (success or failure is recorded in the task)
-/// * `Err(_)` - Failed to execute (e.g., couldn't build client, reducer call failed)
-#[instrument(skip(ctx), fields(task_id = %task.id, task_type = ?std::mem::discriminant(&task.payload)))]
-pub async fn execute_task(ctx: &TaskExecutionContext, task: &Task) -> Result<(), TaskError> {
-    // Verify task is assigned to us
-    match &task.status {
-        TaskStatus::Assigned(robot_id) if *robot_id == ctx.my_identity => {
-            debug!("Task is assigned to us, proceeding with execution");
-        }
+/// Execute the current step of a phone auth flow.
+#[instrument(skip(ctx), fields(auth_id = auth.id, step = ?auth.step))]
+pub async fn execute_phone_auth(
+    ctx: &TaskExecutionContext,
+    auth: &PhoneAuth,
+) -> Result<(), TaskError> {
+    match auth.step {
+        PhoneAuthStep::SendingCode => send_login_code::execute(ctx, auth).await,
+        PhoneAuthStep::VerifyingCode => verify_login_code::execute(ctx, auth).await,
+        PhoneAuthStep::VerifyingPassword => verify_password::execute(ctx, auth).await,
         _ => {
-            warn!("Task is not assigned to us, skipping execution");
-            return Err(TaskError::NotAssignedToMe);
+            warn!("Unexpected phone auth step for robot execution");
+            Ok(())
         }
     }
+}
 
-    // Dispatch to appropriate executor based on payload type
-    match &task.payload {
-        TaskPayload::SendLoginCode(payload) => {
-            send_login_code::execute(ctx, task, payload).await
-        }
-        TaskPayload::VerifyLoginCode(payload) => {
-            verify_login_code::execute(ctx, task, payload).await
-        }
-        TaskPayload::VerifyPassword(payload) => {
-            verify_password::execute(ctx, task, payload).await
-        }
-        TaskPayload::GenerateQrCode(payload) => {
-            generate_qr_code::execute(ctx, task, payload).await
-        }
-        // User tasks should never be executed by the robot
-        TaskPayload::ReceiveLoginCode(_)
-        | TaskPayload::ReceivePassword(_)
-        | TaskPayload::DisplayMessage(_) => {
-            warn!("Attempted to execute user task as robot task");
-            Err(TaskError::NotRobotTask)
+/// Execute the current step of a QR auth flow.
+#[instrument(skip(ctx), fields(auth_id = auth.id, step = ?auth.step))]
+pub async fn execute_qr_auth(
+    ctx: &TaskExecutionContext,
+    auth: &QrAuth,
+) -> Result<(), TaskError> {
+    match auth.step {
+        QrAuthStep::Generating => generate_qr_code::execute(ctx, auth).await,
+        _ => {
+            warn!("Unexpected QR auth step for robot execution");
+            Ok(())
         }
     }
 }

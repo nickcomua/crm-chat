@@ -6,8 +6,8 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-pub mod assign_task_reducer;
-pub mod cancel_task_reducer;
+pub mod cancel_phone_auth_reducer;
+pub mod cancel_qr_auth_reducer;
 pub mod chat_table;
 pub mod chat_type;
 pub mod chat_type_type;
@@ -16,48 +16,54 @@ pub mod client_kind_type;
 pub mod client_status_type;
 pub mod client_table;
 pub mod client_type;
-pub mod complete_task_reducer;
-pub mod create_qr_auth_task_reducer;
-pub mod create_task_reducer;
 pub mod delete_chat_reducer;
 pub mod delete_client_reducer;
-pub mod display_message_output_type;
-pub mod display_message_type;
-pub mod generate_qr_code_output_type;
-pub mod generate_qr_code_type;
+pub mod dismiss_notification_reducer;
 pub mod human_table;
 pub mod human_type;
 pub mod identity_disconnected_reducer;
-pub mod login_token_type;
 pub mod mark_message_deleted_reducer;
 pub mod message_severity_type;
 pub mod message_table;
 pub mod message_type;
-pub mod password_token_type;
-pub mod qr_token_type;
-pub mod receive_login_code_output_type;
-pub mod receive_login_code_type;
-pub mod receive_password_output_type;
-pub mod receive_password_type;
+pub mod notification_table;
+pub mod notification_type;
+pub mod password_required_info_type;
+pub mod phone_auth_step_type;
+pub mod phone_auth_table;
+pub mod phone_auth_type;
+pub mod qr_auth_result_type;
+pub mod qr_auth_step_type;
+pub mod qr_auth_table;
+pub mod qr_auth_type;
+pub mod robot_claim_phone_auth_reducer;
+pub mod robot_claim_qr_auth_reducer;
+pub mod robot_complete_qr_auth_reducer;
+pub mod robot_complete_send_code_reducer;
+pub mod robot_complete_verify_code_reducer;
+pub mod robot_complete_verify_password_reducer;
 pub mod robot_table;
 pub mod robot_type;
-pub mod send_login_code_output_type;
-pub mod send_login_code_type;
-pub mod sign_in_success_type;
-pub mod task_payload_type;
-pub mod task_status_type;
-pub mod task_table;
-pub mod task_type;
-pub mod update_task_reducer;
+pub mod robot_update_qr_token_reducer;
+pub mod send_code_result_type;
+pub mod send_code_success_type;
+pub mod start_phone_auth_reducer;
+pub mod start_qr_auth_reducer;
+pub mod submit_login_code_reducer;
+pub mod submit_password_reducer;
 pub mod upsert_chat_reducer;
 pub mod upsert_message_reducer;
-pub mod verify_login_code_output_type;
-pub mod verify_login_code_type;
-pub mod verify_password_output_type;
-pub mod verify_password_type;
+pub mod verify_code_result_type;
+pub mod verify_code_success_type;
+pub mod verify_password_result_type;
+pub mod verify_password_success_type;
 
-pub use assign_task_reducer::{AssignTaskCallbackId, assign_task, set_flags_for_assign_task};
-pub use cancel_task_reducer::{CancelTaskCallbackId, cancel_task, set_flags_for_cancel_task};
+pub use cancel_phone_auth_reducer::{
+    CancelPhoneAuthCallbackId, cancel_phone_auth, set_flags_for_cancel_phone_auth,
+};
+pub use cancel_qr_auth_reducer::{
+    CancelQrAuthCallbackId, cancel_qr_auth, set_flags_for_cancel_qr_auth,
+};
 pub use chat_table::*;
 pub use chat_type::Chat;
 pub use chat_type_type::ChatType;
@@ -68,57 +74,82 @@ pub use client_kind_type::ClientKind;
 pub use client_status_type::ClientStatus;
 pub use client_table::*;
 pub use client_type::Client;
-pub use complete_task_reducer::{
-    CompleteTaskCallbackId, complete_task, set_flags_for_complete_task,
-};
-pub use create_qr_auth_task_reducer::{
-    CreateQrAuthTaskCallbackId, create_qr_auth_task, set_flags_for_create_qr_auth_task,
-};
-pub use create_task_reducer::{CreateTaskCallbackId, create_task, set_flags_for_create_task};
 pub use delete_chat_reducer::{DeleteChatCallbackId, delete_chat, set_flags_for_delete_chat};
 pub use delete_client_reducer::{
     DeleteClientCallbackId, delete_client, set_flags_for_delete_client,
 };
-pub use display_message_output_type::DisplayMessageOutput;
-pub use display_message_type::DisplayMessage;
-pub use generate_qr_code_output_type::GenerateQrCodeOutput;
-pub use generate_qr_code_type::GenerateQrCode;
+pub use dismiss_notification_reducer::{
+    DismissNotificationCallbackId, dismiss_notification, set_flags_for_dismiss_notification,
+};
 pub use human_table::*;
 pub use human_type::Human;
 pub use identity_disconnected_reducer::{
     IdentityDisconnectedCallbackId, identity_disconnected, set_flags_for_identity_disconnected,
 };
-pub use login_token_type::LoginToken;
 pub use mark_message_deleted_reducer::{
     MarkMessageDeletedCallbackId, mark_message_deleted, set_flags_for_mark_message_deleted,
 };
 pub use message_severity_type::MessageSeverity;
 pub use message_table::*;
 pub use message_type::Message;
-pub use password_token_type::PasswordToken;
-pub use qr_token_type::QrToken;
-pub use receive_login_code_output_type::ReceiveLoginCodeOutput;
-pub use receive_login_code_type::ReceiveLoginCode;
-pub use receive_password_output_type::ReceivePasswordOutput;
-pub use receive_password_type::ReceivePassword;
+pub use notification_table::*;
+pub use notification_type::Notification;
+pub use password_required_info_type::PasswordRequiredInfo;
+pub use phone_auth_step_type::PhoneAuthStep;
+pub use phone_auth_table::*;
+pub use phone_auth_type::PhoneAuth;
+pub use qr_auth_result_type::QrAuthResult;
+pub use qr_auth_step_type::QrAuthStep;
+pub use qr_auth_table::*;
+pub use qr_auth_type::QrAuth;
+pub use robot_claim_phone_auth_reducer::{
+    RobotClaimPhoneAuthCallbackId, robot_claim_phone_auth, set_flags_for_robot_claim_phone_auth,
+};
+pub use robot_claim_qr_auth_reducer::{
+    RobotClaimQrAuthCallbackId, robot_claim_qr_auth, set_flags_for_robot_claim_qr_auth,
+};
+pub use robot_complete_qr_auth_reducer::{
+    RobotCompleteQrAuthCallbackId, robot_complete_qr_auth, set_flags_for_robot_complete_qr_auth,
+};
+pub use robot_complete_send_code_reducer::{
+    RobotCompleteSendCodeCallbackId, robot_complete_send_code,
+    set_flags_for_robot_complete_send_code,
+};
+pub use robot_complete_verify_code_reducer::{
+    RobotCompleteVerifyCodeCallbackId, robot_complete_verify_code,
+    set_flags_for_robot_complete_verify_code,
+};
+pub use robot_complete_verify_password_reducer::{
+    RobotCompleteVerifyPasswordCallbackId, robot_complete_verify_password,
+    set_flags_for_robot_complete_verify_password,
+};
 pub use robot_table::*;
 pub use robot_type::Robot;
-pub use send_login_code_output_type::SendLoginCodeOutput;
-pub use send_login_code_type::SendLoginCode;
-pub use sign_in_success_type::SignInSuccess;
-pub use task_payload_type::TaskPayload;
-pub use task_status_type::TaskStatus;
-pub use task_table::*;
-pub use task_type::Task;
-pub use update_task_reducer::{UpdateTaskCallbackId, set_flags_for_update_task, update_task};
+pub use robot_update_qr_token_reducer::{
+    RobotUpdateQrTokenCallbackId, robot_update_qr_token, set_flags_for_robot_update_qr_token,
+};
+pub use send_code_result_type::SendCodeResult;
+pub use send_code_success_type::SendCodeSuccess;
+pub use start_phone_auth_reducer::{
+    StartPhoneAuthCallbackId, set_flags_for_start_phone_auth, start_phone_auth,
+};
+pub use start_qr_auth_reducer::{
+    StartQrAuthCallbackId, set_flags_for_start_qr_auth, start_qr_auth,
+};
+pub use submit_login_code_reducer::{
+    SubmitLoginCodeCallbackId, set_flags_for_submit_login_code, submit_login_code,
+};
+pub use submit_password_reducer::{
+    SubmitPasswordCallbackId, set_flags_for_submit_password, submit_password,
+};
 pub use upsert_chat_reducer::{UpsertChatCallbackId, set_flags_for_upsert_chat, upsert_chat};
 pub use upsert_message_reducer::{
     UpsertMessageCallbackId, set_flags_for_upsert_message, upsert_message,
 };
-pub use verify_login_code_output_type::VerifyLoginCodeOutput;
-pub use verify_login_code_type::VerifyLoginCode;
-pub use verify_password_output_type::VerifyPasswordOutput;
-pub use verify_password_type::VerifyPassword;
+pub use verify_code_result_type::VerifyCodeResult;
+pub use verify_code_success_type::VerifyCodeSuccess;
+pub use verify_password_result_type::VerifyPasswordResult;
+pub use verify_password_success_type::VerifyPasswordSuccess;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -128,37 +159,64 @@ pub use verify_password_type::VerifyPassword;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
-    AssignTask {
-        task_id: String,
+    CancelPhoneAuth {
+        auth_id: u64,
     },
-    CancelTask {
-        task_id: String,
+    CancelQrAuth {
+        auth_id: u64,
     },
     ClientConnected,
-    CompleteTask {
-        task_id: String,
-        payload: TaskPayload,
-    },
-    CreateQrAuthTask {
-        task_id: String,
-    },
-    CreateTask {
-        id: String,
-        payload: TaskPayload,
-    },
     DeleteChat {
         chat_id: String,
     },
     DeleteClient {
         client_id: u64,
     },
+    DismissNotification {
+        notification_id: u64,
+    },
     IdentityDisconnected,
     MarkMessageDeleted {
         external_message_id: String,
     },
-    UpdateTask {
-        task_id: String,
-        payload: TaskPayload,
+    RobotClaimPhoneAuth {
+        auth_id: u64,
+    },
+    RobotClaimQrAuth {
+        auth_id: u64,
+    },
+    RobotCompleteQrAuth {
+        auth_id: u64,
+        result: QrAuthResult,
+    },
+    RobotCompleteSendCode {
+        auth_id: u64,
+        result: SendCodeResult,
+    },
+    RobotCompleteVerifyCode {
+        auth_id: u64,
+        result: VerifyCodeResult,
+    },
+    RobotCompleteVerifyPassword {
+        auth_id: u64,
+        result: VerifyPasswordResult,
+    },
+    RobotUpdateQrToken {
+        auth_id: u64,
+        url: String,
+        expires: i32,
+    },
+    StartPhoneAuth {
+        phone: String,
+    },
+    StartQrAuth,
+    SubmitLoginCode {
+        auth_id: u64,
+        code: String,
+    },
+    SubmitPassword {
+        auth_id: u64,
+        password: String,
     },
     UpsertChat {
         chat: Chat,
@@ -175,17 +233,25 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
-            Reducer::AssignTask { .. } => "assign_task",
-            Reducer::CancelTask { .. } => "cancel_task",
+            Reducer::CancelPhoneAuth { .. } => "cancel_phone_auth",
+            Reducer::CancelQrAuth { .. } => "cancel_qr_auth",
             Reducer::ClientConnected => "client_connected",
-            Reducer::CompleteTask { .. } => "complete_task",
-            Reducer::CreateQrAuthTask { .. } => "create_qr_auth_task",
-            Reducer::CreateTask { .. } => "create_task",
             Reducer::DeleteChat { .. } => "delete_chat",
             Reducer::DeleteClient { .. } => "delete_client",
+            Reducer::DismissNotification { .. } => "dismiss_notification",
             Reducer::IdentityDisconnected => "identity_disconnected",
             Reducer::MarkMessageDeleted { .. } => "mark_message_deleted",
-            Reducer::UpdateTask { .. } => "update_task",
+            Reducer::RobotClaimPhoneAuth { .. } => "robot_claim_phone_auth",
+            Reducer::RobotClaimQrAuth { .. } => "robot_claim_qr_auth",
+            Reducer::RobotCompleteQrAuth { .. } => "robot_complete_qr_auth",
+            Reducer::RobotCompleteSendCode { .. } => "robot_complete_send_code",
+            Reducer::RobotCompleteVerifyCode { .. } => "robot_complete_verify_code",
+            Reducer::RobotCompleteVerifyPassword { .. } => "robot_complete_verify_password",
+            Reducer::RobotUpdateQrToken { .. } => "robot_update_qr_token",
+            Reducer::StartPhoneAuth { .. } => "start_phone_auth",
+            Reducer::StartQrAuth => "start_qr_auth",
+            Reducer::SubmitLoginCode { .. } => "submit_login_code",
+            Reducer::SubmitPassword { .. } => "submit_password",
             Reducer::UpsertChat { .. } => "upsert_chat",
             Reducer::UpsertMessage { .. } => "upsert_message",
             _ => unreachable!(),
@@ -196,39 +262,18 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
     type Error = __sdk::Error;
     fn try_from(value: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> __sdk::Result<Self> {
         match &value.reducer_name[..] {
-            "assign_task" => Ok(
-                __sdk::parse_reducer_args::<assign_task_reducer::AssignTaskArgs>(
-                    "assign_task",
-                    &value.args,
-                )?
-                .into(),
-            ),
-            "cancel_task" => Ok(
-                __sdk::parse_reducer_args::<cancel_task_reducer::CancelTaskArgs>(
-                    "cancel_task",
-                    &value.args,
-                )?
-                .into(),
-            ),
+            "cancel_phone_auth" => Ok(__sdk::parse_reducer_args::<
+                cancel_phone_auth_reducer::CancelPhoneAuthArgs,
+            >("cancel_phone_auth", &value.args)?
+            .into()),
+            "cancel_qr_auth" => Ok(__sdk::parse_reducer_args::<
+                cancel_qr_auth_reducer::CancelQrAuthArgs,
+            >("cancel_qr_auth", &value.args)?
+            .into()),
             "client_connected" => Ok(__sdk::parse_reducer_args::<
                 client_connected_reducer::ClientConnectedArgs,
             >("client_connected", &value.args)?
             .into()),
-            "complete_task" => Ok(__sdk::parse_reducer_args::<
-                complete_task_reducer::CompleteTaskArgs,
-            >("complete_task", &value.args)?
-            .into()),
-            "create_qr_auth_task" => Ok(__sdk::parse_reducer_args::<
-                create_qr_auth_task_reducer::CreateQrAuthTaskArgs,
-            >("create_qr_auth_task", &value.args)?
-            .into()),
-            "create_task" => Ok(
-                __sdk::parse_reducer_args::<create_task_reducer::CreateTaskArgs>(
-                    "create_task",
-                    &value.args,
-                )?
-                .into(),
-            ),
             "delete_chat" => Ok(
                 __sdk::parse_reducer_args::<delete_chat_reducer::DeleteChatArgs>(
                     "delete_chat",
@@ -240,6 +285,10 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 delete_client_reducer::DeleteClientArgs,
             >("delete_client", &value.args)?
             .into()),
+            "dismiss_notification" => Ok(__sdk::parse_reducer_args::<
+                dismiss_notification_reducer::DismissNotificationArgs,
+            >("dismiss_notification", &value.args)?
+            .into()),
             "identity_disconnected" => Ok(__sdk::parse_reducer_args::<
                 identity_disconnected_reducer::IdentityDisconnectedArgs,
             >("identity_disconnected", &value.args)?
@@ -248,13 +297,56 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 mark_message_deleted_reducer::MarkMessageDeletedArgs,
             >("mark_message_deleted", &value.args)?
             .into()),
-            "update_task" => Ok(
-                __sdk::parse_reducer_args::<update_task_reducer::UpdateTaskArgs>(
-                    "update_task",
-                    &value.args,
-                )?
-                .into(),
-            ),
+            "robot_claim_phone_auth" => Ok(__sdk::parse_reducer_args::<
+                robot_claim_phone_auth_reducer::RobotClaimPhoneAuthArgs,
+            >("robot_claim_phone_auth", &value.args)?
+            .into()),
+            "robot_claim_qr_auth" => Ok(__sdk::parse_reducer_args::<
+                robot_claim_qr_auth_reducer::RobotClaimQrAuthArgs,
+            >("robot_claim_qr_auth", &value.args)?
+            .into()),
+            "robot_complete_qr_auth" => Ok(__sdk::parse_reducer_args::<
+                robot_complete_qr_auth_reducer::RobotCompleteQrAuthArgs,
+            >("robot_complete_qr_auth", &value.args)?
+            .into()),
+            "robot_complete_send_code" => {
+                Ok(__sdk::parse_reducer_args::<
+                    robot_complete_send_code_reducer::RobotCompleteSendCodeArgs,
+                >("robot_complete_send_code", &value.args)?
+                .into())
+            }
+            "robot_complete_verify_code" => {
+                Ok(__sdk::parse_reducer_args::<
+                    robot_complete_verify_code_reducer::RobotCompleteVerifyCodeArgs,
+                >("robot_complete_verify_code", &value.args)?
+                .into())
+            }
+            "robot_complete_verify_password" => {
+                Ok(__sdk::parse_reducer_args::<
+                    robot_complete_verify_password_reducer::RobotCompleteVerifyPasswordArgs,
+                >("robot_complete_verify_password", &value.args)?
+                .into())
+            }
+            "robot_update_qr_token" => Ok(__sdk::parse_reducer_args::<
+                robot_update_qr_token_reducer::RobotUpdateQrTokenArgs,
+            >("robot_update_qr_token", &value.args)?
+            .into()),
+            "start_phone_auth" => Ok(__sdk::parse_reducer_args::<
+                start_phone_auth_reducer::StartPhoneAuthArgs,
+            >("start_phone_auth", &value.args)?
+            .into()),
+            "start_qr_auth" => Ok(__sdk::parse_reducer_args::<
+                start_qr_auth_reducer::StartQrAuthArgs,
+            >("start_qr_auth", &value.args)?
+            .into()),
+            "submit_login_code" => Ok(__sdk::parse_reducer_args::<
+                submit_login_code_reducer::SubmitLoginCodeArgs,
+            >("submit_login_code", &value.args)?
+            .into()),
+            "submit_password" => Ok(__sdk::parse_reducer_args::<
+                submit_password_reducer::SubmitPasswordArgs,
+            >("submit_password", &value.args)?
+            .into()),
             "upsert_chat" => Ok(
                 __sdk::parse_reducer_args::<upsert_chat_reducer::UpsertChatArgs>(
                     "upsert_chat",
@@ -284,8 +376,10 @@ pub struct DbUpdate {
     client: __sdk::TableUpdate<Client>,
     human: __sdk::TableUpdate<Human>,
     message: __sdk::TableUpdate<Message>,
+    notification: __sdk::TableUpdate<Notification>,
+    phone_auth: __sdk::TableUpdate<PhoneAuth>,
+    qr_auth: __sdk::TableUpdate<QrAuth>,
     robot: __sdk::TableUpdate<Robot>,
-    task: __sdk::TableUpdate<Task>,
 }
 
 impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
@@ -306,12 +400,18 @@ impl TryFrom<__ws::DatabaseUpdate<__ws::BsatnFormat>> for DbUpdate {
                 "message" => db_update
                     .message
                     .append(message_table::parse_table_update(table_update)?),
+                "notification" => db_update
+                    .notification
+                    .append(notification_table::parse_table_update(table_update)?),
+                "phone_auth" => db_update
+                    .phone_auth
+                    .append(phone_auth_table::parse_table_update(table_update)?),
+                "qr_auth" => db_update
+                    .qr_auth
+                    .append(qr_auth_table::parse_table_update(table_update)?),
                 "robot" => db_update
                     .robot
                     .append(robot_table::parse_table_update(table_update)?),
-                "task" => db_update
-                    .task
-                    .append(task_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -350,11 +450,17 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.message = cache
             .apply_diff_to_table::<Message>("message", &self.message)
             .with_updates_by_pk(|row| &row.id);
+        diff.notification = cache
+            .apply_diff_to_table::<Notification>("notification", &self.notification)
+            .with_updates_by_pk(|row| &row.id);
+        diff.phone_auth = cache
+            .apply_diff_to_table::<PhoneAuth>("phone_auth", &self.phone_auth)
+            .with_updates_by_pk(|row| &row.id);
+        diff.qr_auth = cache
+            .apply_diff_to_table::<QrAuth>("qr_auth", &self.qr_auth)
+            .with_updates_by_pk(|row| &row.id);
         diff.robot = cache
             .apply_diff_to_table::<Robot>("robot", &self.robot)
-            .with_updates_by_pk(|row| &row.id);
-        diff.task = cache
-            .apply_diff_to_table::<Task>("task", &self.task)
             .with_updates_by_pk(|row| &row.id);
 
         diff
@@ -369,8 +475,10 @@ pub struct AppliedDiff<'r> {
     client: __sdk::TableAppliedDiff<'r, Client>,
     human: __sdk::TableAppliedDiff<'r, Human>,
     message: __sdk::TableAppliedDiff<'r, Message>,
+    notification: __sdk::TableAppliedDiff<'r, Notification>,
+    phone_auth: __sdk::TableAppliedDiff<'r, PhoneAuth>,
+    qr_auth: __sdk::TableAppliedDiff<'r, QrAuth>,
     robot: __sdk::TableAppliedDiff<'r, Robot>,
-    task: __sdk::TableAppliedDiff<'r, Task>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -388,8 +496,14 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks.invoke_table_row_callbacks::<Client>("client", &self.client, event);
         callbacks.invoke_table_row_callbacks::<Human>("human", &self.human, event);
         callbacks.invoke_table_row_callbacks::<Message>("message", &self.message, event);
+        callbacks.invoke_table_row_callbacks::<Notification>(
+            "notification",
+            &self.notification,
+            event,
+        );
+        callbacks.invoke_table_row_callbacks::<PhoneAuth>("phone_auth", &self.phone_auth, event);
+        callbacks.invoke_table_row_callbacks::<QrAuth>("qr_auth", &self.qr_auth, event);
         callbacks.invoke_table_row_callbacks::<Robot>("robot", &self.robot, event);
-        callbacks.invoke_table_row_callbacks::<Task>("task", &self.task, event);
     }
 }
 
@@ -1113,7 +1227,9 @@ impl __sdk::SpacetimeModule for RemoteModule {
         client_table::register_table(client_cache);
         human_table::register_table(client_cache);
         message_table::register_table(client_cache);
+        notification_table::register_table(client_cache);
+        phone_auth_table::register_table(client_cache);
+        qr_auth_table::register_table(client_cache);
         robot_table::register_table(client_cache);
-        task_table::register_table(client_cache);
     }
 }

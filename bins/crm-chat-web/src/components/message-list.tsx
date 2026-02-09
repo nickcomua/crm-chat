@@ -81,11 +81,11 @@ function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
     <div className={cn("flex", isOutgoing ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[75%] rounded-2xl px-4 py-2",
+          "max-w-[75%] rounded-2xl px-4 py-2 shadow-sm",
           isDeleted && "opacity-60",
           isOutgoing
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted"
+            ? "rounded-br-sm bg-primary text-primary-foreground"
+            : "rounded-bl-sm bg-card ring-1 ring-border/50"
         )}
       >
         {isDeleted && (
@@ -98,7 +98,7 @@ function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
         {(() => {
           if (message.text) {
             return (
-              <p className="whitespace-pre-wrap break-words text-sm">
+              <p className="wrap-break-word whitespace-pre-wrap text-sm">
                 {message.text}
               </p>
             );
@@ -182,7 +182,9 @@ export function MessageList({
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold">{getChatDisplayName(chat)}</h2>
+          <h2 className="truncate font-display font-semibold">
+            {getChatDisplayName(chat)}
+          </h2>
           <p className="truncate text-muted-foreground text-sm">
             {client && (
               <span className="mr-2">{getClientDisplayName(client)}</span>
@@ -212,7 +214,7 @@ export function MessageList({
                 <div key={message.id}>
                   {showDateHeader && (
                     <div className="my-4 flex justify-center">
-                      <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
+                      <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary/80 text-xs">
                         {formatDateHeader(message.ts)}
                       </span>
                     </div>

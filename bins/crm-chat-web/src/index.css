@@ -1,10 +1,13 @@
 @import "https://www.nerdfonts.com/assets/css/webfont.css";
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=Outfit:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-display: "Outfit", "DM Sans", system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -45,73 +48,75 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* ─── Light Theme: Warm slate with teal accent ─── */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 0.5rem;
+  --background: oklch(0.98 0.003 250);
+  --foreground: oklch(0.18 0.02 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.18 0.02 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.18 0.02 260);
+  --primary: oklch(0.55 0.17 195);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.95 0.008 250);
+  --secondary-foreground: oklch(0.25 0.02 260);
+  --muted: oklch(0.95 0.008 250);
+  --muted-foreground: oklch(0.5 0.02 260);
+  --accent: oklch(0.92 0.02 195);
+  --accent-foreground: oklch(0.25 0.06 195);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --border: oklch(0.9 0.008 250);
+  --input: oklch(0.9 0.008 250);
+  --ring: oklch(0.55 0.17 195);
+  --chart-1: oklch(0.55 0.17 195);
+  --chart-2: oklch(0.65 0.15 160);
+  --chart-3: oklch(0.58 0.2 270);
+  --chart-4: oklch(0.7 0.15 80);
+  --chart-5: oklch(0.6 0.22 30);
+  --sidebar: oklch(0.97 0.005 250);
+  --sidebar-foreground: oklch(0.18 0.02 260);
+  --sidebar-primary: oklch(0.55 0.17 195);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.93 0.015 195);
+  --sidebar-accent-foreground: oklch(0.25 0.06 195);
+  --sidebar-border: oklch(0.9 0.008 250);
+  --sidebar-ring: oklch(0.55 0.17 195);
 }
 
+/* ─── Dark Theme: Deep navy with luminous teal ─── */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.16 0.02 260);
+  --foreground: oklch(0.93 0.008 250);
+  --card: oklch(0.2 0.02 260);
+  --card-foreground: oklch(0.93 0.008 250);
+  --popover: oklch(0.22 0.02 260);
+  --popover-foreground: oklch(0.93 0.008 250);
+  --primary: oklch(0.68 0.16 195);
+  --primary-foreground: oklch(0.14 0.02 260);
+  --secondary: oklch(0.24 0.02 260);
+  --secondary-foreground: oklch(0.9 0.008 250);
+  --muted: oklch(0.24 0.02 260);
+  --muted-foreground: oklch(0.6 0.02 260);
+  --accent: oklch(0.26 0.03 195);
+  --accent-foreground: oklch(0.8 0.1 195);
+  --destructive: oklch(0.65 0.22 25);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.68 0.16 195);
+  --chart-1: oklch(0.68 0.16 195);
+  --chart-2: oklch(0.7 0.14 160);
+  --chart-3: oklch(0.65 0.18 270);
+  --chart-4: oklch(0.75 0.14 80);
+  --chart-5: oklch(0.68 0.2 30);
+  --sidebar: oklch(0.18 0.02 260);
+  --sidebar-foreground: oklch(0.93 0.008 250);
+  --sidebar-primary: oklch(0.68 0.16 195);
+  --sidebar-primary-foreground: oklch(0.14 0.02 260);
+  --sidebar-accent: oklch(0.26 0.03 195);
+  --sidebar-accent-foreground: oklch(0.8 0.1 195);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.68 0.16 195);
 }
 
 @layer base {
@@ -119,7 +124,13 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
   }
 }
 
@@ -127,4 +138,21 @@
 input[type="search"]::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* Scrollbar styling for dark mode depth */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.5 0 0 / 25%);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.5 0 0 / 40%);
+  }
 }

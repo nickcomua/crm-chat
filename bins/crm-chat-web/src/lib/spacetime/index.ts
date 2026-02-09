@@ -31,28 +31,44 @@ import {
 } from "spacetimedb";
 
 // Import and reexport all reducer arg types
-import AssignTask from "./assign_task_reducer";
-export { AssignTask };
-import CancelTask from "./cancel_task_reducer";
-export { CancelTask };
+import CancelPhoneAuth from "./cancel_phone_auth_reducer";
+export { CancelPhoneAuth };
+import CancelQrAuth from "./cancel_qr_auth_reducer";
+export { CancelQrAuth };
 import ClientConnected from "./client_connected_reducer";
 export { ClientConnected };
-import CompleteTask from "./complete_task_reducer";
-export { CompleteTask };
-import CreateQrAuthTask from "./create_qr_auth_task_reducer";
-export { CreateQrAuthTask };
-import CreateTask from "./create_task_reducer";
-export { CreateTask };
 import DeleteChat from "./delete_chat_reducer";
 export { DeleteChat };
 import DeleteClient from "./delete_client_reducer";
 export { DeleteClient };
+import DismissNotification from "./dismiss_notification_reducer";
+export { DismissNotification };
 import IdentityDisconnected from "./identity_disconnected_reducer";
 export { IdentityDisconnected };
 import MarkMessageDeleted from "./mark_message_deleted_reducer";
 export { MarkMessageDeleted };
-import UpdateTask from "./update_task_reducer";
-export { UpdateTask };
+import RobotClaimPhoneAuth from "./robot_claim_phone_auth_reducer";
+export { RobotClaimPhoneAuth };
+import RobotClaimQrAuth from "./robot_claim_qr_auth_reducer";
+export { RobotClaimQrAuth };
+import RobotCompleteQrAuth from "./robot_complete_qr_auth_reducer";
+export { RobotCompleteQrAuth };
+import RobotCompleteSendCode from "./robot_complete_send_code_reducer";
+export { RobotCompleteSendCode };
+import RobotCompleteVerifyCode from "./robot_complete_verify_code_reducer";
+export { RobotCompleteVerifyCode };
+import RobotCompleteVerifyPassword from "./robot_complete_verify_password_reducer";
+export { RobotCompleteVerifyPassword };
+import RobotUpdateQrToken from "./robot_update_qr_token_reducer";
+export { RobotUpdateQrToken };
+import StartPhoneAuth from "./start_phone_auth_reducer";
+export { StartPhoneAuth };
+import StartQrAuth from "./start_qr_auth_reducer";
+export { StartQrAuth };
+import SubmitLoginCode from "./submit_login_code_reducer";
+export { SubmitLoginCode };
+import SubmitPassword from "./submit_password_reducer";
+export { SubmitPassword };
 import UpsertChat from "./upsert_chat_reducer";
 export { UpsertChat };
 import UpsertMessage from "./upsert_message_reducer";
@@ -69,10 +85,14 @@ import HumanRow from "./human_table";
 export { HumanRow };
 import MessageRow from "./message_table";
 export { MessageRow };
+import NotificationRow from "./notification_table";
+export { NotificationRow };
+import PhoneAuthRow from "./phone_auth_table";
+export { PhoneAuthRow };
+import QrAuthRow from "./qr_auth_table";
+export { QrAuthRow };
 import RobotRow from "./robot_table";
 export { RobotRow };
-import TaskRow from "./task_table";
-export { TaskRow };
 
 // Import and reexport all types
 import Chat from "./chat_type";
@@ -85,56 +105,40 @@ import ClientKind from "./client_kind_type";
 export { ClientKind };
 import ClientStatus from "./client_status_type";
 export { ClientStatus };
-import DisplayMessage from "./display_message_type";
-export { DisplayMessage };
-import DisplayMessageOutput from "./display_message_output_type";
-export { DisplayMessageOutput };
-import GenerateQrCode from "./generate_qr_code_type";
-export { GenerateQrCode };
-import GenerateQrCodeOutput from "./generate_qr_code_output_type";
-export { GenerateQrCodeOutput };
 import Human from "./human_type";
 export { Human };
-import LoginToken from "./login_token_type";
-export { LoginToken };
 import Message from "./message_type";
 export { Message };
 import MessageSeverity from "./message_severity_type";
 export { MessageSeverity };
-import PasswordToken from "./password_token_type";
-export { PasswordToken };
-import QrToken from "./qr_token_type";
-export { QrToken };
-import ReceiveLoginCode from "./receive_login_code_type";
-export { ReceiveLoginCode };
-import ReceiveLoginCodeOutput from "./receive_login_code_output_type";
-export { ReceiveLoginCodeOutput };
-import ReceivePassword from "./receive_password_type";
-export { ReceivePassword };
-import ReceivePasswordOutput from "./receive_password_output_type";
-export { ReceivePasswordOutput };
+import Notification from "./notification_type";
+export { Notification };
+import PasswordRequiredInfo from "./password_required_info_type";
+export { PasswordRequiredInfo };
+import PhoneAuth from "./phone_auth_type";
+export { PhoneAuth };
+import PhoneAuthStep from "./phone_auth_step_type";
+export { PhoneAuthStep };
+import QrAuth from "./qr_auth_type";
+export { QrAuth };
+import QrAuthResult from "./qr_auth_result_type";
+export { QrAuthResult };
+import QrAuthStep from "./qr_auth_step_type";
+export { QrAuthStep };
 import Robot from "./robot_type";
 export { Robot };
-import SendLoginCode from "./send_login_code_type";
-export { SendLoginCode };
-import SendLoginCodeOutput from "./send_login_code_output_type";
-export { SendLoginCodeOutput };
-import SignInSuccess from "./sign_in_success_type";
-export { SignInSuccess };
-import Task from "./task_type";
-export { Task };
-import TaskPayload from "./task_payload_type";
-export { TaskPayload };
-import TaskStatus from "./task_status_type";
-export { TaskStatus };
-import VerifyLoginCode from "./verify_login_code_type";
-export { VerifyLoginCode };
-import VerifyLoginCodeOutput from "./verify_login_code_output_type";
-export { VerifyLoginCodeOutput };
-import VerifyPassword from "./verify_password_type";
-export { VerifyPassword };
-import VerifyPasswordOutput from "./verify_password_output_type";
-export { VerifyPasswordOutput };
+import SendCodeResult from "./send_code_result_type";
+export { SendCodeResult };
+import SendCodeSuccess from "./send_code_success_type";
+export { SendCodeSuccess };
+import VerifyCodeResult from "./verify_code_result_type";
+export { VerifyCodeResult };
+import VerifyCodeSuccess from "./verify_code_success_type";
+export { VerifyCodeSuccess };
+import VerifyPasswordResult from "./verify_password_result_type";
+export { VerifyPasswordResult };
+import VerifyPasswordSuccess from "./verify_password_success_type";
+export { VerifyPasswordSuccess };
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema(
@@ -224,6 +228,48 @@ const tablesSchema = __schema(
     ],
   }, MessageRow),
   __table({
+    name: 'notification',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'owner_user_id', algorithm: 'btree', columns: [
+        'ownerUserId',
+      ] },
+    ],
+    constraints: [
+      { name: 'notification_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, NotificationRow),
+  __table({
+    name: 'phone_auth',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'owner_user_id', algorithm: 'btree', columns: [
+        'ownerUserId',
+      ] },
+    ],
+    constraints: [
+      { name: 'phone_auth_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PhoneAuthRow),
+  __table({
+    name: 'qr_auth',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'owner_user_id', algorithm: 'btree', columns: [
+        'ownerUserId',
+      ] },
+    ],
+    constraints: [
+      { name: 'qr_auth_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, QrAuthRow),
+  __table({
     name: 'robot',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
@@ -234,36 +280,27 @@ const tablesSchema = __schema(
       { name: 'robot_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, RobotRow),
-  __table({
-    name: 'task',
-    indexes: [
-      { name: 'id', algorithm: 'btree', columns: [
-        'id',
-      ] },
-      { name: 'owner_user_id', algorithm: 'btree', columns: [
-        'ownerUserId',
-      ] },
-      { name: 'status', algorithm: 'btree', columns: [
-        'status',
-      ] },
-    ],
-    constraints: [
-      { name: 'task_id_key', constraint: 'unique', columns: ['id'] },
-    ],
-  }, TaskRow),
 );
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
-  __reducerSchema("assign_task", AssignTask),
-  __reducerSchema("cancel_task", CancelTask),
-  __reducerSchema("complete_task", CompleteTask),
-  __reducerSchema("create_qr_auth_task", CreateQrAuthTask),
-  __reducerSchema("create_task", CreateTask),
+  __reducerSchema("cancel_phone_auth", CancelPhoneAuth),
+  __reducerSchema("cancel_qr_auth", CancelQrAuth),
   __reducerSchema("delete_chat", DeleteChat),
   __reducerSchema("delete_client", DeleteClient),
+  __reducerSchema("dismiss_notification", DismissNotification),
   __reducerSchema("mark_message_deleted", MarkMessageDeleted),
-  __reducerSchema("update_task", UpdateTask),
+  __reducerSchema("robot_claim_phone_auth", RobotClaimPhoneAuth),
+  __reducerSchema("robot_claim_qr_auth", RobotClaimQrAuth),
+  __reducerSchema("robot_complete_qr_auth", RobotCompleteQrAuth),
+  __reducerSchema("robot_complete_send_code", RobotCompleteSendCode),
+  __reducerSchema("robot_complete_verify_code", RobotCompleteVerifyCode),
+  __reducerSchema("robot_complete_verify_password", RobotCompleteVerifyPassword),
+  __reducerSchema("robot_update_qr_token", RobotUpdateQrToken),
+  __reducerSchema("start_phone_auth", StartPhoneAuth),
+  __reducerSchema("start_qr_auth", StartQrAuth),
+  __reducerSchema("submit_login_code", SubmitLoginCode),
+  __reducerSchema("submit_password", SubmitPassword),
   __reducerSchema("upsert_chat", UpsertChat),
   __reducerSchema("upsert_message", UpsertMessage),
 );
