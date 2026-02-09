@@ -4,8 +4,11 @@ use serde::{Deserialize, Serialize};
 use spacetimedb::{reducer, Identity, ReducerContext, Table, Timestamp};
 use std::str::FromStr;
 
+use crate::phone_auth::cleanup_human_phone_auths;
+use crate::phone_auth::cleanup_robot_phone_auths;
+use crate::qr_auth::cleanup_human_qr_auths;
+use crate::qr_auth::cleanup_robot_qr_auths;
 use crate::robot::{robot, Robot};
-use crate::task::{cleanup_human_tasks, cleanup_robot_tasks};
 
 // =============================================================================
 // User Trait - Defines lifecycle hooks for authenticated entities
@@ -96,8 +99,9 @@ impl User for Human {
 
     fn on_disconnect(ctx: &ReducerContext) {
         if let Some(human) = ctx.db.human().id().find(ctx.sender) {
-            // Clean up any pending tasks owned by this human
-            cleanup_human_tasks(ctx, ctx.sender);
+            // Clean up any active auth sessions owned by this human
+            cleanup_human_phone_auths(ctx, ctx.sender);
+            cleanup_human_qr_auths(ctx, ctx.sender);
 
             ctx.db.human().id().update(Human {
                 online: false,
@@ -159,8 +163,9 @@ impl User for Robot {
 
     fn on_disconnect(ctx: &ReducerContext) {
         if let Some(robot) = ctx.db.robot().id().find(ctx.sender) {
-            // Clean up any tasks assigned to this robot
-            cleanup_robot_tasks(ctx, ctx.sender);
+            // Clean up any auth sessions assigned to this robot
+            cleanup_robot_phone_auths(ctx, ctx.sender);
+            cleanup_robot_qr_auths(ctx, ctx.sender);
 
             ctx.db.robot().id().update(Robot {
                 id: ctx.sender,

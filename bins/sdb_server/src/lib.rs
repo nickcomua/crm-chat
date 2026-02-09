@@ -3,8 +3,10 @@
 pub mod chat;
 pub mod client;
 pub mod message;
+pub mod notification;
+pub mod phone_auth;
+pub mod qr_auth;
 pub mod robot;
-pub mod task;
 pub mod user;
 pub mod validation;
 
@@ -12,6 +14,8 @@ pub mod validation;
 pub use chat::*;
 pub use client::*;
 pub use message::*;
+pub use notification::*;
+pub use phone_auth::*;
+pub use qr_auth::*;
 pub use robot::*;
-pub use task::*;
 pub use user::*;

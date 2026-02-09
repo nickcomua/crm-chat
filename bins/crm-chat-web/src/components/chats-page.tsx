@@ -14,13 +14,11 @@ export function ChatsPage(): React.ReactNode {
   const [clients] = useTable(tables.client);
   const [humans] = useTable(tables.human);
   const [chats] = useTable(tables.chat);
-  const [tasks] = useTable(tables.task);
 
   if (import.meta.env.DEV) {
     console.log({ clients });
     console.log({ humans });
     console.log({ chats });
-    console.log({ tasks });
   }
 
   const handleSelectChat = (chatId: string | null): void => {
@@ -59,10 +57,12 @@ export function ChatsPage(): React.ReactNode {
           <MessageList chatId={selectedChatId} onBack={handleBack} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-              <MessageSquare className="h-8 w-8 text-muted-foreground" />
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+              <MessageSquare className="h-8 w-8 text-primary/60" />
             </div>
-            <h3 className="mt-4 font-medium text-lg">Select a chat</h3>
+            <h3 className="mt-4 font-display font-medium text-lg">
+              Select a chat
+            </h3>
             <p className="mt-1 max-w-sm text-muted-foreground text-sm">
               Choose a conversation from the list to view messages
             </p>

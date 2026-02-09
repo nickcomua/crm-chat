@@ -1,4 +1,4 @@
-import { RedirectToSignIn, useAuth } from "@clerk/clerk-react";
+import { RedirectToSignIn, UserButton, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
@@ -9,7 +9,7 @@ import {
 import { MessageSquare, Moon, Search, Settings, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DbConnectionBuilder, Identity } from "spacetimedb";
-import { SpacetimeDBProvider } from "spacetimedb/react";
+import { SpacetimeDBProvider, useSpacetimeDB } from "spacetimedb/react";
 import { RightSidebar } from "@/components/right-sidebar";
 import { SearchDialog } from "@/components/search-dialog";
 import { Button } from "@/components/ui/button";
@@ -37,13 +37,43 @@ function ThemeToggle(): React.ReactNode {
       variant="ghost"
     >
       {resolvedTheme === "dark" ? (
-        <Sun className="h-5 w-5" />
+        <Sun className="h-4 w-4" />
       ) : (
-        <Moon className="h-5 w-5" />
+        <Moon className="h-4 w-4" />
       )}
       <span className="sr-only">Toggle theme</span>
     </Button>
   );
+}
+
+/**
+ * Workaround for SpacetimeDB SDK v1.10.0 bug: useTable accesses
+ * connection.db[table.name] (snake_case) but connection.db is keyed by
+ * accessorName (camelCase). This adds snake_case aliases so tables like
+ * qr_auth and phone_auth resolve correctly.
+ */
+function DbPatcher({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactNode {
+  const { getConnection } = useSpacetimeDB();
+  const conn = getConnection();
+  if (conn) {
+    const db = conn.db as Record<string, unknown>;
+    for (const key of Object.keys(db)) {
+      const snakeKey = key.replace(/([A-Z])/g, "_$1").toLowerCase();
+      if (snakeKey !== key && !(snakeKey in db)) {
+        Object.defineProperty(db, snakeKey, {
+          get() {
+            return db[key];
+          },
+          enumerable: false,
+        });
+      }
+    }
+  }
+  return children;
 }
 
 function AuthLayout(): React.ReactNode {
@@ -67,7 +97,7 @@ function AuthLayout(): React.ReactNode {
     let cancelled = false;
 
     const onConnect = (
-      _conn: DbConnection,
+      conn: DbConnection,
       identity: Identity,
       token: string
     ) => {
@@ -79,6 +109,18 @@ function AuthLayout(): React.ReactNode {
         );
       }
       retryCountRef.current = 0;
+
+      conn
+        .subscriptionBuilder()
+        .subscribe([
+          "SELECT * FROM client",
+          "SELECT * FROM chat",
+          "SELECT * FROM message",
+          "SELECT * FROM human",
+          "SELECT * FROM notification",
+          "SELECT * FROM qr_auth",
+          "SELECT * FROM phone_auth",
+        ]);
     };
 
     const onDisconnect = () => {
@@ -166,7 +208,12 @@ function AuthLayout(): React.ReactNode {
   if (!isLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+          <span className="font-display text-muted-foreground text-sm">
+            Loading...
+          </span>
+        </div>
       </div>
     );
   }
@@ -179,7 +226,12 @@ function AuthLayout(): React.ReactNode {
   if (connectionState.status === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-muted-foreground">Connecting...</div>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+          <span className="font-display text-muted-foreground text-sm">
+            Connecting...
+          </span>
+        </div>
       </div>
     );
   }
@@ -188,9 +240,11 @@ function AuthLayout(): React.ReactNode {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="space-y-4 text-center">
-          <div className="text-destructive">{connectionState.message}</div>
+          <div className="text-destructive text-sm">
+            {connectionState.message}
+          </div>
           <button
-            className="rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground text-sm transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-4 py-2 font-display font-medium text-primary-foreground text-sm transition-colors hover:bg-primary/90"
             onClick={() => window.location.reload()}
             type="button"
           >
@@ -206,68 +260,83 @@ function AuthLayout(): React.ReactNode {
       connectionBuilder={connectionState.builder}
       key={connectionKey}
     >
-      <div className="flex h-screen flex-col">
-        <header className="sticky top-0 z-50 border-border border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-14 items-center justify-between px-4">
-            <div className="flex items-center gap-6">
-              <h1 className="font-semibold text-xl">CRM Chat</h1>
-              <nav className="flex items-center gap-1">
-                <Link
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                    currentPath.startsWith("/chats")
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                  to="/chats"
+      <DbPatcher>
+        <div className="flex h-screen flex-col">
+          <header className="sticky top-0 z-50 border-border/50 border-b bg-background/80 backdrop-blur-xl">
+            <div className="flex h-14 items-center justify-between px-4">
+              <div className="flex items-center gap-5">
+                <h1 className="font-display font-semibold text-lg tracking-tight">
+                  CRM Chat
+                </h1>
+                <div className="hidden h-5 w-px bg-border sm:block" />
+                <nav className="flex items-center gap-0.5">
+                  <Link
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium text-sm transition-all",
+                      currentPath.startsWith("/chats")
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    to="/chats"
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    <span className="hidden sm:inline">Chats</span>
+                  </Link>
+                  <Link
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium text-sm transition-all",
+                      currentPath === "/settings"
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    to="/settings"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span className="hidden sm:inline">Settings</span>
+                  </Link>
+                </nav>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  onClick={() => setSearchOpen(true)}
+                  size="icon"
+                  variant="ghost"
                 >
-                  <MessageSquare className="h-4 w-4" />
-                  Chats
-                </Link>
-                <Link
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                    currentPath === "/settings"
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                  to="/settings"
-                >
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </Link>
-              </nav>
+                  <Search className="h-4 w-4" />
+                  <span className="sr-only">Search messages</span>
+                </Button>
+                <ThemeToggle />
+                <div className="ml-1 h-5 w-px bg-border" />
+                <div className="ml-1">
+                  <UserButton
+                    appearance={{
+                      elements: {
+                        avatarBox: "h-7 w-7",
+                      },
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => setSearchOpen(true)}
-                size="icon"
-                variant="ghost"
-              >
-                <Search className="h-5 w-5" />
-                <span className="sr-only">Search messages</span>
-              </Button>
-              <ThemeToggle />
-            </div>
+          </header>
+          <div className="flex flex-1 overflow-hidden">
+            <main className="flex-1 overflow-hidden">
+              <Outlet />
+            </main>
+            <RightSidebar />
           </div>
-        </header>
-        <div className="flex flex-1 overflow-hidden">
-          <main className="flex-1 overflow-hidden">
-            <Outlet />
-          </main>
-          <RightSidebar />
         </div>
-      </div>
-      <SearchDialog
-        onOpenChange={setSearchOpen}
-        onSelectResult={(result) => {
-          navigate({
-            to: "/chats/$chatId",
-            params: { chatId: result.chatId },
-          });
-        }}
-        open={searchOpen}
-      />
+        <SearchDialog
+          onOpenChange={setSearchOpen}
+          onSelectResult={(result) => {
+            navigate({
+              to: "/chats/$chatId",
+              params: { chatId: result.chatId },
+            });
+          }}
+          open={searchOpen}
+        />
+      </DbPatcher>
     </SpacetimeDBProvider>
   );
 }
