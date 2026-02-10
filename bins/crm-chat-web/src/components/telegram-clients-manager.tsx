@@ -1,8 +1,7 @@
+import { useMutation, useQuery } from "convex/react";
 import { Plus, QrCode, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { Infer } from "spacetimedb";
-import { useReducer, useTable } from "spacetimedb/react";
-import { type Client, reducers, tables } from "../lib/spacetime";
+import { api } from "@/lib/convex";
 import { QrAuth } from "./client/qr-auth";
 import { Button } from "./ui/button";
 import {
@@ -20,34 +19,54 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 
-type ClientType = Infer<typeof Client>;
-
-// Helper to check if a client is connected
-function isClientConnected(client: ClientType): boolean {
-  return client.status.tag === "Connected";
+interface ClientStatus {
+  type: "Authenticating" | "Connected" | "Error";
+  message?: string;
 }
 
-// Get status display info
-function getStatusDisplay(client: ClientType): {
+interface ClientDoc {
+  _id: string;
+  kind: string;
+  externalId: string;
+  activeChats: string[];
+  status: ClientStatus;
+}
+
+function isClientConnected(client: ClientDoc): boolean {
+  return client.status.type === "Connected";
+}
+
+function getStatusDisplay(client: ClientDoc): {
   label: string;
   color: string;
 } {
   const status = client.status;
 
-  switch (status.tag) {
+  switch (status.type) {
     case "Connected":
       return { label: "Connected", color: "bg-emerald-500" };
     case "Error":
-      return { label: `Error: ${status.value}`, color: "bg-red-500" };
+      return {
+        label: `Error: ${status.message ?? "Unknown"}`,
+        color: "bg-red-500",
+      };
     default:
-      return { label: status.tag, color: "bg-amber-500" };
+      return { label: status.type, color: "bg-amber-500" };
   }
 }
 
 export function TelegramClientsManager(): React.ReactNode {
-  const [clients] = useTable(tables.client);
-  const deleteClient = useReducer(reducers.deleteClient);
+  const clients = useQuery(api.clients.list) as ClientDoc[] | undefined;
+  const deleteClient = useMutation(api.clients.deleteClient);
   const [showAddDialog, setShowAddDialog] = useState(false);
+
+  if (clients === undefined) {
+    return (
+      <div className="flex h-48 items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+      </div>
+    );
+  }
 
   const connectedClients = clients.filter(isClientConnected);
   const otherClients = clients.filter((c) => !isClientConnected(c));
@@ -84,8 +103,8 @@ export function TelegramClientsManager(): React.ReactNode {
             {connectedClients.map((client) => (
               <ClientCard
                 client={client}
-                key={client.id.toString()}
-                onDelete={() => deleteClient({ clientId: client.id })}
+                key={client._id}
+                onDelete={() => deleteClient({ clientId: client._id })}
               />
             ))}
           </div>
@@ -102,8 +121,8 @@ export function TelegramClientsManager(): React.ReactNode {
             {otherClients.map((client) => (
               <ClientCard
                 client={client}
-                key={client.id.toString()}
-                onDelete={() => deleteClient({ clientId: client.id })}
+                key={client._id}
+                onDelete={() => deleteClient({ clientId: client._id })}
               />
             ))}
           </div>
@@ -146,7 +165,7 @@ function ClientCard({
   client,
   onDelete,
 }: {
-  client: ClientType;
+  client: ClientDoc;
   onDelete: () => void;
 }): React.ReactNode {
   const statusDisplay = getStatusDisplay(client);
@@ -156,7 +175,7 @@ function ClientCard({
       <CardHeader className="flex flex-row items-start justify-between space-y-0">
         <div className="space-y-1">
           <CardTitle className="font-medium text-base">
-            {client.externalId || `Client #${client.id}`}
+            {client.externalId || `Client ${client._id.slice(0, 8)}`}
           </CardTitle>
           <CardDescription>
             {client.activeChats.length} active chat

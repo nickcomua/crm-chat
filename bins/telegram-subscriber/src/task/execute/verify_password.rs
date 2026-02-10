@@ -2,38 +2,36 @@
 //!
 //! This step verifies a 2FA password with Telegram.
 
+use convex_backend::PhoneAuthRobotCompleteVerifyPasswordArgs;
 use grammers_tl_types as tl;
 use messanger_telegram::{CheckPasswordResult, ClonablePasswordToken};
-use sdb_api::module_bindings::{
-    robot_complete_verify_password, PhoneAuth, VerifyPasswordResult, VerifyPasswordSuccess,
-};
-use spacetimedb_sdk::DbContext;
 use tracing::{error, info, instrument, warn};
 
 use super::TaskExecutionContext;
 use crate::error::TaskError;
+use crate::types::{check_result, ConvexApi, PhoneAuth};
 
 /// Execute the VerifyingPassword step of a phone auth flow.
 ///
 /// This will:
-/// 1. Read the password_token and password from the PhoneAuth row
+/// 1. Read the password_token and password from the PhoneAuth document
 /// 2. Call check_password with the password
-/// 3. Report the result via `robot_complete_verify_password`
-#[instrument(skip(ctx, auth), fields(auth_id = auth.id, phone = %auth.phone))]
+/// 3. Report the result via `phoneAuth:robotCompleteVerifyPassword`
+#[instrument(skip(ctx, auth), fields(auth_id = %auth.id, phone = %auth.phone))]
 pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(), TaskError> {
     info!("Executing verify_password");
 
     // Get the Telegram client
     let tg_client = ctx
-        .get_or_create_client(auth.owner_user_id, &auth.phone)
+        .get_or_create_client(&auth.user_id, &auth.phone)
         .await?;
 
-    // Read auth secrets from the PhoneAuth row
+    // Read auth secrets from the PhoneAuth document
     let password_token_str = auth.password_token.as_ref().ok_or_else(|| {
         TaskError::PasswordTokenInvalid("password_token not set on PhoneAuth row".to_string())
     })?;
     let password = auth.password.as_ref().ok_or_else(|| {
-        TaskError::ReducerFailed("password not set on PhoneAuth row".to_string())
+        TaskError::MutationFailed("password not set on PhoneAuth row".to_string())
     })?;
 
     // Deserialize the password token from JSON
@@ -49,40 +47,54 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     };
 
     // Verify the password with timeout
-    let check_result = tokio::time::timeout(
+    let check_result_val = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         tg_client.check_password(clonable_token, password),
     )
     .await;
 
-    let result = match check_result {
+    let result = match check_result_val {
         Err(_) => {
             error!("Timeout verifying password");
-            VerifyPasswordResult::Failed("Timeout verifying password".to_string())
+            serde_json::json!({
+                "type": "Failed",
+                "error": "Timeout verifying password",
+            })
         }
         Ok(Err(e)) => {
             error!(error = %e, "Failed to verify password");
-            VerifyPasswordResult::Failed(format!("Failed to verify password: {}", e))
+            serde_json::json!({
+                "type": "Failed",
+                "error": format!("Failed to verify password: {}", e),
+            })
         }
         Ok(Ok(r)) => match r {
             CheckPasswordResult::Success { user_id } => {
                 info!(user_id = user_id, "Password verification successful");
-                VerifyPasswordResult::Success(VerifyPasswordSuccess { user_id })
+                serde_json::json!({
+                    "type": "Success",
+                    "userId": user_id,
+                })
             }
             CheckPasswordResult::InvalidPassword => {
                 warn!("Invalid password");
-                VerifyPasswordResult::InvalidPassword
+                serde_json::json!({ "type": "InvalidPassword" })
             }
         },
     };
 
-    ctx.conn
-        .reducers()
-        .robot_complete_verify_password(auth.id, result)
-        .map_err(|e| {
-            error!(error = %e, "Failed to complete verify_password");
-            TaskError::ReducerFailed(e.to_string())
-        })?;
+    check_result(
+        ctx.client
+            .clone()
+            .phone_auth_robot_complete_verify_password(
+                PhoneAuthRobotCompleteVerifyPasswordArgs {
+                    authId: auth.id.clone(),
+                    result,
+                },
+            )
+            .await,
+    )
+    .inspect_err(|e| error!(error = %e, "Failed to complete verify_password"))?;
 
     info!("verify_password completed");
     Ok(())

@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import { MessageSquare } from "lucide-react";
-import { useTable } from "spacetimedb/react";
-import { tables } from "@/lib/spacetime";
+import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./chat-list";
 import { MessageList } from "./message-list";
@@ -11,13 +11,11 @@ export function ChatsPage(): React.ReactNode {
   const navigate = useNavigate();
   const selectedChatId = params.chatId ?? null;
 
-  const [clients] = useTable(tables.client);
-  const [humans] = useTable(tables.human);
-  const [chats] = useTable(tables.chat);
+  const clients = useQuery(api.clients.list);
+  const chats = useQuery(api.chats.list);
 
   if (import.meta.env.DEV) {
     console.log({ clients });
-    console.log({ humans });
     console.log({ chats });
   }
 
@@ -37,7 +35,7 @@ export function ChatsPage(): React.ReactNode {
     <div className="flex h-full">
       <div
         className={cn(
-          "h-full w-full flex-shrink-0 border-r md:w-80 lg:w-96",
+          "h-full w-full shrink-0 border-r md:w-80 lg:w-96",
           selectedChatId ? "hidden md:block" : "block"
         )}
       >

@@ -13,9 +13,9 @@ pub enum TaskError {
     #[error("serialization error: {0}")]
     Serialization(String),
 
-    /// Failed to call SpacetimeDB reducer.
-    #[error("SpacetimeDB reducer error: {0}")]
-    ReducerFailed(String),
+    /// Failed to call Convex mutation.
+    #[error("Convex mutation error: {0}")]
+    MutationFailed(String),
 
     /// Password token deserialization failed.
     #[error("failed to deserialize password token: {0}")]

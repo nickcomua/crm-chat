@@ -6,35 +6,49 @@
 
 mod execute;
 
-use sdb_api::module_bindings::{robot_claim_phone_auth, robot_claim_qr_auth, DbConnection};
-use spacetimedb_sdk::DbContext;
+use convex::ConvexClient;
+use convex_backend::PhoneAuthRobotClaimArgs;
+use convex_backend::QrAuthRobotClaimArgs;
 use tracing::{error, info, instrument};
 
 use crate::error::TaskError;
-
-/// Claim an unassigned phone auth session.
-#[instrument(skip(conn))]
-pub fn claim_phone_auth(conn: &DbConnection, auth_id: u64) -> Result<(), TaskError> {
-    info!("Claiming phone auth");
-    conn.reducers()
-        .robot_claim_phone_auth(auth_id)
-        .map_err(|e| {
-            error!(error = %e, "Failed to claim phone auth");
-            TaskError::ReducerFailed(e.to_string())
-        })
-}
-
-/// Claim an unassigned QR auth session.
-#[instrument(skip(conn))]
-pub fn claim_qr_auth(conn: &DbConnection, auth_id: u64) -> Result<(), TaskError> {
-    info!("Claiming QR auth");
-    conn.reducers()
-        .robot_claim_qr_auth(auth_id)
-        .map_err(|e| {
-            error!(error = %e, "Failed to claim QR auth");
-            TaskError::ReducerFailed(e.to_string())
-        })
-}
+use crate::types::{check_result, ConvexApi};
 
 // Re-export execute functions
 pub use execute::{execute_phone_auth, execute_qr_auth, TaskExecutionContext};
+
+/// Claim an unassigned phone auth session via Convex mutation.
+#[instrument(skip(client))]
+pub async fn claim_phone_auth(client: &ConvexClient, auth_id: &str) -> Result<(), TaskError> {
+    info!("Claiming phone auth");
+    check_result(
+        client
+            .clone()
+            .phone_auth_robot_claim(PhoneAuthRobotClaimArgs {
+                authId: auth_id.into(),
+            })
+            .await,
+    )
+    .map_err(|e| {
+        error!(error = %e, "Failed to claim phone auth");
+        e
+    })
+}
+
+/// Claim an unassigned QR auth session via Convex mutation.
+#[instrument(skip(client))]
+pub async fn claim_qr_auth(client: &ConvexClient, auth_id: &str) -> Result<(), TaskError> {
+    info!("Claiming QR auth");
+    check_result(
+        client
+            .clone()
+            .qr_auth_robot_claim(QrAuthRobotClaimArgs {
+                authId: auth_id.into(),
+            })
+            .await,
+    )
+    .map_err(|e| {
+        error!(error = %e, "Failed to claim QR auth");
+        e
+    })
+}
