@@ -1,7 +1,6 @@
+import { useQuery } from "convex/react";
 import { Loader2, Search, Sparkles, X } from "lucide-react";
 import { useState } from "react";
-import type { Infer } from "spacetimedb";
-import { useTable } from "spacetimedb/react";
 import {
   type MessageSource,
   type SearchHit,
@@ -9,14 +8,24 @@ import {
   useSearchInChat,
   useSearchInClient,
 } from "@/hooks/use-search";
-import { type Chat, type Client, tables } from "@/lib/spacetime";
+import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 
-type ChatType = Infer<typeof Chat>;
-type ClientType = Infer<typeof Client>;
+interface ChatDoc {
+  _id: string;
+  chatId: string;
+  clientId: string;
+  pinnedName?: string;
+}
+
+interface ClientDoc {
+  _id: string;
+  kind: string;
+  externalId: string;
+}
 
 type SearchScopeType =
   | { type: "all" }
@@ -54,8 +63,8 @@ function SearchResultItem({
   onClick,
 }: {
   hit: SearchHit;
-  chatsMap: Map<string, ChatType>;
-  clientsMap: Map<bigint, ClientType>;
+  chatsMap: Map<string, ChatDoc>;
+  clientsMap: Map<string, ClientDoc>;
   onClick: () => void;
 }): React.ReactNode {
   const source = hit._source as unknown as MessageSource | undefined;
@@ -66,7 +75,7 @@ function SearchResultItem({
   const chat = source.chat_id ? chatsMap.get(source.chat_id) : undefined;
   const client =
     source.client_id !== undefined && source.client_id !== null
-      ? clientsMap.get(BigInt(source.client_id))
+      ? clientsMap.get(String(source.client_id))
       : undefined;
 
   const chatName =
@@ -85,7 +94,7 @@ function SearchResultItem({
             <span className="truncate font-medium text-sm">{chatName}</span>
             {client && (
               <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-muted-foreground text-xs">
-                {client.kind.tag}
+                {client.kind}
               </span>
             )}
           </div>
@@ -164,8 +173,8 @@ function SearchResults({
   query: string;
   scope: SearchScopeType;
   semantic: boolean;
-  chatsMap: Map<string, ChatType>;
-  clientsMap: Map<bigint, ClientType>;
+  chatsMap: Map<string, ChatDoc>;
+  clientsMap: Map<string, ClientDoc>;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
 }): React.ReactNode {
   const search = useActiveSearch(query, scope, semantic);
@@ -251,20 +260,20 @@ export function SearchDialog({
   const [scope, setScope] = useState<SearchScopeType>(initialScope);
   const [semantic, setSemantic] = useState(false);
 
-  const [chats] = useTable(tables.chat);
-  const [clients] = useTable(tables.client);
+  const chats = useQuery(api.chats.list);
+  const clients = useQuery(api.clients.list);
 
-  const chatsMap = new Map<string, ChatType>();
-  for (const chat of chats) {
-    chatsMap.set(chat.id, chat);
+  const chatsMap = new Map<string, ChatDoc>();
+  for (const chat of chats ?? []) {
+    chatsMap.set(chat.chatId, chat);
   }
 
-  const clientsMap = new Map<bigint, ClientType>();
-  for (const client of clients) {
-    clientsMap.set(client.id, client);
+  const clientsMap = new Map<string, ClientDoc>();
+  for (const client of clients ?? []) {
+    clientsMap.set(client._id, client);
   }
 
-  const clientsArray = Array.from(clients);
+  const clientsArray = clients ?? [];
 
   const handleSelectResult = (result: {
     chatId: string;
@@ -335,22 +344,22 @@ export function SearchDialog({
             >
               All messages
             </button>
-            {clientsArray.map((client) => (
+            {clientsArray.map((client: ClientDoc) => (
               <button
                 className={cn(
                   "rounded-full px-3 py-1 text-sm transition-colors",
                   scope.type === "client" &&
-                    scope.clientId === Number(client.id)
+                    scope.clientId === Number(client._id)
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 )}
-                key={String(client.id)}
+                key={client._id}
                 onClick={() =>
-                  setScope({ type: "client", clientId: Number(client.id) })
+                  setScope({ type: "client", clientId: Number(client._id) })
                 }
                 type="button"
               >
-                {client.kind.tag} ({client.externalId.slice(0, 8)}...)
+                {client.kind} ({client.externalId.slice(0, 8)}...)
               </button>
             ))}
           </div>

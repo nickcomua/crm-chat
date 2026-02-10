@@ -1,22 +1,18 @@
+import { useQuery } from "convex/react";
 import { Filter, MessageSquare, Pin, Search, Users } from "lucide-react";
 import { useState } from "react";
-import type { Infer } from "spacetimedb";
-import { useTable } from "spacetimedb/react";
-import { type Chat, type Client, tables } from "../lib/spacetime";
+import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-
-type ChatType = Infer<typeof Chat>;
-type ClientType = Infer<typeof Client>;
 
 interface ChatListProps {
   selectedChatId: string | null;
   onSelectChat: (chatId: string) => void;
 }
 
-function formatTimestamp(ts: bigint): string {
-  const date = new Date(Number(ts) * 1000);
+function formatTimestamp(ts: number): string {
+  const date = new Date(ts);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
 
@@ -33,15 +29,21 @@ function formatTimestamp(ts: bigint): string {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function getChatDisplayName(chat: ChatType): string {
+function getChatDisplayName(chat: {
+  pinnedName?: string;
+  chatId: string;
+}): string {
   if (chat.pinnedName) {
     return chat.pinnedName;
   }
-  return `Chat ${chat.id.slice(0, 8)}`;
+  return `Chat ${chat.chatId.slice(0, 8)}`;
 }
 
-function getClientDisplayName(client: ClientType): string {
-  return `${client.kind.tag} (${client.externalId.slice(0, 8)}...)`;
+function getClientDisplayName(client: {
+  kind: string;
+  externalId: string;
+}): string {
+  return `${client.kind} (${client.externalId.slice(0, 8)}...)`;
 }
 
 function getExternalIdColorStyle(externalId: string): {
@@ -51,7 +53,7 @@ function getExternalIdColorStyle(externalId: string): {
   // Simple hash function to get a consistent hue for each external ID
   let hash = 0;
   for (let i = 0; i < externalId.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: hash function
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash function
     hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
   }
 
@@ -65,12 +67,8 @@ function getExternalIdColorStyle(externalId: string): {
   };
 }
 
-function ChatIcon({
-  chatType,
-}: {
-  chatType: ChatType["chatType"];
-}): React.ReactNode {
-  if (chatType.tag === "Group") {
+function ChatIcon({ chatType }: { chatType: string }): React.ReactNode {
+  if (chatType === "Group") {
     return <Users className="h-5 w-5" />;
   }
   return <MessageSquare className="h-5 w-5" />;
@@ -80,49 +78,56 @@ export function ChatList({
   selectedChatId,
   onSelectChat,
 }: ChatListProps): React.ReactNode {
-  const [chats] = useTable(tables.chat);
-  const [clients] = useTable(tables.client);
-  const [messages] = useTable(tables.message);
+  const chats = useQuery(api.chats.list);
+  const clients = useQuery(api.clients.list);
+  const messages = useQuery(api.messages.list);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedClientId, setSelectedClientId] = useState<bigint | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [showClientFilter, setShowClientFilter] = useState(false);
+
+  if (chats === undefined || clients === undefined || messages === undefined) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+      </div>
+    );
+  }
 
   const clientsArray = Array.from(clients);
 
-  const clientsMap = new Map<bigint, ClientType>();
+  const clientsMap = new Map<string, (typeof clients)[number]>();
   for (const client of clientsArray) {
-    clientsMap.set(client.id, client);
+    clientsMap.set(client._id, client);
   }
 
-  const chatArray = Array.from(chats);
-  const sortedChats = chatArray.sort((a, b) => {
+  const sortedChats = [...chats].sort((a, b) => {
     if (a.isPinned && !b.isPinned) {
       return -1;
     }
     if (!a.isPinned && b.isPinned) {
       return 1;
     }
-    return Number(b.lastMessageTs - a.lastMessageTs);
+    return b.lastMessageTs - a.lastMessageTs;
   });
 
   let filteredChats = sortedChats;
 
   if (selectedClientId !== null) {
     filteredChats = filteredChats.filter(
-      (chat: ChatType) => chat.clientId === selectedClientId
+      (chat) => chat.clientId === selectedClientId
     );
   }
 
   if (searchQuery.trim()) {
     const query = searchQuery.toLowerCase();
-    filteredChats = filteredChats.filter((chat: ChatType) => {
+    filteredChats = filteredChats.filter((chat) => {
       const name = getChatDisplayName(chat).toLowerCase();
       return name.includes(query);
     });
   }
 
   const getLastMessage = (chatId: string): string | null => {
-    const chatMessages = Array.from(messages).filter(
+    const chatMessages = messages.filter(
       (m) => m.chatId === chatId && !m.deleted
     );
     if (chatMessages.length === 0) {
@@ -135,7 +140,7 @@ export function ChatList({
     return lastMessage.text ?? "[Media]";
   };
 
-  if (chatArray.length === 0) {
+  if (chats.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-4 text-center">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
@@ -199,12 +204,12 @@ export function ChatList({
               <button
                 className={cn(
                   "rounded-full px-2.5 py-1 text-xs transition-colors",
-                  selectedClientId === client.id
+                  selectedClientId === client._id
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 )}
-                key={String(client.id)}
-                onClick={() => setSelectedClientId(client.id)}
+                key={client._id}
+                onClick={() => setSelectedClientId(client._id)}
                 type="button"
               >
                 {getClientDisplayName(client)}
@@ -222,8 +227,8 @@ export function ChatList({
         ) : (
           <div className="space-y-0.5 px-2">
             {filteredChats.map((chat) => {
-              const lastMessage = getLastMessage(chat.id);
-              const isSelected = selectedChatId === chat.id;
+              const lastMessage = getLastMessage(chat.chatId);
+              const isSelected = selectedChatId === chat.chatId;
               const client = clientsMap.get(chat.clientId);
 
               return (
@@ -234,8 +239,8 @@ export function ChatList({
                       ? "bg-accent text-accent-foreground"
                       : "hover:bg-muted/50"
                   )}
-                  key={chat.id}
-                  onClick={() => onSelectChat(chat.id)}
+                  key={chat._id}
+                  onClick={() => onSelectChat(chat.chatId)}
                   type="button"
                 >
                   <div
@@ -252,7 +257,7 @@ export function ChatList({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex min-w-0 items-center gap-1.5">
-                        {client?.kind.tag === "Telegram" && (
+                        {client?.kind === "Telegram" && (
                           <i className="nf nf-fae-telegram shrink-0 text-blue-500" />
                         )}
                         <span className="truncate font-medium">

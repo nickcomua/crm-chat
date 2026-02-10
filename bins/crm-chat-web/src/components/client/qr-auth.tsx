@@ -32,7 +32,7 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
     };
   }, []);
 
-  const step = auth?.step.tag;
+  const step = auth?.step;
 
   // Handle success
   useEffect(() => {

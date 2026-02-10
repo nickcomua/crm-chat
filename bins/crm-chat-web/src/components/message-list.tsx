@@ -1,27 +1,22 @@
+import { useQuery } from "convex/react";
 import { ArrowLeft, Ban, Image as ImageIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { Infer } from "spacetimedb";
-import { useTable } from "spacetimedb/react";
-import { type Chat, type Client, type Message, tables } from "../lib/spacetime";
+import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
-
-type ChatType = Infer<typeof Chat>;
-type ClientType = Infer<typeof Client>;
-type MessageType = Infer<typeof Message>;
 
 interface MessageListProps {
   chatId: string;
   onBack?: () => void;
 }
 
-function formatMessageTime(ts: bigint): string {
-  const date = new Date(Number(ts) * 1000);
+function formatMessageTime(ts: number): string {
+  const date = new Date(ts);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatDateHeader(ts: bigint): string {
-  const date = new Date(Number(ts) * 1000);
+function formatDateHeader(ts: number): string {
+  const date = new Date(ts);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
 
@@ -42,38 +37,53 @@ function formatDateHeader(ts: bigint): string {
   });
 }
 
-function getChatDisplayName(chat: ChatType | undefined): string {
+function getChatDisplayName(
+  chat: { pinnedName?: string; chatId: string } | undefined
+): string {
   if (!chat) {
     return "Chat";
   }
   if (chat.pinnedName) {
     return chat.pinnedName;
   }
-  return `Chat ${chat.id.slice(0, 8)}`;
+  return `Chat ${chat.chatId.slice(0, 8)}`;
 }
 
-function getClientDisplayName(client: ClientType | undefined): string {
+function getClientDisplayName(
+  client: { kind: string; externalId: string } | undefined
+): string {
   if (!client) {
     return "";
   }
-  return `${client.kind.tag} • ${client.externalId}`;
+  return `${client.kind} • ${client.externalId}`;
+}
+
+interface MessageDoc {
+  _id: string;
+  messageId: string;
+  text?: string;
+  out: boolean;
+  deleted: boolean;
+  ts: number;
+  mediaId?: string;
+  chatId: string;
 }
 
 function shouldShowDateHeader(
-  message: MessageType,
-  prevMessage: MessageType | undefined
+  message: MessageDoc,
+  prevMessage: MessageDoc | undefined
 ): boolean {
   if (!prevMessage) {
     return true;
   }
 
-  const messageDate = new Date(Number(message.ts) * 1000).toDateString();
-  const prevDate = new Date(Number(prevMessage.ts) * 1000).toDateString();
+  const messageDate = new Date(message.ts).toDateString();
+  const prevDate = new Date(prevMessage.ts).toDateString();
 
   return messageDate !== prevDate;
 }
 
-function MessageBubble({ message }: { message: MessageType }): React.ReactNode {
+function MessageBubble({ message }: { message: MessageDoc }): React.ReactNode {
   const isOutgoing = message.out;
   const isDeleted = message.deleted;
 
@@ -135,23 +145,22 @@ export function MessageList({
   chatId,
   onBack,
 }: MessageListProps): React.ReactNode {
-  const [chats] = useTable(tables.chat);
-  const [clients] = useTable(tables.client);
-  const [messages] = useTable(tables.message);
+  const chats = useQuery(api.chats.list);
+  const clients = useQuery(api.clients.list);
+  const messages = useQuery(api.messages.listByChat, { chatId });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const chat = Array.from(chats).find((c) => c.id === chatId);
+  const chat = chats?.find((c: { chatId: string }) => c.chatId === chatId);
   const client = chat
-    ? Array.from(clients).find((c) => c.id === chat.clientId)
+    ? clients?.find((c: { _id: string }) => c._id === chat.clientId)
     : undefined;
 
-  const chatMessages = Array.from(messages).filter((m) => m.chatId === chatId);
-  const sortedMessages = chatMessages.sort((a, b) => Number(a.ts - b.ts));
+  const sortedMessages: MessageDoc[] = messages
+    ? [...messages].sort((a: MessageDoc, b: MessageDoc) => a.ts - b.ts)
+    : [];
   const activeMessageCount = sortedMessages.filter((m) => !m.deleted).length;
 
   // Scroll to bottom when chat changes or new messages arrive
-  // Note: React Compiler handles memoization, so we use an empty dependency array
-  // and track changes via a ref to avoid scrolling on every render
   const prevChatIdRef = useRef(chatId);
   const prevMessageCountRef = useRef(sortedMessages.length);
 
@@ -166,6 +175,14 @@ export function MessageList({
       prevMessageCountRef.current = sortedMessages.length;
     }
   });
+
+  if (messages === undefined) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -211,7 +228,7 @@ export function MessageList({
               const showDateHeader = shouldShowDateHeader(message, prevMessage);
 
               return (
-                <div key={message.id}>
+                <div key={message._id}>
                   {showDateHeader && (
                     <div className="my-4 flex justify-center">
                       <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary/80 text-xs">

@@ -11,36 +11,36 @@ mod verify_password;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use convex::ConvexClient;
 use messanger_telegram::TelegramClient;
-use sdb_api::module_bindings::{DbConnection, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
-use spacetimedb_sdk::Identity;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument, warn};
 
 use crate::config::TelegramConfig;
 use crate::error::TaskError;
+use crate::types::{PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
 
 /// Key for identifying a Telegram client session.
 /// Uses (user_id, client_identifier) where client_identifier is phone number or auth_id for QR.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SessionKey {
-    pub user_id: Identity,
+    pub user_id: String,
     pub client_id: String,
 }
 
 /// Context needed for task execution.
 pub struct TaskExecutionContext {
-    /// SpacetimeDB connection
-    pub conn: Arc<DbConnection>,
-    /// This robot's identity
-    pub my_identity: Identity,
+    /// Convex client (cloneable, shares underlying connection)
+    pub client: ConvexClient,
+    /// This robot's ID (JWT subject)
+    pub robot_id: String,
     /// Telegram configuration (api_id, api_hash)
     pub config: TelegramConfig,
     /// Active Telegram client sessions keyed by (user_id, client_identifier)
     pub sessions: Arc<Mutex<HashMap<SessionKey, Arc<TelegramClient>>>>,
-    /// Active QR polling tasks keyed by qr_auth id
-    pub qr_polling_tasks: Arc<Mutex<HashMap<u64, QrPollingHandle>>>,
+    /// Active QR polling tasks keyed by qr_auth document ID
+    pub qr_polling_tasks: Arc<Mutex<HashMap<String, QrPollingHandle>>>,
 }
 
 /// Handle for a running QR polling task.
@@ -52,15 +52,15 @@ impl TaskExecutionContext {
     /// Get or create a Telegram client for the given user and client identifier.
     ///
     /// For phone login, `client_id` should be the phone number.
-    /// For QR login, `client_id` should be the auth_id (since we don't know the user_id yet).
+    /// For QR login, `client_id` should be the auth document ID.
     #[instrument(skip(self), fields(user_id = %user_id, client_id = %client_id))]
     pub async fn get_or_create_client(
         &self,
-        user_id: Identity,
+        user_id: &str,
         client_id: &str,
     ) -> Result<Arc<TelegramClient>, TaskError> {
         let key = SessionKey {
-            user_id,
+            user_id: user_id.to_string(),
             client_id: client_id.to_string(),
         };
 
@@ -73,7 +73,7 @@ impl TaskExecutionContext {
 
         info!("Building new Telegram client");
 
-        let session_path = crate::config::get_session_path(client_id, &user_id.to_string());
+        let session_path = crate::config::get_session_path(client_id, user_id);
 
         let client = TelegramClient::new(
             self.config.api_id,
@@ -93,10 +93,10 @@ impl TaskExecutionContext {
         Ok(client)
     }
 
-    /// Cancel QR polling for the given auth_id.
-    pub async fn cancel_qr_polling(&self, auth_id: u64) {
+    /// Cancel QR polling for the given auth document ID.
+    pub async fn cancel_qr_polling(&self, auth_id: &str) {
         let mut polling_tasks = self.qr_polling_tasks.lock().await;
-        if let Some(handle) = polling_tasks.remove(&auth_id) {
+        if let Some(handle) = polling_tasks.remove(auth_id) {
             info!(auth_id = auth_id, "Cancelling QR polling");
             handle.cancel.cancel();
         }
@@ -104,7 +104,7 @@ impl TaskExecutionContext {
 }
 
 /// Execute the current step of a phone auth flow.
-#[instrument(skip(ctx), fields(auth_id = auth.id, step = ?auth.step))]
+#[instrument(skip(ctx), fields(auth_id = %auth.id, step = ?auth.step))]
 pub async fn execute_phone_auth(
     ctx: &TaskExecutionContext,
     auth: &PhoneAuth,
@@ -121,7 +121,7 @@ pub async fn execute_phone_auth(
 }
 
 /// Execute the current step of a QR auth flow.
-#[instrument(skip(ctx), fields(auth_id = auth.id, step = ?auth.step))]
+#[instrument(skip(ctx), fields(auth_id = %auth.id, step = ?auth.step))]
 pub async fn execute_qr_auth(
     ctx: &TaskExecutionContext,
     auth: &QrAuth,

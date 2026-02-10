@@ -1,70 +1,29 @@
 //! Telegram subscriber service for CRM Chat.
 //!
-//! This service subscribes to SpacetimeDB phone_auth and qr_auth events and
-//! processes robot tasks for Telegram client authentication.
+//! This service connects to a Convex backend, subscribes to phone_auth and qr_auth
+//! queries, and processes robot tasks for Telegram client authentication.
 
 mod config;
 mod error;
+mod jwt;
 mod task;
+mod types;
 
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
 use config::{get_session_dir, TelegramConfig};
-use sdb_api::module_bindings::{
-    DbConnection, ErrorContext, PhoneAuth, PhoneAuthStep, PhoneAuthTableAccess, QrAuth, QrAuthStep,
-    QrAuthTableAccess, SubscriptionEventContext,
-};
-use spacetimedb_sdk::{DbContext, Error, Table, TableWithPrimaryKey};
-use tokio::sync::mpsc;
+use convex::ConvexClient;
+use futures::StreamExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use crate::task::{
-    claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth, TaskExecutionContext,
-};
-
-/// Events from the phone_auth and qr_auth tables.
-#[derive(Debug, Clone)]
-pub enum AuthEvent {
-    PhoneAuthInsert(PhoneAuth),
-    PhoneAuthUpdate { old: PhoneAuth, new: PhoneAuth },
-    QrAuthInsert(QrAuth),
-    QrAuthUpdate { old: QrAuth, new: QrAuth },
-}
-
-fn on_sub_applied(ctx: &SubscriptionEventContext) {
-    let phone_auths: Vec<_> = ctx.db.phone_auth().iter().collect();
-    let qr_auths: Vec<_> = ctx.db.qr_auth().iter().collect();
-    info!(
-        phone_auth_count = phone_auths.len(),
-        qr_auth_count = qr_auths.len(),
-        "Subscription applied"
-    );
-    for auth in &phone_auths {
-        debug!(
-            auth_id = auth.id,
-            step = ?auth.step,
-            assigned_robot = ?auth.assigned_robot,
-            "Found existing phone auth"
-        );
-    }
-    for auth in &qr_auths {
-        debug!(
-            auth_id = auth.id,
-            step = ?auth.step,
-            assigned_robot = ?auth.assigned_robot,
-            "Found existing QR auth"
-        );
-    }
-}
-
-fn on_sub_error(_ctx: &ErrorContext, err: Error) {
-    error!(error = %err, "Subscription failed");
-    std::process::exit(1);
-}
+use crate::task::{claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth, TaskExecutionContext};
+use crate::types::{check_result, parse_phone_auths, parse_qr_auths, ConvexApi, PhoneAuthStep, QrAuthStep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -99,228 +58,168 @@ async fn main() -> anyhow::Result<()> {
 
     let config = TelegramConfig::from_env()?;
 
-    // Get robot identity from environment
-    let my_identity: spacetimedb_sdk::Identity = env::var("DIRTY_IDENTITY")
-        .expect("DIRTY_IDENTITY must be set")
-        .parse()
-        .expect("Invalid DIRTY_IDENTITY format");
+    // Load Convex connection settings
+    let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
+    let robot_id = env::var("ROBOT_ID").expect("ROBOT_ID must be set");
+    let private_key = env::var("ROBOT_JWT_PRIVATE_KEY").expect("ROBOT_JWT_PRIVATE_KEY must be set");
 
-    info!(identity = %my_identity, "Robot identity loaded from DIRTY_IDENTITY");
+    // Mint JWT and connect to Convex
+    let token = jwt::mint_robot_jwt(&private_key, &robot_id)?;
+    let mut client = ConvexClient::new(&convex_url).await?;
+    client.set_auth(Some(token)).await;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<AuthEvent>();
-    let token = env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set");
-    let conn = DbConnection::builder()
-        .with_module_name(
-            env::var("VITE_SPACETIMEDB_MODULE").expect("VITE_SPACETIMEDB_MODULE must be set"),
-        )
-        .with_uri(env::var("VITE_SPACETIMEDB_HOST").expect("VITE_SPACETIMEDB_HOST must be set"))
-        .with_token(Some(token))
-        .build()
-        .expect("Failed to connect");
+    info!(robot_id = %robot_id, "Connected to Convex");
 
-    info!("Connected to SpacetimeDB");
+    // Register as robot
+    check_result(client.robots_register().await)
+        .map_err(|e| anyhow::anyhow!("Failed to register robot: {}", e))?;
 
-    // Set up callbacks for phone_auth table events
-    let tx_pa_insert = tx.clone();
-    conn.db.phone_auth().on_insert(move |_ctx, row| {
-        debug!(auth_id = row.id, step = ?row.step, "PhoneAuth inserted");
-        if let Err(e) = tx_pa_insert.send(AuthEvent::PhoneAuthInsert(row.clone())) {
-            error!(error = %e, "Failed to send phone auth insert event");
-        }
-    });
+    info!("Robot registered");
 
-    let tx_pa_update = tx.clone();
-    conn.db.phone_auth().on_update(move |_ctx, old, new| {
-        debug!(auth_id = new.id, old_step = ?old.step, new_step = ?new.step, "PhoneAuth updated");
-        if let Err(e) = tx_pa_update.send(AuthEvent::PhoneAuthUpdate {
-            old: old.clone(),
-            new: new.clone(),
-        }) {
-            error!(error = %e, "Failed to send phone auth update event");
-        }
-    });
+    // Clone for TaskExecutionContext (mutations use their own clones internally)
+    let ctx = TaskExecutionContext {
+        client: client.clone(),
+        robot_id: robot_id.clone(),
+        config: config.clone(),
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+        qr_polling_tasks: Arc::new(Mutex::new(HashMap::new())),
+    };
 
-    // Set up callbacks for qr_auth table events
-    let tx_qr_insert = tx.clone();
-    conn.db.qr_auth().on_insert(move |_ctx, row| {
-        debug!(auth_id = row.id, step = ?row.step, "QrAuth inserted");
-        if let Err(e) = tx_qr_insert.send(AuthEvent::QrAuthInsert(row.clone())) {
-            error!(error = %e, "Failed to send QR auth insert event");
-        }
-    });
-
-    let tx_qr_update = tx.clone();
-    conn.db.qr_auth().on_update(move |_ctx, old, new| {
-        debug!(auth_id = new.id, old_step = ?old.step, new_step = ?new.step, "QrAuth updated");
-        if let Err(e) = tx_qr_update.send(AuthEvent::QrAuthUpdate {
-            old: old.clone(),
-            new: new.clone(),
-        }) {
-            error!(error = %e, "Failed to send QR auth update event");
-        }
-    });
-
-    // Subscribe to auth tables
-    conn.subscription_builder()
-        .on_applied(on_sub_applied)
-        .on_error(on_sub_error)
-        .subscribe(["SELECT * FROM phone_auth", "SELECT * FROM qr_auth"]);
+    // Subscribe to auth queries
+    let mut phone_pending = client.subscribe_phone_auth_pending_for_robot().await?;
+    let mut phone_assigned = client.subscribe_phone_auth_assigned_to_robot().await?;
+    let mut qr_pending = client.subscribe_qr_auth_pending_for_robot().await?;
+    let mut qr_assigned = client.subscribe_qr_auth_assigned_to_robot().await?;
 
     info!(session_dir = ?get_session_dir(), "Session files stored in");
 
-    // Create task execution context
-    let conn_arc = Arc::new(conn);
-    let ctx = TaskExecutionContext {
-        conn: conn_arc.clone(),
-        my_identity,
-        config: config.clone(),
-        sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        qr_polling_tasks: Arc::new(Mutex::new(std::collections::HashMap::new())),
-    };
+    // State tracking for diffing subscription snapshots
+    let mut phone_assigned_steps: HashMap<String, PhoneAuthStep> = HashMap::new();
+    let mut qr_assigned_steps: HashMap<String, QrAuthStep> = HashMap::new();
 
-    // Spawn the SpacetimeDB connection runner
-    let conn_for_run = conn_arc.clone();
-    tokio::spawn(async move {
-        if let Err(e) = conn_for_run.run_async().await {
-            error!(error = %e, "Error in SpacetimeDB run_async");
-        }
-    });
+    // Timers for heartbeat and JWT refresh
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    let mut jwt_refresh = tokio::time::interval(Duration::from_secs(50 * 60));
+    jwt_refresh.tick().await; // consume first immediate tick
 
     info!("Telegram subscriber started. Press Ctrl+C to exit.");
 
-    // Main event loop
     loop {
         tokio::select! {
-            Some(event) = rx.recv() => {
-                process_auth_event(&ctx, event).await;
-            }
+            biased;
+
             _ = tokio::signal::ctrl_c() => {
                 info!("Shutting down...");
                 break;
+            }
+
+            // Heartbeat: keep robot marked as online
+            _ = heartbeat.tick() => {
+                if let Err(e) = check_result(ctx.client.clone().robots_heartbeat().await) {
+                    warn!(error = %e, "Heartbeat failed");
+                }
+            }
+
+            // JWT refresh: mint a new token before the old one expires
+            _ = jwt_refresh.tick() => {
+                match jwt::mint_robot_jwt(&private_key, &robot_id) {
+                    Ok(new_token) => {
+                        let mut auth_client = client.clone();
+                        auth_client.set_auth(Some(new_token)).await;
+                        info!("JWT refreshed");
+                    }
+                    Err(e) => warn!(error = %e, "JWT refresh failed"),
+                }
+            }
+
+            // Pending phone auths: try to claim each one
+            Some(result) = phone_pending.next() => {
+                for auth in parse_phone_auths(&result) {
+                    debug!(auth_id = %auth.id, "Found pending phone auth, attempting claim");
+                    if let Err(e) = claim_phone_auth(&ctx.client, &auth.id).await {
+                        warn!(auth_id = %auth.id, error = %e, "Failed to claim phone auth");
+                    }
+                }
+            }
+
+            // Assigned phone auths: execute step transitions
+            Some(result) = phone_assigned.next() => {
+                let auths = parse_phone_auths(&result);
+                let new_steps: HashMap<String, PhoneAuthStep> = auths.iter()
+                    .map(|a| (a.id.clone(), a.step))
+                    .collect();
+
+                for auth in &auths {
+                    let should_execute = phone_assigned_steps.get(&auth.id)
+                        .map(|old_step| *old_step != auth.step)
+                        .unwrap_or(true); // new doc = always process
+
+                    if should_execute {
+                        match auth.step {
+                            PhoneAuthStep::SendingCode
+                            | PhoneAuthStep::VerifyingCode
+                            | PhoneAuthStep::VerifyingPassword => {
+                                info!(auth_id = %auth.id, step = ?auth.step, "Executing phone auth step");
+                                if let Err(e) = execute_phone_auth(&ctx, auth).await {
+                                    error!(auth_id = %auth.id, error = %e, "Failed to execute phone auth");
+                                }
+                            }
+                            _ => {
+                                debug!(auth_id = %auth.id, step = ?auth.step, "No robot action for phone auth step");
+                            }
+                        }
+                    }
+                }
+
+                phone_assigned_steps = new_steps;
+            }
+
+            // Pending QR auths: try to claim each one
+            Some(result) = qr_pending.next() => {
+                for auth in parse_qr_auths(&result) {
+                    debug!(auth_id = %auth.id, "Found pending QR auth, attempting claim");
+                    if let Err(e) = claim_qr_auth(&ctx.client, &auth.id).await {
+                        warn!(auth_id = %auth.id, error = %e, "Failed to claim QR auth");
+                    }
+                }
+            }
+
+            // Assigned QR auths: execute step transitions, cancel polling on disappearance
+            Some(result) = qr_assigned.next() => {
+                let auths = parse_qr_auths(&result);
+                let new_ids: std::collections::HashSet<String> = auths.iter()
+                    .map(|a| a.id.clone())
+                    .collect();
+
+                // Cancel polling for auths that disappeared (reached terminal state server-side)
+                let removed_ids: Vec<String> = qr_assigned_steps.keys()
+                    .filter(|id| !new_ids.contains(*id))
+                    .cloned()
+                    .collect();
+                for id in &removed_ids {
+                    ctx.cancel_qr_polling(id).await;
+                }
+
+                // Process auths with step changes
+                for auth in &auths {
+                    let should_execute = qr_assigned_steps.get(&auth.id)
+                        .map(|old_step| *old_step != auth.step)
+                        .unwrap_or(true);
+
+                    if should_execute && auth.step == QrAuthStep::Generating {
+                        info!(auth_id = %auth.id, "Executing QR auth");
+                        if let Err(e) = execute_qr_auth(&ctx, auth).await {
+                            error!(auth_id = %auth.id, error = %e, "Failed to execute QR auth");
+                        }
+                    }
+                }
+
+                qr_assigned_steps = auths.iter()
+                    .map(|a| (a.id.clone(), a.step))
+                    .collect();
             }
         }
     }
 
     Ok(())
-}
-
-/// Process an auth event (insert or update on phone_auth/qr_auth tables).
-async fn process_auth_event(ctx: &TaskExecutionContext, event: AuthEvent) {
-    match event {
-        AuthEvent::PhoneAuthInsert(auth) => {
-            process_phone_auth(ctx, None, &auth).await;
-        }
-        AuthEvent::PhoneAuthUpdate { old, new } => {
-            process_phone_auth(ctx, Some(&old), &new).await;
-        }
-        AuthEvent::QrAuthInsert(auth) => {
-            process_qr_auth(ctx, None, &auth).await;
-        }
-        AuthEvent::QrAuthUpdate { old, new } => {
-            process_qr_auth(ctx, Some(&old), &new).await;
-        }
-    }
-}
-
-/// Process a phone_auth row change.
-///
-/// For inserts (including initial subscription), `old` is None.
-/// For updates, `old` is the previous state.
-async fn process_phone_auth(ctx: &TaskExecutionContext, old: Option<&PhoneAuth>, new: &PhoneAuth) {
-    let is_mine = new.assigned_robot.as_ref() == Some(&ctx.my_identity);
-
-    // Unclaimed SendingCode → try to claim
-    if new.step == PhoneAuthStep::SendingCode && new.assigned_robot.is_none() {
-        debug!(auth_id = new.id, "Attempting to claim phone auth");
-        if let Err(e) = claim_phone_auth(&ctx.conn, new.id) {
-            warn!(auth_id = new.id, error = %e, "Failed to claim phone auth");
-        }
-        return;
-    }
-
-    // Only process further if assigned to us
-    if !is_mine {
-        return;
-    }
-
-    // Check if this event represents a state change we should act on
-    let is_actionable = match old {
-        None => true, // Insert (or initial subscription) → always process
-        Some(old) => old.step != new.step || old.assigned_robot != new.assigned_robot,
-    };
-
-    if !is_actionable {
-        return;
-    }
-
-    // Dispatch based on current step (only robot-actionable steps)
-    match new.step {
-        PhoneAuthStep::SendingCode
-        | PhoneAuthStep::VerifyingCode
-        | PhoneAuthStep::VerifyingPassword => {
-            info!(auth_id = new.id, step = ?new.step, "Executing phone auth step");
-            if let Err(e) = execute_phone_auth(ctx, new).await {
-                error!(auth_id = new.id, error = %e, "Failed to execute phone auth step");
-            }
-        }
-        _ => {
-            // WaitingCode, WaitingPassword, Connected, Failed, Cancelled → no robot action
-            debug!(auth_id = new.id, step = ?new.step, "No robot action for this step");
-        }
-    }
-}
-
-/// Process a qr_auth row change.
-///
-/// For inserts (including initial subscription), `old` is None.
-/// For updates, `old` is the previous state.
-async fn process_qr_auth(ctx: &TaskExecutionContext, old: Option<&QrAuth>, new: &QrAuth) {
-    let is_mine = new.assigned_robot.as_ref() == Some(&ctx.my_identity);
-    let is_terminal = matches!(
-        new.step,
-        QrAuthStep::Authorized
-            | QrAuthStep::AlreadyAuthorized
-            | QrAuthStep::Failed
-            | QrAuthStep::Cancelled
-    );
-
-    // Cancel QR polling on terminal states
-    if is_terminal {
-        ctx.cancel_qr_polling(new.id).await;
-        return;
-    }
-
-    // Unclaimed Pending → try to claim
-    if new.step == QrAuthStep::Pending && new.assigned_robot.is_none() {
-        debug!(auth_id = new.id, "Attempting to claim QR auth");
-        if let Err(e) = claim_qr_auth(&ctx.conn, new.id) {
-            warn!(auth_id = new.id, error = %e, "Failed to claim QR auth");
-        }
-        return;
-    }
-
-    if !is_mine {
-        return;
-    }
-
-    let is_actionable = match old {
-        None => true,
-        Some(old) => old.step != new.step || old.assigned_robot != new.assigned_robot,
-    };
-
-    if !is_actionable {
-        return;
-    }
-
-    match new.step {
-        QrAuthStep::Generating => {
-            info!(auth_id = new.id, "Executing QR auth");
-            if let Err(e) = execute_qr_auth(ctx, new).await {
-                error!(auth_id = new.id, error = %e, "Failed to execute QR auth");
-            }
-        }
-        _ => {
-            debug!(auth_id = new.id, step = ?new.step, "No robot action for this QR step");
-        }
-    }
 }

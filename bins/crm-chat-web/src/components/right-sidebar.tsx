@@ -1,15 +1,15 @@
+import { useQuery } from "convex/react";
 import { Bell, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useState } from "react";
-import { useTable } from "spacetimedb/react";
-import { tables } from "@/lib/spacetime";
+import { api } from "@/lib/convex";
 import { NotificationsPanel } from "./notifications-panel";
 import { Button } from "./ui/button";
 
 export function RightSidebar(): React.ReactNode {
   const [isOpen, setIsOpen] = useState(true);
-  const [notifications] = useTable(tables.notification);
+  const notifications = useQuery(api.notifications.list);
 
-  const pendingCount = notifications.filter((n) => !n.dismissed).length;
+  const pendingCount = notifications?.length ?? 0;
 
   return (
     <>
