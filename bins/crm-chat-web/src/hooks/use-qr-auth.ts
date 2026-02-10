@@ -1,27 +1,36 @@
-import type { Infer } from "spacetimedb";
-import { useReducer, useTable } from "spacetimedb/react";
-import {
-  type QrAuth,
-  type QrAuthStep,
-  reducers,
-  tables,
-} from "@/lib/spacetime";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/lib/convex";
 
-type QrAuthType = Infer<typeof QrAuth>;
-type QrAuthStepType = Infer<typeof QrAuthStep>;
+type QrAuthStep =
+  | "Pending"
+  | "Generating"
+  | "Token"
+  | "Authorized"
+  | "AlreadyAuthorized"
+  | "Failed"
+  | "Cancelled";
 
-function isTerminalStep(step: QrAuthStepType): boolean {
+interface QrAuthDoc {
+  _id: string;
+  _creationTime: number;
+  step: QrAuthStep;
+  qrUrl?: string;
+  qrExpires?: number;
+  error?: string;
+}
+
+function isTerminalStep(step: QrAuthStep): boolean {
   return (
-    step.tag === "Authorized" ||
-    step.tag === "AlreadyAuthorized" ||
-    step.tag === "Failed" ||
-    step.tag === "Cancelled"
+    step === "Authorized" ||
+    step === "AlreadyAuthorized" ||
+    step === "Failed" ||
+    step === "Cancelled"
   );
 }
 
 interface UseQrAuthReturn {
   /** The current QR auth session (active or most recent terminal) */
-  auth: QrAuthType | null;
+  auth: QrAuthDoc | null;
   /** Start a new QR auth session */
   startQrAuth: () => void;
   /** Cancel the active QR auth session */
@@ -29,28 +38,32 @@ interface UseQrAuthReturn {
 }
 
 /**
- * Hook for managing QR auth sessions via the qr_auth table.
+ * Hook for managing QR auth sessions via the qrAuths table.
  */
 export function useQrAuth(): UseQrAuthReturn {
-  const [qrAuths] = useTable(tables.qrAuth);
-  const startQrAuthReducer = useReducer(reducers.startQrAuth);
-  const cancelQrAuthReducer = useReducer(reducers.cancelQrAuth);
+  const qrAuths = useQuery(api.qrAuth.listForUser);
+  const startQrAuthMutation = useMutation(api.qrAuth.start);
+  const cancelQrAuthMutation = useMutation(api.qrAuth.cancel);
+
+  const authList: QrAuthDoc[] = qrAuths ?? [];
 
   // Prefer an active (non-terminal) session; otherwise show the most recent
-  const activeAuth = qrAuths.find((a) => !isTerminalStep(a.step));
+  const activeAuth = authList.find((a) => !isTerminalStep(a.step));
   const latestAuth =
-    qrAuths.length > 0
-      ? qrAuths.reduce((latest, curr) => (curr.id > latest.id ? curr : latest))
+    authList.length > 0
+      ? authList.reduce((latest, curr) =>
+          curr._creationTime > latest._creationTime ? curr : latest
+        )
       : null;
   const auth = activeAuth ?? latestAuth ?? null;
 
   const startQrAuth = (): void => {
-    startQrAuthReducer({});
+    startQrAuthMutation({});
   };
 
   const cancelQrAuth = (): void => {
     if (auth && !isTerminalStep(auth.step)) {
-      cancelQrAuthReducer({ authId: auth.id });
+      cancelQrAuthMutation({ authId: auth._id });
     }
   };
 

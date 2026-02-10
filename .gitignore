@@ -18,3 +18,10 @@ tgdb*
 .direnv
 result
 .fuse_hidden*
+
+# Node
+node_modules/
+
+# Playwright
+test-results/
+playwright-report/

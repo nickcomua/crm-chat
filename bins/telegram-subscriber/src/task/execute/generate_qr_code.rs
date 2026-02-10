@@ -5,19 +5,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use convex::ConvexClient;
+use convex_backend::{QrAuthRobotCompleteQrAuthArgs, QrAuthRobotUpdateQrTokenArgs};
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
 use messanger_telegram::{QrLoginToken, TelegramClient};
-use sdb_api::module_bindings::{
-    robot_complete_qr_auth, robot_update_qr_token, DbConnection, QrAuth, QrAuthResult,
-};
-use spacetimedb_sdk::DbContext;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument, warn};
 
 use super::{QrPollingHandle, SessionKey, TaskExecutionContext};
 use crate::error::TaskError;
+use crate::types::{check_result, ConvexApi, QrAuth};
 
 /// Execute the Generating step of a QR auth flow.
 ///
@@ -27,19 +26,19 @@ use crate::error::TaskError;
 /// 3. Complete the auth when login succeeds or fails
 ///
 /// Note: This spawns a background task for polling, so it returns quickly.
-#[instrument(skip(ctx), fields(auth_id = auth.id))]
+#[instrument(skip(ctx), fields(auth_id = %auth.id))]
 pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), TaskError> {
     info!("Executing generate_qr_code");
 
     // Cancel any existing QR polling for this auth_id
-    ctx.cancel_qr_polling(auth.id).await;
+    ctx.cancel_qr_polling(&auth.id).await;
 
     // Use auth_id as the session identifier for QR login
-    let session_id = auth.id.to_string();
+    let session_id = auth.id.clone();
 
     // Get or create Telegram client with auth_id as identifier
     let tg_client = ctx
-        .get_or_create_client(auth.owner_user_id, &session_id)
+        .get_or_create_client(&auth.user_id, &session_id)
         .await?;
 
     // Check if already authorized
@@ -47,10 +46,18 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), Ta
         Ok(true) => {
             info!("Client is already authorized");
             let user_id = get_telegram_user_id(&tg_client).await;
-            ctx.conn
-                .reducers()
-                .robot_complete_qr_auth(auth.id, QrAuthResult::AlreadyAuthorized(user_id))
-                .map_err(|e| TaskError::ReducerFailed(e.to_string()))?;
+            check_result(
+                ctx.client
+                    .clone()
+                    .qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
+                        authId: auth.id.clone(),
+                        result: serde_json::json!({
+                            "type": "AlreadyAuthorized",
+                            "userId": user_id,
+                        }),
+                    })
+                    .await,
+            )?;
             return Ok(());
         }
         Ok(false) => {
@@ -64,13 +71,13 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), Ta
     // Spawn background task for QR polling
     let cancel = CancellationToken::new();
     let session_key = SessionKey {
-        user_id: auth.owner_user_id,
+        user_id: auth.user_id.clone(),
         client_id: session_id,
     };
 
     tokio::spawn(qr_polling_loop(
-        ctx.conn.clone(),
-        auth.id,
+        ctx.client.clone(),
+        auth.id.clone(),
         tg_client,
         cancel.clone(),
         ctx.sessions.clone(),
@@ -80,7 +87,7 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), Ta
     // Store the cancel token for potential cancellation
     {
         let mut polling_tasks = ctx.qr_polling_tasks.lock().await;
-        polling_tasks.insert(auth.id, QrPollingHandle { cancel });
+        polling_tasks.insert(auth.id.clone(), QrPollingHandle { cancel });
     }
 
     info!("QR polling task spawned");
@@ -105,14 +112,14 @@ async fn get_telegram_user_id(tg_client: &TelegramClient) -> i64 {
 
 /// Background task that polls for QR login completion.
 async fn qr_polling_loop(
-    conn: Arc<DbConnection>,
-    auth_id: u64,
+    client: ConvexClient,
+    auth_id: String,
     tg_client: Arc<TelegramClient>,
     cancel: CancellationToken,
     sessions: Arc<Mutex<HashMap<SessionKey, Arc<TelegramClient>>>>,
     session_key: SessionKey,
 ) {
-    info!(auth_id = auth_id, "Starting QR polling loop");
+    info!(auth_id = %auth_id, "Starting QR polling loop");
 
     let mut stream = std::pin::pin!(tg_client.login_with_qr());
     let mut last_token_url: Option<String> = None;
@@ -122,7 +129,7 @@ async fn qr_polling_loop(
             biased;
 
             _ = cancel.cancelled() => {
-                info!(auth_id = auth_id, "QR polling cancelled");
+                info!(auth_id = %auth_id, "QR polling cancelled");
                 let mut sessions = sessions.lock().await;
                 sessions.remove(&session_key);
                 return;
@@ -132,26 +139,40 @@ async fn qr_polling_loop(
                     Some(Ok(QrLoginToken::Token { url, expires })) => {
                         // Only update if the token URL changed
                         if last_token_url.as_ref() == Some(&url) {
-                            tracing::trace!(auth_id = auth_id, "QR token unchanged, skipping update");
+                            tracing::trace!(auth_id = %auth_id, "QR token unchanged, skipping update");
                             continue;
                         }
 
-                        info!(auth_id = auth_id, expires = expires, "New QR token generated");
+                        info!(auth_id = %auth_id, expires = expires, "New QR token generated");
                         last_token_url = Some(url.clone());
 
-                        // Update auth row with new token via reducer
-                        if let Err(e) = conn.reducers().robot_update_qr_token(auth_id, url, expires) {
-                            error!(auth_id = auth_id, error = %e, "Failed to update QR token");
+                        // Update auth row with new token via mutation
+                        if let Err(e) = check_result(
+                            client.clone().qr_auth_robot_update_qr_token(QrAuthRobotUpdateQrTokenArgs {
+                                authId: auth_id.clone(),
+                                url,
+                                expires: f64::from(expires),
+                            }).await,
+                        ) {
+                            error!(auth_id = %auth_id, error = %e, "Failed to update QR token");
                             // Continue polling - the update failure might be transient
                         }
                     }
                     Some(Ok(QrLoginToken::Success)) => {
-                        info!(auth_id = auth_id, "QR login successful");
+                        info!(auth_id = %auth_id, "QR login successful");
 
                         let user_id = get_telegram_user_id(&tg_client).await;
 
-                        if let Err(e) = conn.reducers().robot_complete_qr_auth(auth_id, QrAuthResult::Authorized(user_id)) {
-                            error!(auth_id = auth_id, error = %e, "Failed to complete QR auth");
+                        if let Err(e) = check_result(
+                            client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
+                                authId: auth_id.clone(),
+                                result: serde_json::json!({
+                                    "type": "Authorized",
+                                    "userId": user_id,
+                                }),
+                            }).await,
+                        ) {
+                            error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth");
                         }
 
                         // Clean up the session from cache
@@ -160,14 +181,22 @@ async fn qr_polling_loop(
                         return;
                     }
                     Some(Ok(QrLoginToken::MigrateTo { dc_id })) => {
-                        info!(auth_id = auth_id, dc_id = dc_id, "DC migration in progress");
+                        info!(auth_id = %auth_id, dc_id = dc_id, "DC migration in progress");
                         // Migration is handled internally by grammers, continue polling
                     }
                     Some(Err(e)) => {
-                        error!(auth_id = auth_id, error = %e, "QR login error");
+                        error!(auth_id = %auth_id, error = %e, "QR login error");
 
-                        if let Err(e) = conn.reducers().robot_complete_qr_auth(auth_id, QrAuthResult::Failed(e.to_string())) {
-                            error!(auth_id = auth_id, error = %e, "Failed to complete QR auth with error");
+                        if let Err(e) = check_result(
+                            client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
+                                authId: auth_id.clone(),
+                                result: serde_json::json!({
+                                    "type": "Failed",
+                                    "error": e.to_string(),
+                                }),
+                            }).await,
+                        ) {
+                            error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth with error");
                         }
 
                         let mut sessions = sessions.lock().await;
@@ -175,13 +204,18 @@ async fn qr_polling_loop(
                         return;
                     }
                     None => {
-                        warn!(auth_id = auth_id, "QR login stream ended unexpectedly");
+                        warn!(auth_id = %auth_id, "QR login stream ended unexpectedly");
 
-                        if let Err(e) = conn.reducers().robot_complete_qr_auth(
-                            auth_id,
-                            QrAuthResult::Failed("QR login stream ended unexpectedly".to_string()),
+                        if let Err(e) = check_result(
+                            client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
+                                authId: auth_id.clone(),
+                                result: serde_json::json!({
+                                    "type": "Failed",
+                                    "error": "QR login stream ended unexpectedly",
+                                }),
+                            }).await,
                         ) {
-                            error!(auth_id = auth_id, error = %e, "Failed to complete QR auth");
+                            error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth");
                         }
 
                         let mut sessions = sessions.lock().await;

@@ -2,6 +2,8 @@
 
 This directory contains Playwright integration tests for the CRM Chat web application.
 
+> **Note:** The test spec (`qr-auth.spec.ts`) still references SpacetimeDB in its `beforeEach` hook (waits for `"Connected to SpacetimeDB"` console message). This needs to be updated to work with the Convex backend.
+
 ## Prerequisites
 
 1. **Install Playwright browsers:**
@@ -10,23 +12,21 @@ This directory contains Playwright integration tests for the CRM Chat web applic
    npx playwright install chromium
    ```
 
-2. **Start the telegram-subscriber service:**
+2. **Start the backend services:**
    ```bash
-   # From project root
-   cd /home/user/crm-chat
+   # Start self-hosted Convex backend (from project root)
+   docker compose up -d
 
-   # Set environment variables
-   export VITE_SPACETIMEDB_MODULE=<your-module-id>
-   export VITE_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com
-   export SPACETIMEDB_URI=https://maincloud.spacetimedb.com
-   export DIRTY_IDENTITY=<your-robot-identity>
-   export DIRTY_TOKEN=<your-robot-token>
-   export TG_SUB_SECRET_TOKEN=<your-telegram-subscriber-secret>
+   # Deploy Convex functions (from bins/convex-backend/)
+   cd bins/convex-backend
+   npx convex dev
+
+   # Start telegram-subscriber (from project root, in a separate terminal)
+   export CONVEX_URL=http://127.0.0.1:3210
+   export ROBOT_JWT_PRIVATE_KEY="$(cat path/to/private_key.pem)"
    export TG_ID=<telegram-api-id>
    export TG_HASH=<telegram-api-hash>
-
-   # Run the service
-   ./target/release/telegram-subscriber
+   cargo run -p telegram-subscriber
    ```
 
 3. **Set test credentials:**
