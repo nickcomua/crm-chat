@@ -2,14 +2,16 @@
 //!
 //! This step verifies a 2FA password with Telegram.
 
-use convex_backend::{PhoneAuthRobotCompleteVerifyPasswordArgs, PhoneAuthRobotCompleteVerifyPasswordResult};
+use convex_backend::{
+    PhoneAuthRobotCompleteVerifyPasswordArgs, PhoneAuthRobotCompleteVerifyPasswordResult,
+};
 use grammers_tl_types as tl;
 use messanger_telegram::{CheckPasswordResult, ClonablePasswordToken};
 use tracing::{error, info, instrument, warn};
 
 use super::TaskExecutionContext;
 use crate::error::TaskError;
-use crate::types::{check_result, ConvexApi, PhoneAuth};
+use crate::types::{ConvexApi, PhoneAuth, check_result};
 
 /// Execute the VerifyingPassword step of a phone auth flow.
 ///
@@ -22,9 +24,7 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     info!("Executing verify_password");
 
     // Get the Telegram client
-    let tg_client = ctx
-        .get_or_create_client(&auth.user_id, &auth.phone)
-        .await?;
+    let tg_client = ctx.get_or_create_client(&auth.user_id, &auth.phone).await?;
 
     // Read auth secrets from the PhoneAuth document
     let password_token_str = auth.password_token.as_ref().ok_or_else(|| {
@@ -35,8 +35,8 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     })?;
 
     // Deserialize the password token from JSON
-    let password_data: tl::types::account::Password =
-        serde_json::from_str(password_token_str).map_err(|e| {
+    let password_data: tl::types::account::Password = serde_json::from_str(password_token_str)
+        .map_err(|e| {
             error!(error = %e, "Failed to deserialize password token");
             TaskError::PasswordTokenInvalid(e.to_string())
         })?;
@@ -81,12 +81,10 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     check_result(
         ctx.client
             .clone()
-            .phone_auth_robot_complete_verify_password(
-                PhoneAuthRobotCompleteVerifyPasswordArgs {
-                    authId: auth.id.clone(),
-                    result,
-                },
-            )
+            .phone_auth_robot_complete_verify_password(PhoneAuthRobotCompleteVerifyPasswordArgs {
+                authId: auth.id.clone(),
+                result,
+            })
             .await,
     )
     .inspect_err(|e| error!(error = %e, "Failed to complete verify_password"))?;

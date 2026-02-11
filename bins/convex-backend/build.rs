@@ -1,7 +1,6 @@
-use convex_typegen::{generate, Configuration};
+use convex_typegen::{Configuration, generate};
 
-fn main()
-{
+fn main() {
     println!("cargo:rerun-if-changed=convex/schema.ts");
 
     // Collect function files (all .ts files except schema, auth.config, and _generated)
@@ -11,7 +10,11 @@ fn main()
             let entry = entry.ok()?;
             let path = entry.path();
             let name = path.file_name()?.to_str()?;
-            if name.ends_with(".ts") && name != "schema.ts" && name != "auth.config.ts" && !name.starts_with('_') {
+            if name.ends_with(".ts")
+                && name != "schema.ts"
+                && name != "auth.config.ts"
+                && !name.starts_with('_')
+            {
                 println!("cargo:rerun-if-changed=convex/{}", name);
                 Some(path)
             } else {

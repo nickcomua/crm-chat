@@ -63,11 +63,13 @@ mod tests {
                 external_id: "chat:1".to_string(),
                 name: Some("Test Chat 1".to_string()),
                 chat_type: Some("user".to_string()),
+                is_pinned: true,
             };
             let chat2 = ChatSummary {
                 external_id: "chat:2".to_string(),
                 name: Some("Test Chat 2".to_string()),
                 chat_type: Some("group".to_string()),
+                is_pinned: false,
             };
 
             client
@@ -330,11 +332,13 @@ mod tests {
                 external_id: "chat:1".to_string(),
                 name: Some("Chat 1".to_string()),
                 chat_type: Some("user".to_string()),
+                is_pinned: true,
             },
             ChatSummary {
                 external_id: "chat:2".to_string(),
                 name: Some("Chat 2".to_string()),
                 chat_type: Some("group".to_string()),
+                is_pinned: false,
             },
         ];
 
@@ -508,6 +512,7 @@ mod tests {
             external_id: "chat:1".to_string(),
             name: Some("Test Chat".to_string()),
             chat_type: Some("user".to_string()),
+            is_pinned: true,
         };
 
         let json = serde_json::to_string(&chat).unwrap();

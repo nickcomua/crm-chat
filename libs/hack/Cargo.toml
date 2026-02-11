@@ -16,84 +16,130 @@ license = "MIT"
 
 ### BEGIN HAKARI SECTION
 [dependencies]
-arrayvec = { version = "0.7" }
-base64 = { version = "0.22" }
-chrono = { version = "0.4", features = ["serde"] }
-digest = { version = "0.10", features = ["mac", "std"] }
+axum = { version = "0.8" }
+axum-core = { version = "0.5", default-features = false, features = ["tracing"] }
+bitflags = { version = "2", default-features = false, features = ["serde"] }
+deranged = { version = "0.5", features = ["powerfmt", "serde"] }
+digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["use_std"] }
 flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
-futures-core = { version = "0.3" }
 futures-sink = { version = "0.3" }
 futures-task = { version = "0.3", default-features = false, features = ["std"] }
-futures-util = { version = "0.3", default-features = false, features = ["async-await-macro", "channel", "io", "sink"] }
+futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
-getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["custom", "std"] }
-hashbrown = { version = "0.16", default-features = false, features = ["default-hasher", "equivalent", "inline-more", "rayon", "serde"] }
+getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "server-auto", "service"] }
 indexmap = { version = "2", features = ["serde"] }
+lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-memchr = { version = "2" }
 num-bigint = { version = "0.4", features = ["rand"] }
 num-integer = { version = "0.1", default-features = false, features = ["i128", "std"] }
-num-traits = { version = "0.2", features = ["i128"] }
-once_cell = { version = "1" }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
 percent-encoding = { version = "2" }
-rand = { version = "0.8" }
+rand = { version = "0.8", features = ["small_rng"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
+regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
-serde = { version = "1", features = ["derive", "rc"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
-serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 simd-adler32 = { version = "0.3", default-features = false, features = ["std"] }
-smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+smallvec = { version = "1", default-features = false, features = ["const_new"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 thiserror = { version = "2" }
+time = { version = "0.3", features = ["macros", "serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["io-util", "net", "sync"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "log"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-core = { version = "0.1" }
+url = { version = "2", features = ["serde"] }
 
 [build-dependencies]
-digest = { version = "0.10", features = ["mac", "std"] }
+allocator-api2 = { version = "0.2" }
+bitflags = { version = "2", default-features = false, features = ["serde"] }
+bumpalo = { version = "3", features = ["allocator-api2", "collections"] }
+digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["use_std"] }
 flate2 = { version = "1", features = ["zlib-rs"] }
-hashbrown = { version = "0.16", default-features = false, features = ["default-hasher", "equivalent", "inline-more", "rayon", "serde"] }
+form_urlencoded = { version = "1" }
+futures-channel = { version = "0.3", features = ["sink"] }
+futures-sink = { version = "0.3" }
+futures-task = { version = "0.3", default-features = false, features = ["std"] }
+futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
+getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
+getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
 indexmap = { version = "2", features = ["serde"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-memchr = { version = "2" }
-proc-macro2 = { version = "1" }
-quote = { version = "1" }
+num-bigint = { version = "0.4", features = ["rand"] }
+num-integer = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
+percent-encoding = { version = "2" }
+rand = { version = "0.8", features = ["small_rng"] }
+rand_core = { version = "0.6", default-features = false, features = ["std"] }
+regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
+serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 simd-adler32 = { version = "0.3", default-features = false, features = ["std"] }
+smallvec = { version = "1", default-features = false, features = ["const_new"] }
 syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+thiserror = { version = "2" }
+time-macros = { version = "0.2", default-features = false, features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["io-util", "net", "sync"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-core = { version = "0.1" }
+url = { version = "2", features = ["serde"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
-hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "http1", "http2", "server", "service"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12", "webpki-tokio"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
 libc = { version = "0.2", features = ["extra_traits"] }
-sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
-tower = { version = "0.5", default-features = false, features = ["log", "make", "retry", "timeout"] }
+native-tls = { version = "0.2", default-features = false, features = ["vendored"] }
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = { version = "0.9", default-features = false, features = ["vendored"] }
+ring = { version = "0.17", features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tower = { version = "0.5", default-features = false, features = ["retry", "timeout"] }
 tower-http = { version = "0.6", features = ["cors", "follow-redirect"] }
-tracing = { version = "0.1", features = ["log"] }
-tracing-core = { version = "0.1" }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
+libc = { version = "0.2", features = ["extra_traits"] }
+native-tls = { version = "0.2", default-features = false, features = ["vendored"] }
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = { version = "0.9", default-features = false, features = ["vendored"] }
 
 [target.aarch64-apple-darwin.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
-hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "http1", "http2", "server", "service"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12", "webpki-tokio"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
 libc = { version = "0.2", features = ["extra_traits"] }
-sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
-tower = { version = "0.5", default-features = false, features = ["log", "make", "retry", "timeout"] }
+native-tls = { version = "0.2", default-features = false, features = ["vendored"] }
+ring = { version = "0.17", features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tower = { version = "0.5", default-features = false, features = ["retry", "timeout"] }
 tower-http = { version = "0.6", features = ["cors", "follow-redirect"] }
-tracing = { version = "0.1", features = ["log"] }
-tracing-core = { version = "0.1" }
 
 [target.aarch64-apple-darwin.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
+native-tls = { version = "0.2", default-features = false, features = ["vendored"] }
 
 ### END HAKARI SECTION

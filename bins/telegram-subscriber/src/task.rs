@@ -3,8 +3,10 @@
 //! This module handles:
 //! - Claiming unassigned phone_auth and qr_auth sessions
 //! - Executing assigned auth steps by calling Telegram APIs
+//! - Scanning connected clients for chats and messages
 
 mod execute;
+pub mod scan;
 
 use convex::ConvexClient;
 use convex_backend::PhoneAuthRobotClaimArgs;
@@ -12,10 +14,10 @@ use convex_backend::QrAuthRobotClaimArgs;
 use tracing::{error, info, instrument};
 
 use crate::error::TaskError;
-use crate::types::{check_result, ConvexApi};
+use crate::types::{ConvexApi, check_result};
 
 // Re-export execute functions
-pub use execute::{execute_phone_auth, execute_qr_auth, TaskExecutionContext};
+pub use execute::{TaskExecutionContext, execute_phone_auth, execute_qr_auth};
 
 /// Claim an unassigned phone auth session via Convex mutation.
 #[instrument(skip(client))]

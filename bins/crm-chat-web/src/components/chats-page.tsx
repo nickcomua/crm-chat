@@ -35,7 +35,7 @@ export function ChatsPage(): React.ReactNode {
     <div className="flex h-full">
       <div
         className={cn(
-          "h-full w-full shrink-0 border-r md:w-80 lg:w-96",
+          "h-full w-full shrink-0 border-border/50 border-r md:w-80 lg:w-96",
           selectedChatId ? "hidden md:block" : "block"
         )}
       >
@@ -55,13 +55,13 @@ export function ChatsPage(): React.ReactNode {
           <MessageList chatId={selectedChatId} onBack={handleBack} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-              <MessageSquare className="h-8 w-8 text-primary/60" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
+              <MessageSquare className="h-7 w-7 text-primary/40" />
             </div>
-            <h3 className="mt-4 font-display font-medium text-lg">
+            <h3 className="mt-5 font-display font-medium text-base">
               Select a chat
             </h3>
-            <p className="mt-1 max-w-sm text-muted-foreground text-sm">
+            <p className="mt-1.5 max-w-xs text-muted-foreground/70 text-sm">
               Choose a conversation from the list to view messages
             </p>
           </div>

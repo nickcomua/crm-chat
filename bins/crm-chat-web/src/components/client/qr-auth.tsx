@@ -15,7 +15,9 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
 
   // Keep latest cancelQrAuth in a ref for cleanup
   const cancelRef = useRef(cancelQrAuth);
-  cancelRef.current = cancelQrAuth;
+  useEffect(() => {
+    cancelRef.current = cancelQrAuth;
+  }, [cancelQrAuth]);
 
   // Start auth on mount (once)
   useEffect(() => {

@@ -81,7 +81,14 @@
         ];
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        src = craneLib.cleanCargoSource ./.;
+        # Include standard Cargo sources plus .ts files needed by convex-backend build.rs
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            (craneLib.fileset.commonCargoSources ./.)
+            (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
+          ];
+        };
 
         # Common arguments can be set here to avoid repeating them later
         commonArgs = {
@@ -100,6 +107,7 @@
             pkgs.lld
             pkgs.rustfmt
             pkgs.pkg-config
+            pkgs.perl # Required by openssl-sys vendored build
             pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
@@ -150,6 +158,9 @@
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
               (craneLib.fileset.commonCargoSources ./bins/es-proxy)
+              (craneLib.fileset.commonCargoSources ./bins/convex-backend)
+              # Include .ts files needed by convex-backend build.rs (convex-typegen)
+              (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
@@ -213,6 +224,8 @@
             commonArgs
             // {
               inherit cargoArtifacts;
+              # Exclude convex-backend: its integration tests need Docker (run locally)
+              cargoExtraArgs = "--workspace --exclude convex-backend";
               partitions = 1;
               partitionType = "count";
               cargoNextestPartitionsExtraArgs = "--no-tests=pass";
@@ -233,6 +246,7 @@
             }
           );
 
+        } // {
           crm-chat-hakari = craneLib.mkCargoDerivation {
             inherit src;
             pname = "crm-chat-hakari";
@@ -249,7 +263,6 @@
               pkgs.cargo-hakari
             ];
           };
-
 
         };
         packages = {
