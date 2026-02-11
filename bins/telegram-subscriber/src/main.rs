@@ -23,7 +23,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use crate::task::{claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth, TaskExecutionContext};
-use crate::types::{check_result, parse_phone_auths, parse_qr_auths, ConvexApi, PhoneAuthStep, QrAuthStep};
+use crate::types::{ConvexApi, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -61,20 +61,17 @@ async fn main() -> anyhow::Result<()> {
     // Load Convex connection settings
     let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
     let robot_id = env::var("ROBOT_ID").expect("ROBOT_ID must be set");
-    let private_key = env::var("ROBOT_JWT_PRIVATE_KEY").expect("ROBOT_JWT_PRIVATE_KEY must be set");
+    let robot_kid = env::var("ROBOT_KID").expect("ROBOT_KID must be set");
+    let private_key = env::var("ROBOT_JWT_PRIVATE_KEY")
+        .expect("ROBOT_JWT_PRIVATE_KEY must be set")
+        .replace("\\n", "\n");
 
     // Mint JWT and connect to Convex
-    let token = jwt::mint_robot_jwt(&private_key, &robot_id)?;
+    let token = jwt::mint_robot_jwt(&private_key, &robot_id, &robot_kid)?;
     let mut client = ConvexClient::new(&convex_url).await?;
     client.set_auth(Some(token)).await;
 
     info!(robot_id = %robot_id, "Connected to Convex");
-
-    // Register as robot
-    check_result(client.robots_register().await)
-        .map_err(|e| anyhow::anyhow!("Failed to register robot: {}", e))?;
-
-    info!("Robot registered");
 
     // Clone for TaskExecutionContext (mutations use their own clones internally)
     let ctx = TaskExecutionContext {
@@ -97,8 +94,7 @@ async fn main() -> anyhow::Result<()> {
     let mut phone_assigned_steps: HashMap<String, PhoneAuthStep> = HashMap::new();
     let mut qr_assigned_steps: HashMap<String, QrAuthStep> = HashMap::new();
 
-    // Timers for heartbeat and JWT refresh
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    // Timer for JWT refresh
     let mut jwt_refresh = tokio::time::interval(Duration::from_secs(50 * 60));
     jwt_refresh.tick().await; // consume first immediate tick
 
@@ -113,16 +109,9 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
 
-            // Heartbeat: keep robot marked as online
-            _ = heartbeat.tick() => {
-                if let Err(e) = check_result(ctx.client.clone().robots_heartbeat().await) {
-                    warn!(error = %e, "Heartbeat failed");
-                }
-            }
-
             // JWT refresh: mint a new token before the old one expires
             _ = jwt_refresh.tick() => {
-                match jwt::mint_robot_jwt(&private_key, &robot_id) {
+                match jwt::mint_robot_jwt(&private_key, &robot_id, &robot_kid) {
                     Ok(new_token) => {
                         let mut auth_client = client.clone();
                         auth_client.set_auth(Some(new_token)).await;
@@ -133,8 +122,8 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Pending phone auths: try to claim each one
-            Some(result) = phone_pending.next() => {
-                for auth in parse_phone_auths(&result) {
+            Some(Ok(auths)) = phone_pending.next() => {
+                for auth in auths {
                     debug!(auth_id = %auth.id, "Found pending phone auth, attempting claim");
                     if let Err(e) = claim_phone_auth(&ctx.client, &auth.id).await {
                         warn!(auth_id = %auth.id, error = %e, "Failed to claim phone auth");
@@ -143,8 +132,8 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Assigned phone auths: execute step transitions
-            Some(result) = phone_assigned.next() => {
-                let auths = parse_phone_auths(&result);
+            Some(Ok(auths)) = phone_assigned.next() => {
+                let auths: Vec<PhoneAuth> = auths;
                 let new_steps: HashMap<String, PhoneAuthStep> = auths.iter()
                     .map(|a| (a.id.clone(), a.step))
                     .collect();
@@ -175,8 +164,8 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Pending QR auths: try to claim each one
-            Some(result) = qr_pending.next() => {
-                for auth in parse_qr_auths(&result) {
+            Some(Ok(auths)) = qr_pending.next() => {
+                for auth in auths {
                     debug!(auth_id = %auth.id, "Found pending QR auth, attempting claim");
                     if let Err(e) = claim_qr_auth(&ctx.client, &auth.id).await {
                         warn!(auth_id = %auth.id, error = %e, "Failed to claim QR auth");
@@ -185,8 +174,8 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Assigned QR auths: execute step transitions, cancel polling on disappearance
-            Some(result) = qr_assigned.next() => {
-                let auths = parse_qr_auths(&result);
+            Some(Ok(auths)) = qr_assigned.next() => {
+                let auths: Vec<QrAuth> = auths;
                 let new_ids: std::collections::HashSet<String> = auths.iter()
                     .map(|a| a.id.clone())
                     .collect();

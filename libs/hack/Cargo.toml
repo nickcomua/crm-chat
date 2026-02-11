@@ -48,8 +48,6 @@ serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 simd-adler32 = { version = "0.3", default-features = false, features = ["std"] }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
-spacetimedb-lib = { version = "1", default-features = false, features = ["metrics_impls", "serde"] }
-spacetimedb-sats = { version = "1", default-features = false, features = ["bytestring", "metrics_impls", "serde"] }
 thiserror = { version = "2" }
 tokio = { version = "1", features = ["full"] }
 

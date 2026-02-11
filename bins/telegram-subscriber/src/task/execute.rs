@@ -34,6 +34,7 @@ pub struct TaskExecutionContext {
     /// Convex client (cloneable, shares underlying connection)
     pub client: ConvexClient,
     /// This robot's ID (JWT subject)
+    #[expect(dead_code)]
     pub robot_id: String,
     /// Telegram configuration (api_id, api_hash)
     pub config: TelegramConfig,

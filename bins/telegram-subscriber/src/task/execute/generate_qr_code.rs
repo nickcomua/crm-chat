@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use convex::ConvexClient;
-use convex_backend::{QrAuthRobotCompleteQrAuthArgs, QrAuthRobotUpdateQrTokenArgs};
+use convex_backend::{QrAuthRobotCompleteQrAuthArgs, QrAuthRobotCompleteQrAuthResult, QrAuthRobotUpdateQrTokenArgs};
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
 use messanger_telegram::{QrLoginToken, TelegramClient};
@@ -51,10 +51,7 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), Ta
                     .clone()
                     .qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
                         authId: auth.id.clone(),
-                        result: serde_json::json!({
-                            "type": "AlreadyAuthorized",
-                            "userId": user_id,
-                        }),
+                        result: QrAuthRobotCompleteQrAuthResult::AlreadyAuthorized { userId: user_id },
                     })
                     .await,
             )?;
@@ -166,10 +163,7 @@ async fn qr_polling_loop(
                         if let Err(e) = check_result(
                             client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
                                 authId: auth_id.clone(),
-                                result: serde_json::json!({
-                                    "type": "Authorized",
-                                    "userId": user_id,
-                                }),
+                                result: QrAuthRobotCompleteQrAuthResult::Authorized { userId: user_id },
                             }).await,
                         ) {
                             error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth");
@@ -190,10 +184,7 @@ async fn qr_polling_loop(
                         if let Err(e) = check_result(
                             client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
                                 authId: auth_id.clone(),
-                                result: serde_json::json!({
-                                    "type": "Failed",
-                                    "error": e.to_string(),
-                                }),
+                                result: QrAuthRobotCompleteQrAuthResult::Failed { error: e.to_string() },
                             }).await,
                         ) {
                             error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth with error");
@@ -209,10 +200,7 @@ async fn qr_polling_loop(
                         if let Err(e) = check_result(
                             client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
                                 authId: auth_id.clone(),
-                                result: serde_json::json!({
-                                    "type": "Failed",
-                                    "error": "QR login stream ended unexpectedly",
-                                }),
+                                result: QrAuthRobotCompleteQrAuthResult::Failed { error: "QR login stream ended unexpectedly".to_string() },
                             }).await,
                         ) {
                             error!(auth_id = %auth_id, error = %e, "Failed to complete QR auth");

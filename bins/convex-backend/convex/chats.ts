@@ -1,11 +1,12 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { chatType } from "./schema";
-import { requireAuth, requireHuman, requireOwner } from "./helpers/auth";
+import { chatDoc, chatType } from "./schema";
+import { isRobotCaller, requireAuth, requireHuman, requireOwner } from "./helpers/auth";
 
 /** List all chats for the current user, sorted by last message time (newest first). */
 export const list = query({
   args: {},
+  returns: v.array(chatDoc),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     return await ctx.db
@@ -27,11 +28,12 @@ export const upsert = mutation({
     pinnedName: v.optional(v.string()),
     lastMessageTs: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const caller = await requireAuth(ctx);
 
     // Authorization: owner or robot
-    const isRobot = caller.issuer === "crm-chat-robot";
+    const isRobot = isRobotCaller(caller);
     if (!isRobot) {
       requireOwner(caller.id, args.userId);
     }
@@ -57,6 +59,7 @@ export const upsert = mutation({
 /** Delete a chat by its chatId. */
 export const deleteChat = mutation({
   args: { chatId: v.string() },
+  returns: v.null(),
   handler: async (ctx, { chatId }) => {
     const caller = await requireAuth(ctx);
 
@@ -67,7 +70,7 @@ export const deleteChat = mutation({
 
     if (existing) {
       // Only owner or robot can delete
-      const isRobot = caller.issuer === "crm-chat-robot";
+      const isRobot = isRobotCaller(caller);
       if (!isRobot) {
         requireOwner(caller.id, existing.userId);
       }

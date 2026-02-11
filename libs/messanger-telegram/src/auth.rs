@@ -366,7 +366,6 @@ impl TelegramClient {
 
         stream! {
             info!("Starting QR code login");
-            let client = self.client.lock().await;
 
             // IDs of users already logged in on this client (to exclude from QR login)
             let except_ids: Vec<i64> = vec![];
@@ -379,8 +378,16 @@ impl TelegramClient {
                     except_ids: except_ids.clone(),
                 };
 
+                // Acquire lock only for the invoke call to avoid holding it across
+                // yields and sleeps — holding it would deadlock when the consumer
+                // tries to call other TelegramClient methods (e.g. get_client_external_id).
                 debug!("Exporting login token");
-                let result = match client.invoke(&request).await {
+                let result = {
+                    let client = self.client.lock().await;
+                    client.invoke(&request).await
+                };
+
+                let result = match result {
                     Ok(r) => r,
                     Err(e) => {
                         error!(error = %e, "Failed to export login token");
@@ -415,7 +422,12 @@ impl TelegramClient {
                             token: migrate.token,
                         };
 
-                        let import_result = match client.invoke_in_dc(migrate.dc_id, &import_request).await {
+                        let import_result = {
+                            let client = self.client.lock().await;
+                            client.invoke_in_dc(migrate.dc_id, &import_request).await
+                        };
+
+                        let import_result = match import_result {
                             Ok(r) => r,
                             Err(e) => {
                                 error!(error = %e, dc_id = migrate.dc_id, "Failed to import login token");

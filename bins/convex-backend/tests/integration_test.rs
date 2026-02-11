@@ -3,7 +3,7 @@
 //! These tests spin up a Docker container with the Convex backend, deploy
 //! the actual Convex functions, and exercise the generated `ConvexApi` trait.
 //!
-//! Run with: `cargo test -p convex-backend --test integration_test -- --ignored --nocapture`
+//! Run with: `cargo test -p convex-backend --test integration_test -- --nocapture`
 //!
 //! Prerequisites: Docker running, Node.js + npm available.
 
@@ -11,8 +11,8 @@ mod common;
 
 use std::time::Duration;
 
-use common::{assert_mutation_error, assert_mutation_success, get_test_env, mint_robot_jwt, parse_docs};
-use convex::{ConvexClient, FunctionResult, Value};
+use common::{assert_mutation_error, get_test_env, mint_robot_jwt};
+use convex::ConvexClient;
 use convex_backend::{ConvexApi, PhoneAuthRobotClaimArgs, QrAuthRobotClaimArgs};
 use futures::StreamExt;
 
@@ -30,52 +30,13 @@ async fn connect_robot_client() -> ConvexClient {
 }
 
 // =============================================================================
-// Robot Lifecycle (no-arg mutations)
-// =============================================================================
-
-#[tokio::test]
-#[ignore]
-async fn test_robot_register() {
-    let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_robot_heartbeat() {
-    let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
-    assert_mutation_success(client.robots_heartbeat().await);
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_robot_unregister() {
-    let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
-    assert_mutation_success(client.robots_unregister().await);
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_robot_full_lifecycle() {
-    let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
-    assert_mutation_success(client.robots_heartbeat().await);
-    assert_mutation_success(client.robots_unregister().await);
-    // Re-register should work (robot doc exists but is offline)
-    assert_mutation_success(client.robots_register().await);
-}
-
-// =============================================================================
 // Query Subscriptions (empty results in fresh database)
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+
 async fn test_subscribe_phone_auth_pending_empty() {
     let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
 
     let mut sub = client
         .subscribe_phone_auth_pending_for_robot()
@@ -85,21 +46,20 @@ async fn test_subscribe_phone_auth_pending_empty() {
     let result = tokio::time::timeout(Duration::from_secs(10), sub.next())
         .await
         .expect("Timeout waiting for subscription")
-        .expect("Subscription stream ended");
+        .expect("Subscription stream ended")
+        .expect("Subscription yielded error");
 
-    let docs = parse_docs::<convex_backend::PhoneAuthsTable>(&result);
     assert!(
-        docs.is_empty(),
+        result.is_empty(),
         "Expected no pending phone auths, got {}",
-        docs.len()
+        result.len()
     );
 }
 
 #[tokio::test]
-#[ignore]
+
 async fn test_subscribe_qr_auth_pending_empty() {
     let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
 
     let mut sub = client
         .subscribe_qr_auth_pending_for_robot()
@@ -109,29 +69,23 @@ async fn test_subscribe_qr_auth_pending_empty() {
     let result = tokio::time::timeout(Duration::from_secs(10), sub.next())
         .await
         .expect("Timeout waiting for subscription")
-        .expect("Subscription stream ended");
+        .expect("Subscription stream ended")
+        .expect("Subscription yielded error");
 
-    let docs = parse_docs::<convex_backend::QrAuthsTable>(&result);
-    assert!(docs.is_empty(), "Expected no pending QR auths, got {}", docs.len());
+    assert!(result.is_empty(), "Expected no pending QR auths, got {}", result.len());
 }
 
 #[tokio::test]
-#[ignore]
+
 async fn test_query_phone_auth_pending() {
     let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
 
     let result = client
         .query_phone_auth_pending_for_robot()
         .await
         .expect("Query failed");
 
-    match result {
-        FunctionResult::Value(Value::Array(arr)) => {
-            assert!(arr.is_empty(), "Expected empty array, got {} items", arr.len());
-        }
-        other => panic!("Expected Value(Array), got: {other:?}"),
-    }
+    assert!(result.is_empty(), "Expected empty array, got {} items", result.len());
 }
 
 // =============================================================================
@@ -139,10 +93,9 @@ async fn test_query_phone_auth_pending() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+
 async fn test_phone_auth_robot_claim_invalid_id() {
     let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
 
     let result = client
         .phone_auth_robot_claim(PhoneAuthRobotClaimArgs {
@@ -155,10 +108,9 @@ async fn test_phone_auth_robot_claim_invalid_id() {
 }
 
 #[tokio::test]
-#[ignore]
+
 async fn test_qr_auth_robot_claim_invalid_id() {
     let mut client = connect_robot_client().await;
-    assert_mutation_success(client.robots_register().await);
 
     let result = client
         .qr_auth_robot_claim(QrAuthRobotClaimArgs {
@@ -174,7 +126,7 @@ async fn test_qr_auth_robot_claim_invalid_id() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+
 async fn test_phone_auth_args_serialization() {
     let args = PhoneAuthRobotClaimArgs {
         authId: "test_id_123".into(),
@@ -185,7 +137,7 @@ async fn test_phone_auth_args_serialization() {
 }
 
 #[tokio::test]
-#[ignore]
+
 async fn test_qr_auth_args_serialization() {
     let args = QrAuthRobotClaimArgs {
         authId: "test_id_456".into(),
@@ -200,7 +152,7 @@ async fn test_qr_auth_args_serialization() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+
 async fn test_unauthenticated_rejected() {
     let env = get_test_env().await;
     let mut client = ConvexClient::new(&env.convex_url)
@@ -208,16 +160,10 @@ async fn test_unauthenticated_rejected() {
         .expect("Failed to connect");
     // Deliberately do NOT call set_auth
 
-    let result = client.robots_register().await;
+    let result = client
+        .phone_auth_robot_claim(PhoneAuthRobotClaimArgs {
+            authId: "test_id".into(),
+        })
+        .await;
     assert_mutation_error(result, "");
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_robot_calls_human_endpoint() {
-    let mut client = connect_robot_client().await;
-
-    // humans_register requires requireHuman, which rejects robot callers
-    let result = client.humans_register().await;
-    assert_mutation_error(result, "human users only");
 }

@@ -6,9 +6,6 @@
     "ultracite/biome/core",
     "ultracite/biome/react"
   ],
-  "files": {
-    "includes": ["!!src/lib/spacetime"]
-  },
   "overrides": [
     {
       "includes": ["src/**/*.tsx", "src/**/*.ts"],

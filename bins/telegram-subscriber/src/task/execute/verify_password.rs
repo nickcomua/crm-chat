@@ -2,7 +2,7 @@
 //!
 //! This step verifies a 2FA password with Telegram.
 
-use convex_backend::PhoneAuthRobotCompleteVerifyPasswordArgs;
+use convex_backend::{PhoneAuthRobotCompleteVerifyPasswordArgs, PhoneAuthRobotCompleteVerifyPasswordResult};
 use grammers_tl_types as tl;
 use messanger_telegram::{CheckPasswordResult, ClonablePasswordToken};
 use tracing::{error, info, instrument, warn};
@@ -56,29 +56,24 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     let result = match check_result_val {
         Err(_) => {
             error!("Timeout verifying password");
-            serde_json::json!({
-                "type": "Failed",
-                "error": "Timeout verifying password",
-            })
+            PhoneAuthRobotCompleteVerifyPasswordResult::Failed {
+                error: "Timeout verifying password".to_string(),
+            }
         }
         Ok(Err(e)) => {
             error!(error = %e, "Failed to verify password");
-            serde_json::json!({
-                "type": "Failed",
-                "error": format!("Failed to verify password: {}", e),
-            })
+            PhoneAuthRobotCompleteVerifyPasswordResult::Failed {
+                error: format!("Failed to verify password: {}", e),
+            }
         }
         Ok(Ok(r)) => match r {
             CheckPasswordResult::Success { user_id } => {
                 info!(user_id = user_id, "Password verification successful");
-                serde_json::json!({
-                    "type": "Success",
-                    "userId": user_id,
-                })
+                PhoneAuthRobotCompleteVerifyPasswordResult::Success { userId: user_id }
             }
             CheckPasswordResult::InvalidPassword => {
                 warn!("Invalid password");
-                serde_json::json!({ "type": "InvalidPassword" })
+                PhoneAuthRobotCompleteVerifyPasswordResult::InvalidPassword
             }
         },
     };
