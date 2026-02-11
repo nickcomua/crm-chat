@@ -2,19 +2,10 @@ import { expect, test } from "@playwright/test";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
 
-// Test credentials from environment (required)
-const TEST_CLERK_USERNAME = process.env.TEST_CLERK_USERNAME;
-const TEST_CLERK_PASSWORD = process.env.TEST_CLERK_PASSWORD;
-
-if (!(TEST_CLERK_USERNAME && TEST_CLERK_PASSWORD)) {
-  throw new Error(
-    "TEST_CLERK_USERNAME and TEST_CLERK_PASSWORD environment variables are required"
-  );
-}
-
 // URL patterns for navigation
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const SETTINGS_URL_PATTERN = /\/settings/;
+const TG_LOGIN_URL_PATTERN = /^tg:\/\/login\?token=.+/;
 
 // Telegram subscriber needs time to claim the auth and fetch the QR token
 const QR_CODE_TIMEOUT = 30_000;
@@ -24,30 +15,12 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("QR Code Authentication", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the app - Clerk will redirect to sign-in
+    // Auth is handled by storageState from auth.setup.ts
     await page.goto("/");
-
-    // Wait for Clerk sign-in page to load (identifier input)
-    await page.waitForSelector('input[name="identifier"]', {
-      timeout: 15_000,
-    });
-
-    // Fill in identifier and submit (Clerk multi-step flow)
-    await page.fill('input[name="identifier"]', TEST_CLERK_USERNAME);
-    await page.click("button.cl-formButtonPrimary");
-
-    // Wait for password step and fill in
-    await page.waitForSelector('input[name="password"]', { timeout: 10_000 });
-    await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
-    await page.click("button.cl-formButtonPrimary");
-
-    // Wait for successful login and redirect to main app
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
+    await page.waitForTimeout(2000);
 
-    // Give Convex subscriptions time to settle (queries cause re-renders after auth)
-    await page.waitForTimeout(3000);
-
-    // Navigate to settings and wait for it to be fully loaded
+    // Navigate to settings
     await page.locator('a[href="/#/settings"]').click({ timeout: 15_000 });
     await page.waitForURL(SETTINGS_URL_PATTERN);
     await page.waitForSelector("text=Telegram Clients", { timeout: 10_000 });
@@ -85,8 +58,10 @@ test.describe("QR Code Authentication", () => {
     );
 
     expect(decoded).not.toBeNull();
-    if (decoded === null) throw new Error("QR code could not be decoded");
-    expect(decoded.data).toMatch(/^tg:\/\/login\?token=.+/);
+    if (decoded === null) {
+      throw new Error("QR code could not be decoded");
+    }
+    expect(decoded.data).toMatch(TG_LOGIN_URL_PATTERN);
 
     // Verify instruction text
     await expect(

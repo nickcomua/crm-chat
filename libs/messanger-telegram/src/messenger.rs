@@ -8,6 +8,7 @@ use grammers_client::{
     update::Update as TgUpdate,
     Client,
 };
+use grammers_tl_types as tl;
 use messanger_interface::{
     ChatSummary, DialogStream, ExternalId, MessageStream, MessageSummary, MessengerClient,
     MessengerError, NativePayload, Update, UpdateStream,
@@ -94,6 +95,10 @@ impl MessengerClient for TelegramClient {
             let mut count = 0;
             while let Ok(Some(dialog)) = dialogs.next().await {
                 let chat = dialog.peer();
+                let is_pinned = match &dialog.raw {
+                    tl::enums::Dialog::Dialog(d) => d.pinned,
+                    tl::enums::Dialog::Folder(d) => d.pinned,
+                };
                 let summary = ChatSummary {
                     external_id: chat.id().bare_id().to_string(),
                     name: chat.name().map(|s| s.to_string()),
@@ -105,6 +110,7 @@ impl MessengerClient for TelegramClient {
                         }
                         .to_string(),
                     ),
+                    is_pinned,
                 };
                 count += 1;
                 // If receiver is dropped, stop producing to avoid unnecessary work
@@ -203,7 +209,10 @@ impl MessengerClient for TelegramClient {
                     count += 1;
                     // If receiver is dropped, stop producing to avoid unnecessary work
                     if sender.send(Ok(summary)).await.is_err() {
-                        debug!(count = count, "Message receiver dropped, stopping iteration");
+                        debug!(
+                            count = count,
+                            "Message receiver dropped, stopping iteration"
+                        );
                         break;
                     }
                 } else {

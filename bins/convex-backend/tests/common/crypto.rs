@@ -1,9 +1,9 @@
-use base64::engine::{general_purpose, Engine};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use base64::engine::{Engine, general_purpose};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rand::rngs::OsRng;
+use rsa::RsaPrivateKey;
 use rsa::pkcs8::EncodePrivateKey;
 use rsa::traits::PublicKeyParts;
-use rsa::RsaPrivateKey;
 use serde::Serialize;
 
 /// Generate an RSA keypair and JWKS data URI for Convex auth.config.ts.

@@ -4,7 +4,7 @@
 //! The private key is loaded from the `ROBOT_JWT_PRIVATE_KEY` environment variable.
 
 use anyhow::Result;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -30,7 +30,7 @@ pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str, kid: &str) -> Resul
         iss: "https://crm-chat-robot.local".to_string(),
         aud: "convex".to_string(),
         iat: now,
-        exp: now + 3600 * 24 ,
+        exp: now + 3600 * 24,
     };
 
     let mut header = Header::new(Algorithm::RS256);

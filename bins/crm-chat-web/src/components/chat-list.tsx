@@ -6,6 +6,19 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
+interface Client {
+  _id: string;
+  kind: string;
+  externalId: string;
+}
+
+interface Message {
+  chatId: string;
+  deleted?: boolean;
+  ts: number;
+  text?: string;
+}
+
 interface ChatListProps {
   selectedChatId: string | null;
   onSelectChat: (chatId: string) => void;
@@ -46,32 +59,41 @@ function getClientDisplayName(client: {
   return `${client.kind} (${client.externalId.slice(0, 8)}...)`;
 }
 
+const WHITESPACE_RE = /\s+/;
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(WHITESPACE_RE);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getAvatarGradient(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  const hue2 = (hue + 45) % 360;
+  return `linear-gradient(135deg, oklch(0.68 0.16 ${hue}), oklch(0.55 0.18 ${hue2}))`;
+}
+
 function getExternalIdColorStyle(externalId: string): {
   background: string;
   color: string;
 } {
-  // Simple hash function to get a consistent hue for each external ID
   let hash = 0;
   for (let i = 0; i < externalId.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash function
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
     hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
   }
-
-  // Map hash to hue (0-360)
   const hue = Math.abs(hash) % 360;
-
-  // Use consistent lightness and chroma values for uniform appearance
   return {
-    background: `oklch(0.65 0.18 ${hue} / 0.2)`,
-    color: `oklch(0.45 0.2 ${hue})`,
+    background: `oklch(0.65 0.18 ${hue} / 0.15)`,
+    color: `oklch(0.5 0.18 ${hue})`,
   };
-}
-
-function ChatIcon({ chatType }: { chatType: string }): React.ReactNode {
-  if (chatType === "Group") {
-    return <Users className="h-5 w-5" />;
-  }
-  return <MessageSquare className="h-5 w-5" />;
 }
 
 export function ChatList({
@@ -79,8 +101,8 @@ export function ChatList({
   onSelectChat,
 }: ChatListProps): React.ReactNode {
   const chats = useQuery(api.chats.list);
-  const clients = useQuery(api.clients.list);
-  const messages = useQuery(api.messages.list);
+  const clients = useQuery(api.clients.list) as Client[] | undefined;
+  const messages = useQuery(api.messages.list) as Message[] | undefined;
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [showClientFilter, setShowClientFilter] = useState(false);
@@ -88,7 +110,7 @@ export function ChatList({
   if (chats === undefined || clients === undefined || messages === undefined) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
       </div>
     );
   }
@@ -142,14 +164,14 @@ export function ChatList({
 
   if (chats.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-4 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-          <MessageSquare className="h-7 w-7 text-primary/50" />
+      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+          <MessageSquare className="h-6 w-6 text-primary/50" />
         </div>
-        <p className="mt-4 font-display font-medium text-muted-foreground">
+        <p className="mt-4 font-display font-medium text-muted-foreground text-sm">
           No chats yet
         </p>
-        <p className="mt-1 text-muted-foreground/70 text-sm">
+        <p className="mt-1 text-muted-foreground/60 text-xs">
           Connect a Telegram client to see your chats
         </p>
       </div>
@@ -157,14 +179,14 @@ export function ChatList({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-sidebar">
       <div className="space-y-2 p-3">
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               aria-label="Search chats"
-              className="pl-9"
+              className="h-8 border-transparent bg-muted/60 pl-8 text-[13px] placeholder:text-muted-foreground/50 focus:border-border focus:bg-background"
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search chats..."
               type="search"
@@ -175,13 +197,14 @@ export function ChatList({
             <Button
               aria-label="Filter clients"
               className={cn(
+                "h-8 w-8",
                 selectedClientId !== null && "bg-accent text-accent-foreground"
               )}
               onClick={() => setShowClientFilter(!showClientFilter)}
               size="icon"
               variant="outline"
             >
-              <Filter className="h-4 w-4" />
+              <Filter className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -190,7 +213,7 @@ export function ChatList({
           <div className="flex flex-wrap gap-1.5">
             <button
               className={cn(
-                "rounded-full px-2.5 py-1 text-xs transition-colors",
+                "rounded-md px-2 py-0.5 text-xs transition-colors",
                 selectedClientId === null
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -203,7 +226,7 @@ export function ChatList({
             {clientsArray.map((client) => (
               <button
                 className={cn(
-                  "rounded-full px-2.5 py-1 text-xs transition-colors",
+                  "rounded-md px-2 py-0.5 text-xs transition-colors",
                   selectedClientId === client._id
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -219,70 +242,73 @@ export function ChatList({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto px-1.5 pb-2">
         {filteredChats.length === 0 ? (
-          <div className="p-4 text-center text-muted-foreground text-sm">
+          <div className="p-4 text-center text-muted-foreground text-xs">
             No chats found
           </div>
         ) : (
-          <div className="space-y-0.5 px-2">
+          <div className="space-y-px">
             {filteredChats.map((chat) => {
               const lastMessage = getLastMessage(chat.chatId);
               const isSelected = selectedChatId === chat.chatId;
               const client = clientsMap.get(chat.clientId);
+              const displayName = getChatDisplayName(chat);
 
               return (
                 <button
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors",
-                    isSelected
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted/50"
+                    "group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all",
+                    isSelected ? "bg-accent/80" : "hover:bg-muted/40"
                   )}
                   key={chat._id}
                   onClick={() => onSelectChat(chat.chatId)}
                   type="button"
                 >
+                  {isSelected && (
+                    <div className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                  )}
+
                   <div
-                    className={cn(
-                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
-                      isSelected
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground"
-                    )}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-medium text-white text-xs shadow-sm"
+                    style={{ background: getAvatarGradient(displayName) }}
                   >
-                    <ChatIcon chatType={chat.chatType} />
+                    {chat.chatType === "Group" ? (
+                      <Users className="h-4 w-4" />
+                    ) : (
+                      getInitials(displayName)
+                    )}
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="flex min-w-0 items-center gap-1">
                         {client?.kind === "Telegram" && (
-                          <i className="nf nf-fae-telegram shrink-0 text-blue-500" />
+                          <i className="nf nf-fae-telegram shrink-0 text-blue-500 text-xs" />
                         )}
-                        <span className="truncate font-medium">
-                          {getChatDisplayName(chat)}
+                        <span className="truncate font-medium text-[13px]">
+                          {displayName}
                         </span>
                         {chat.isPinned && (
-                          <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <Pin className="h-2.5 w-2.5 shrink-0 text-muted-foreground/60" />
                         )}
                       </div>
-                      <span className="shrink-0 text-muted-foreground text-xs">
+                      <span className="shrink-0 text-[11px] text-muted-foreground/70">
                         {formatTimestamp(chat.lastMessageTs)}
                       </span>
                     </div>
 
-                    <div className="mt-0.5 flex items-center gap-2">
+                    <div className="mt-px flex items-center gap-1.5">
                       {client && (
                         <span
-                          className="shrink-0 rounded-full px-2 py-0.5 font-medium text-xs"
+                          className="shrink-0 rounded px-1.5 py-px font-medium text-[10px]"
                           style={getExternalIdColorStyle(client.externalId)}
                         >
                           {client.externalId}
                         </span>
                       )}
                       {lastMessage && (
-                        <p className="min-w-0 flex-1 truncate text-muted-foreground text-sm">
+                        <p className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
                           {lastMessage}
                         </p>
                       )}

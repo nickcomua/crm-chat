@@ -41,6 +41,7 @@
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.58.1",
     "@tailwindcss/vite": "^4.1.8",
+    "testcontainers": "^10.0.0",
     "@types/node": "^24.10.1",
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.5",

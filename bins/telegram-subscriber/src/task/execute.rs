@@ -34,7 +34,7 @@ pub struct TaskExecutionContext {
     /// Convex client (cloneable, shares underlying connection)
     pub client: ConvexClient,
     /// This robot's ID (JWT subject)
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     pub robot_id: String,
     /// Telegram configuration (api_id, api_hash)
     pub config: TelegramConfig,
@@ -123,10 +123,7 @@ pub async fn execute_phone_auth(
 
 /// Execute the current step of a QR auth flow.
 #[instrument(skip(ctx), fields(auth_id = %auth.id, step = ?auth.step))]
-pub async fn execute_qr_auth(
-    ctx: &TaskExecutionContext,
-    auth: &QrAuth,
-) -> Result<(), TaskError> {
+pub async fn execute_qr_auth(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), TaskError> {
     match auth.step {
         QrAuthStep::Generating => generate_qr_code::execute(ctx, auth).await,
         _ => {

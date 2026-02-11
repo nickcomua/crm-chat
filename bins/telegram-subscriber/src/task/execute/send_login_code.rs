@@ -8,7 +8,7 @@ use tracing::{error, info, instrument, warn};
 
 use super::TaskExecutionContext;
 use crate::error::TaskError;
-use crate::types::{check_result, ConvexApi, PhoneAuth};
+use crate::types::{ConvexApi, PhoneAuth, check_result};
 
 /// Execute the SendingCode step of a phone auth flow.
 ///
@@ -21,9 +21,7 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     info!("Executing send_login_code");
 
     // Get or create Telegram client for this user
-    let tg_client = ctx
-        .get_or_create_client(&auth.user_id, &auth.phone)
-        .await?;
+    let tg_client = ctx.get_or_create_client(&auth.user_id, &auth.phone).await?;
 
     // Check if already authorized
     match tg_client.is_authorized().await {

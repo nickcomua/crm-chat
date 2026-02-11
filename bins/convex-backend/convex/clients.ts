@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { clientDoc } from "./schema";
-import { requireAuth, requireHuman, requireOwner, isPhoneAuthTerminal } from "./helpers/auth";
+import { clientDoc, clientKind } from "./schema";
+import { requireHuman, requireOwner, requireRobot, isPhoneAuthTerminal } from "./helpers/auth";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -45,5 +45,44 @@ export const deleteClient = mutation({
     }
 
     await ctx.db.delete(clientId);
+  },
+});
+
+/** List all connected clients. Robot-only (for scanning). */
+export const connectedForRobot = query({
+  args: {},
+  returns: v.array(clientDoc),
+  handler: async (ctx) => {
+    await requireRobot(ctx);
+    const all = await ctx.db.query("clients").collect();
+    return all.filter((c) => c.status.type === "Connected");
+  },
+});
+
+/** Register a pre-authenticated client as Connected. Robot-only. */
+export const robotRegisterConnected = mutation({
+  args: {
+    userId: v.string(),
+    externalId: v.string(),
+    kind: clientKind,
+  },
+  returns: v.id("clients"),
+  handler: async (ctx, args) => {
+    await requireRobot(ctx);
+    const existing = await ctx.db
+      .query("clients")
+      .withIndex("by_userId_externalId", (q) =>
+        q.eq("userId", args.userId).eq("externalId", args.externalId),
+      )
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { status: { type: "Connected" } });
+      return existing._id;
+    }
+    return await ctx.db.insert("clients", {
+      ...args,
+      activeChats: [],
+      status: { type: "Connected" },
+    });
   },
 });
