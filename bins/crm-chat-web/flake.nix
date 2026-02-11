@@ -23,7 +23,7 @@
           src = pkgs.lib.cleanSource ./.;
 
           # Nix will tell you the correct hash to put here after the first build attempt.
-          npmDepsHash = "sha256-1is7N9GM2plMSji6xhuYnWjoPaq6BqKaXRBOQUrao0k=";
+          npmDepsHash = "sha256-vJoIiN2Rm4lkDCeFVKYuIgvZ8YFpnOlowR2yUMpHBDk=";
 
           # Avoid npm/vite trying to write to read-only paths
           # makeCacheWritable = true;
@@ -140,17 +140,21 @@
             version = "0.0.0";
             src = pkgs.lib.cleanSource ./.;
 
-            npmDepsHash = "sha256-1is7N9GM2plMSji6xhuYnWjoPaq6BqKaXRBOQUrao0k=";
+            npmDepsHash = "sha256-vJoIiN2Rm4lkDCeFVKYuIgvZ8YFpnOlowR2yUMpHBDk=";
             makeCacheWritable = true;
 
             nativeBuildInputs = [
               pkgs.biome
             ];
 
-            # Point to the nix-provided binaries to avoid ENOENT in the sandbox
-            # BIOME_BINARY = "${pkgs.biome}/bin/biome";
-            # Override build phase to run lint instead
+            # Override build phase to run lint instead.
+            # Copy to /tmp to avoid the /build/ working directory path,
+            # which matches ultracite's biome "!!**/build" ignore pattern.
+            # A symlink doesn't work because biome resolves to the real path.
             buildPhase = ''
+              rm -rf /tmp/lint-source
+              cp -r . /tmp/lint-source
+              cd /tmp/lint-source
               npm run lint
             '';
 

@@ -8,7 +8,11 @@ pub async fn deploy_convex(
     admin_key: &str,
     jwks_data_uri: &str,
 ) -> anyhow::Result<()> {
-    let convex_backend_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Allow overriding via env var for nixosTest (where the binary runs in a VM)
+    let convex_backend_dir = PathBuf::from(
+        std::env::var("CONVEX_BACKEND_DIR")
+            .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string()),
+    );
 
     // Ensure node_modules exist
     let npm_status = tokio::process::Command::new("npm")
@@ -55,11 +59,7 @@ pub async fn deploy_convex(
     Ok(())
 }
 
-fn convex_cmd(
-    dir: &PathBuf,
-    convex_url: &str,
-    admin_key: &str,
-) -> tokio::process::Command {
+fn convex_cmd(dir: &PathBuf, convex_url: &str, admin_key: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("npx");
     cmd.arg("convex")
         .current_dir(dir)

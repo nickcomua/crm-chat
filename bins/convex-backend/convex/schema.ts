@@ -76,6 +76,8 @@ export const chatDoc = v.object({
   isPinned: v.boolean(),
   pinnedName: v.optional(v.string()),
   lastMessageTs: v.number(),
+  scanEnabled: v.optional(v.boolean()),
+  fullScanned: v.optional(v.boolean()),
 });
 
 export const messageDoc = v.object({
@@ -156,7 +158,7 @@ export default defineSchema({
   clients: defineTable({
     userId: v.string(), // FK to humans.userId
     kind: clientKind,
-    externalId: v.string(), // phone number or Telegram user_id
+    externalId: v.string(), // phone auth: phone number; QR auth: "telegram:{user_id}"
     activeChats: v.array(v.string()),
     status: clientStatus,
   })
@@ -173,6 +175,8 @@ export default defineSchema({
     isPinned: v.boolean(),
     pinnedName: v.optional(v.string()),
     lastMessageTs: v.number(), // Unix ms
+    scanEnabled: v.optional(v.boolean()), // user override for scanning (defaults to isPinned)
+    fullScanned: v.optional(v.boolean()), // true after all messages synced once
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId", ["userId"])

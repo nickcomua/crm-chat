@@ -6,6 +6,7 @@
 use crate::error::TaskError;
 
 // Re-export generated types with shorter names
+pub use convex_backend::ClientsTable as Client;
 pub use convex_backend::ConvexApi;
 pub use convex_backend::PhoneAuthsStep as PhoneAuthStep;
 pub use convex_backend::PhoneAuthsTable as PhoneAuth;

@@ -14,16 +14,25 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
-use config::{get_session_dir, TelegramConfig};
+use config::{TelegramConfig, get_session_dir};
 use convex::ConvexClient;
 use futures::StreamExt;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
-use crate::task::{claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth, TaskExecutionContext};
-use crate::types::{ConvexApi, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
+use crate::task::{
+    TaskExecutionContext, claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth,
+};
+use crate::types::{Client, ConvexApi, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
+
+/// Handle for a running scan task (one per connected client).
+struct ScanTaskHandle {
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -74,13 +83,13 @@ async fn main() -> anyhow::Result<()> {
     info!(robot_id = %robot_id, "Connected to Convex");
 
     // Clone for TaskExecutionContext (mutations use their own clones internally)
-    let ctx = TaskExecutionContext {
+    let ctx = Arc::new(TaskExecutionContext {
         client: client.clone(),
         robot_id: robot_id.clone(),
         config: config.clone(),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         qr_polling_tasks: Arc::new(Mutex::new(HashMap::new())),
-    };
+    });
 
     // Subscribe to auth queries
     let mut phone_pending = client.subscribe_phone_auth_pending_for_robot().await?;
@@ -88,11 +97,17 @@ async fn main() -> anyhow::Result<()> {
     let mut qr_pending = client.subscribe_qr_auth_pending_for_robot().await?;
     let mut qr_assigned = client.subscribe_qr_auth_assigned_to_robot().await?;
 
+    // Subscribe to connected clients (for scanning)
+    let mut connected_clients = client.subscribe_clients_connected_for_robot().await?;
+
     info!(session_dir = ?get_session_dir(), "Session files stored in");
 
     // State tracking for diffing subscription snapshots
     let mut phone_assigned_steps: HashMap<String, PhoneAuthStep> = HashMap::new();
     let mut qr_assigned_steps: HashMap<String, QrAuthStep> = HashMap::new();
+
+    // Active scan tasks keyed by client._id
+    let mut scan_tasks: HashMap<String, ScanTaskHandle> = HashMap::new();
 
     // Timer for JWT refresh
     let mut jwt_refresh = tokio::time::interval(Duration::from_secs(50 * 60));
@@ -207,7 +222,61 @@ async fn main() -> anyhow::Result<()> {
                     .map(|a| (a.id.clone(), a.step))
                     .collect();
             }
+
+            // Connected clients: start/stop scan tasks
+            Some(Ok(clients)) = connected_clients.next() => {
+                let clients: Vec<Client> = clients;
+                let new_ids: std::collections::HashSet<String> = clients.iter()
+                    .map(|c| c.id.clone())
+                    .collect();
+
+                // Cancel scan tasks for clients that are no longer connected
+                let removed: Vec<String> = scan_tasks.keys()
+                    .filter(|id| !new_ids.contains(*id))
+                    .cloned()
+                    .collect();
+                for id in &removed {
+                    if let Some(handle) = scan_tasks.remove(id) {
+                        info!(client_id = %id, "Cancelling scan task (client disconnected)");
+                        handle.cancel.cancel();
+                        handle.task.abort();
+                    }
+                }
+
+                // Start scan tasks for newly connected clients
+                for client in &clients {
+                    if scan_tasks.contains_key(&client.id) {
+                        continue; // already scanning
+                    }
+
+                    let cancel = CancellationToken::new();
+                    let ctx_clone = ctx.clone();
+                    let client_clone = client.clone();
+                    let cancel_clone = cancel.clone();
+
+                    info!(client_id = %client.id, external_id = %client.external_id, "Starting scan task");
+
+                    let task = tokio::spawn(async move {
+                        if let Err(e) = task::scan::scan_client(&ctx_clone, &client_clone, cancel_clone).await {
+                            error!(
+                                client_id = %client_clone.id,
+                                error = %e,
+                                "Scan task failed"
+                            );
+                        }
+                    });
+
+                    scan_tasks.insert(client.id.clone(), ScanTaskHandle { cancel, task });
+                }
+            }
         }
+    }
+
+    // Clean up scan tasks on shutdown
+    for (id, handle) in scan_tasks {
+        info!(client_id = %id, "Cancelling scan task (shutdown)");
+        handle.cancel.cancel();
+        handle.task.abort();
     }
 
     Ok(())

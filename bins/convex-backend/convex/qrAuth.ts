@@ -193,7 +193,7 @@ export const robotCompleteQrAuth = mutation({
     const now = Date.now();
 
     if (result.type === "Authorized" || result.type === "AlreadyAuthorized") {
-      const externalId = result.userId.toString();
+      const externalId = `telegram:${result.userId}`;
       const step = result.type;
 
       // Find or create the client

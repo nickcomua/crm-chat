@@ -9,7 +9,7 @@ import {
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { MessageSquare, Moon, Search, Settings, Sun } from "lucide-react";
 import { useState } from "react";
-import { RightSidebar } from "@/components/right-sidebar";
+import { NotificationsBellPanel } from "@/components/right-sidebar";
 import { SearchDialog } from "@/components/search-dialog";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/hooks/use-theme";
@@ -25,14 +25,15 @@ function ThemeToggle(): React.ReactNode {
 
   return (
     <Button
+      className="h-8 w-8"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
       size="icon"
       variant="ghost"
     >
       {resolvedTheme === "dark" ? (
-        <Sun className="h-4 w-4" />
+        <Sun className="h-3.5 w-3.5" />
       ) : (
-        <Moon className="h-4 w-4" />
+        <Moon className="h-3.5 w-3.5" />
       )}
       <span className="sr-only">Toggle theme</span>
     </Button>
@@ -42,12 +43,12 @@ function ThemeToggle(): React.ReactNode {
 function AuthLayout(): React.ReactNode {
   const { isLoaded, isSignedIn } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const navigate = useNavigate();
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
 
-  // Wait for Clerk to load
   if (!isLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -61,7 +62,6 @@ function AuthLayout(): React.ReactNode {
     );
   }
 
-  // Require sign-in
   if (!isSignedIn) {
     return <RedirectToSignIn />;
   }
@@ -69,68 +69,73 @@ function AuthLayout(): React.ReactNode {
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <div className="flex h-screen flex-col">
-        <header className="sticky top-0 z-50 border-border/50 border-b bg-background/80 backdrop-blur-xl">
-          <div className="flex h-14 items-center justify-between px-4">
-            <div className="flex items-center gap-5">
-              <h1 className="font-display font-semibold text-lg tracking-tight">
+        <header className="sticky top-0 z-50 border-border/40 border-b bg-background/90 backdrop-blur-xl">
+          <div className="flex h-12 items-center justify-between px-4">
+            <div className="flex items-center gap-4">
+              <h1 className="font-display font-semibold text-base tracking-tight">
                 CRM Chat
               </h1>
-              <div className="hidden h-5 w-px bg-border sm:block" />
+              <div className="hidden h-4 w-px bg-border sm:block" />
               <nav className="flex items-center gap-0.5">
                 <Link
                   className={cn(
-                    "flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium text-sm transition-all",
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
                     currentPath.startsWith("/chats")
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                   to="/chats"
                 >
-                  <MessageSquare className="h-4 w-4" />
+                  <MessageSquare className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Chats</span>
                 </Link>
                 <Link
                   className={cn(
-                    "flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium text-sm transition-all",
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
                     currentPath === "/settings"
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                   to="/settings"
                 >
-                  <Settings className="h-4 w-4" />
+                  <Settings className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Settings</span>
                 </Link>
               </nav>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <Button
+                className="h-8 w-8"
                 onClick={() => setSearchOpen(true)}
                 size="icon"
                 variant="ghost"
               >
-                <Search className="h-4 w-4" />
+                <Search className="h-3.5 w-3.5" />
                 <span className="sr-only">Search messages</span>
               </Button>
+              <NotificationsBellPanel
+                onOpenChange={setNotificationsOpen}
+                open={notificationsOpen}
+              />
               <ThemeToggle />
-              <div className="ml-1 h-5 w-px bg-border" />
-              <div className="ml-1">
+              <div className="ml-1.5 h-4 w-px bg-border" />
+              <div className="ml-1.5">
                 <UserButton
                   appearance={{
                     elements: {
-                      avatarBox: "h-7 w-7",
+                      avatarBox: "h-6 w-6",
                     },
                   }}
                 />
               </div>
             </div>
           </div>
+          <div className="h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
         </header>
         <div className="flex flex-1 overflow-hidden">
           <main className="flex-1 overflow-hidden">
             <Outlet />
           </main>
-          <RightSidebar />
         </div>
       </div>
       <SearchDialog

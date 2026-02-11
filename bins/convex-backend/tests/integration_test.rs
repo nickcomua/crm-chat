@@ -72,7 +72,11 @@ async fn test_subscribe_qr_auth_pending_empty() {
         .expect("Subscription stream ended")
         .expect("Subscription yielded error");
 
-    assert!(result.is_empty(), "Expected no pending QR auths, got {}", result.len());
+    assert!(
+        result.is_empty(),
+        "Expected no pending QR auths, got {}",
+        result.len()
+    );
 }
 
 #[tokio::test]
@@ -85,7 +89,11 @@ async fn test_query_phone_auth_pending() {
         .await
         .expect("Query failed");
 
-    assert!(result.is_empty(), "Expected empty array, got {} items", result.len());
+    assert!(
+        result.is_empty(),
+        "Expected empty array, got {} items",
+        result.len()
+    );
 }
 
 // =============================================================================

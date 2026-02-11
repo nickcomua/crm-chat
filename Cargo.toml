@@ -2,7 +2,6 @@
 members = [
   "bins/convex-backend",
   "bins/es-proxy",
-  "bins/qr-login-test",
   "libs/hack",
   "libs/messanger-interface",
   "libs/messanger-telegram",

@@ -3,6 +3,19 @@ import { v } from "convex/values";
 import { messageDoc } from "./schema";
 import { isRobotCaller, requireAuth, requireHuman, requireOwner } from "./helpers/auth";
 
+/** List all messages for the current user. */
+export const list = query({
+  args: {},
+  returns: v.array(messageDoc),
+  handler: async (ctx) => {
+    const caller = await requireHuman(ctx);
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
+      .collect();
+  },
+});
+
 /** List messages for a specific chat, ordered by timestamp. */
 export const listByChat = query({
   args: { chatId: v.string() },

@@ -1,10 +1,3 @@
-/// Assert that a typed mutation returned successfully.
-pub fn assert_mutation_success(result: anyhow::Result<()>) {
-    if let Err(e) = result {
-        panic!("Mutation call failed: {e}");
-    }
-}
-
 /// Assert that a typed mutation returned an error containing the expected substring.
 pub fn assert_mutation_error(result: anyhow::Result<()>, expected_substring: &str) {
     match result {

@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use convex::ConvexClient;
-use convex_backend::{QrAuthRobotCompleteQrAuthArgs, QrAuthRobotCompleteQrAuthResult, QrAuthRobotUpdateQrTokenArgs};
+use convex_backend::{
+    QrAuthRobotCompleteQrAuthArgs, QrAuthRobotCompleteQrAuthResult, QrAuthRobotUpdateQrTokenArgs,
+};
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
 use messanger_telegram::{QrLoginToken, TelegramClient};
@@ -16,7 +18,7 @@ use tracing::{error, info, instrument, warn};
 
 use super::{QrPollingHandle, SessionKey, TaskExecutionContext};
 use crate::error::TaskError;
-use crate::types::{check_result, ConvexApi, QrAuth};
+use crate::types::{ConvexApi, QrAuth, check_result};
 
 /// Execute the Generating step of a QR auth flow.
 ///
@@ -37,21 +39,25 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &QrAuth) -> Result<(), Ta
     let session_id = auth.id.clone();
 
     // Get or create Telegram client with auth_id as identifier
-    let tg_client = ctx
-        .get_or_create_client(&auth.user_id, &session_id)
-        .await?;
+    let tg_client = ctx.get_or_create_client(&auth.user_id, &session_id).await?;
 
     // Check if already authorized
     match tg_client.is_authorized().await {
         Ok(true) => {
             info!("Client is already authorized");
             let user_id = get_telegram_user_id(&tg_client).await;
+
+            // Copy session file to scanner-expected path (external_id-based)
+            crate::config::copy_session_for_scanning(&session_id, &auth.user_id, user_id);
+
             check_result(
                 ctx.client
                     .clone()
                     .qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
                         authId: auth.id.clone(),
-                        result: QrAuthRobotCompleteQrAuthResult::AlreadyAuthorized { userId: user_id },
+                        result: QrAuthRobotCompleteQrAuthResult::AlreadyAuthorized {
+                            userId: user_id,
+                        },
                     })
                     .await,
             )?;
@@ -159,6 +165,9 @@ async fn qr_polling_loop(
                         info!(auth_id = %auth_id, "QR login successful");
 
                         let user_id = get_telegram_user_id(&tg_client).await;
+
+                        // Copy session file to scanner-expected path (external_id-based)
+                        crate::config::copy_session_for_scanning(&session_key.client_id, &session_key.user_id, user_id);
 
                         if let Err(e) = check_result(
                             client.clone().qr_auth_robot_complete_qr_auth(QrAuthRobotCompleteQrAuthArgs {
