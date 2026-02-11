@@ -2,8 +2,6 @@
 
 This directory contains Playwright integration tests for the CRM Chat web application.
 
-> **Note:** The test spec (`qr-auth.spec.ts`) still references SpacetimeDB in its `beforeEach` hook (waits for `"Connected to SpacetimeDB"` console message). This needs to be updated to work with the Convex backend.
-
 ## Prerequisites
 
 1. **Install Playwright browsers:**
@@ -62,7 +60,7 @@ npm run test:headed
 ## Test Files
 
 - `qr-auth.spec.ts` - Tests for QR code authentication flow
-  - Verifies QR code generation when clicking "Add Client"
+  - Verifies QR code generation and decodes it to verify `tg://login?token=...` URL
   - Verifies cancel functionality
 
 ## Test Configuration

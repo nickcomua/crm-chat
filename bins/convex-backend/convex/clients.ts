@@ -1,10 +1,12 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { clientDoc } from "./schema";
 import { requireAuth, requireHuman, requireOwner, isPhoneAuthTerminal } from "./helpers/auth";
 
 /** List all clients for the current human user. */
 export const list = query({
   args: {},
+  returns: v.array(clientDoc),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     return await ctx.db
@@ -17,6 +19,7 @@ export const list = query({
 /** Delete a client and cancel associated auth sessions. */
 export const deleteClient = mutation({
   args: { clientId: v.id("clients") },
+  returns: v.null(),
   handler: async (ctx, { clientId }) => {
     const caller = await requireHuman(ctx);
     const client = await ctx.db.get(clientId);

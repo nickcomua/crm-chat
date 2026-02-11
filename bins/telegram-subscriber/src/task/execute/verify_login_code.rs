@@ -2,7 +2,7 @@
 //!
 //! This step verifies a login code with Telegram.
 
-use convex_backend::PhoneAuthRobotCompleteVerifyCodeArgs;
+use convex_backend::{PhoneAuthRobotCompleteVerifyCodeArgs, PhoneAuthRobotCompleteVerifyCodeResult};
 use messanger_telegram::{ClonableLoginToken, SignInResult};
 use tracing::{error, info, instrument, warn};
 
@@ -48,25 +48,20 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     let result = match sign_in_result {
         Err(_) => {
             error!("Timeout verifying login code");
-            serde_json::json!({
-                "type": "Failed",
-                "error": "Timeout verifying login code",
-            })
+            PhoneAuthRobotCompleteVerifyCodeResult::Failed {
+                error: "Timeout verifying login code".to_string(),
+            }
         }
         Ok(Err(e)) => {
             error!(error = %e, "Failed to verify login code");
-            serde_json::json!({
-                "type": "Failed",
-                "error": format!("Failed to verify login code: {}", e),
-            })
+            PhoneAuthRobotCompleteVerifyCodeResult::Failed {
+                error: format!("Failed to verify login code: {}", e),
+            }
         }
         Ok(Ok(r)) => match r {
             SignInResult::Success { user_id } => {
                 info!(user_id = user_id, "Sign in successful");
-                serde_json::json!({
-                    "type": "Success",
-                    "userId": user_id,
-                })
+                PhoneAuthRobotCompleteVerifyCodeResult::Success { userId: user_id }
             }
             SignInResult::PasswordRequired(password_token) => {
                 info!("2FA password required");
@@ -77,22 +72,18 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
                         TaskError::Serialization(e.to_string())
                     })?;
 
-                let mut result = serde_json::json!({
-                    "type": "PasswordRequired",
-                    "passwordToken": token_json,
-                });
-                if let Some(hint) = &password_token.hint {
-                    result["hint"] = serde_json::Value::String(hint.clone());
+                PhoneAuthRobotCompleteVerifyCodeResult::PasswordRequired {
+                    hint: password_token.hint.clone(),
+                    passwordToken: token_json,
                 }
-                result
             }
             SignInResult::InvalidCode => {
                 warn!("Invalid login code");
-                serde_json::json!({ "type": "InvalidCode" })
+                PhoneAuthRobotCompleteVerifyCodeResult::InvalidCode
             }
             SignInResult::SignUpRequired => {
                 warn!("Sign up required - account does not exist");
-                serde_json::json!({ "type": "SignUpRequired" })
+                PhoneAuthRobotCompleteVerifyCodeResult::SignUpRequired
             }
         },
     };

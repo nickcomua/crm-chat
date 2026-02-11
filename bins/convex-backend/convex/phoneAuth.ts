@@ -1,13 +1,14 @@
 import { v } from "convex/values";
 
-import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
 import {
   isPhoneAuthTerminal,
   requireAssignedRobot,
   requireHuman,
   requireOwner,
   requireRobot,
+  sendError,
 } from "./helpers/auth";
 
 // =============================================================================
@@ -33,42 +34,29 @@ function validatePassword(password: string): void {
 }
 
 // =============================================================================
-// Helper: send error notification inline (avoids needing internal mutation)
-// =============================================================================
-
-async function sendError(
-  ctx: MutationCtx,
-  userId: string,
-  message: string,
-): Promise<void> {
-  await ctx.db.insert("notifications", {
-    userId,
-    severity: "Error",
-    message,
-    dismissed: false,
-  });
-}
-
-// =============================================================================
 // Queries
 // =============================================================================
 
-/** Active (non-terminal) phone auths for the current human user. */
+/** Active (non-terminal) phone auths for the current human user. Secrets are stripped. */
 export const active = query({
   args: {},
+  returns: v.array(phoneAuthPublicDoc),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     const all = await ctx.db
       .query("phoneAuths")
       .withIndex("by_userId", (q) => q.eq("userId", caller.id))
       .collect();
-    return all.filter((a) => !isPhoneAuthTerminal(a.step));
+    return all
+      .filter((a) => !isPhoneAuthTerminal(a.step))
+      .map(({ phoneCodeHash, loginCode, password, passwordToken, assignedRobot, ...rest }) => rest);
   },
 });
 
 /** Unclaimed phone auths (step=SendingCode, no assigned robot). For robot polling. */
 export const pendingForRobot = query({
   args: {},
+  returns: v.array(phoneAuthDoc),
   handler: async (ctx) => {
     await requireRobot(ctx);
     const pending = await ctx.db
@@ -82,6 +70,7 @@ export const pendingForRobot = query({
 /** Phone auths assigned to the calling robot. */
 export const assignedToRobot = query({
   args: {},
+  returns: v.array(phoneAuthDoc),
   handler: async (ctx) => {
     const caller = await requireRobot(ctx);
     const assigned = await ctx.db
@@ -99,6 +88,7 @@ export const assignedToRobot = query({
 /** Start phone-based authentication. Creates a Client and PhoneAuth row. */
 export const start = mutation({
   args: { phone: v.string() },
+  returns: v.null(),
   handler: async (ctx, { phone }) => {
     const caller = await requireHuman(ctx);
     validatePhone(phone);
@@ -139,6 +129,7 @@ export const start = mutation({
 /** User submits the SMS code. */
 export const submitCode = mutation({
   args: { authId: v.id("phoneAuths"), code: v.string() },
+  returns: v.null(),
   handler: async (ctx, { authId, code }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -161,6 +152,7 @@ export const submitCode = mutation({
 /** User submits 2FA password. */
 export const submitPassword = mutation({
   args: { authId: v.id("phoneAuths"), password: v.string() },
+  returns: v.null(),
   handler: async (ctx, { authId, password }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -183,6 +175,7 @@ export const submitPassword = mutation({
 /** User cancels the phone auth flow. */
 export const cancel = mutation({
   args: { authId: v.id("phoneAuths") },
+  returns: v.null(),
   handler: async (ctx, { authId }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -210,6 +203,7 @@ export const cancel = mutation({
 /** Robot claims a phone auth session. */
 export const robotClaim = mutation({
   args: { authId: v.id("phoneAuths") },
+  returns: v.null(),
   handler: async (ctx, { authId }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);
@@ -239,6 +233,7 @@ export const robotCompleteSendCode = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { authId, result }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);
@@ -295,6 +290,7 @@ export const robotCompleteVerifyCode = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { authId, result }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);
@@ -368,6 +364,7 @@ export const robotCompleteVerifyPassword = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { authId, result }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);

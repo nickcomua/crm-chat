@@ -19,7 +19,8 @@ struct RobotClaims {
 /// Mint a new JWT for the robot service.
 ///
 /// The token is valid for 1 hour and uses RS256 signing.
-pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str) -> Result<String> {
+/// The `kid` must match the key ID in the JWKS configured in Convex auth.config.ts.
+pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str, kid: &str) -> Result<String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
@@ -29,10 +30,13 @@ pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str) -> Result<String> {
         iss: "https://crm-chat-robot.local".to_string(),
         aud: "convex".to_string(),
         iat: now,
-        exp: now + 3600,
+        exp: now + 3600 * 24 ,
     };
 
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(kid.to_string());
+
     let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())?;
-    let token = encode(&Header::new(Algorithm::RS256), &claims, &key)?;
+    let token = encode(&header, &claims, &key)?;
     Ok(token)
 }

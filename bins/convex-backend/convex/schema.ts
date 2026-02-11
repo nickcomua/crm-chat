@@ -53,32 +53,104 @@ export const mediaKind = v.union(
 );
 
 // =============================================================================
+// Document validators (for typed query returns)
+// =============================================================================
+
+export const clientDoc = v.object({
+  _id: v.id("clients"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  kind: clientKind,
+  externalId: v.string(),
+  activeChats: v.array(v.string()),
+  status: clientStatus,
+});
+
+export const chatDoc = v.object({
+  _id: v.id("chats"),
+  _creationTime: v.number(),
+  chatId: v.string(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  chatType: chatType,
+  isPinned: v.boolean(),
+  pinnedName: v.optional(v.string()),
+  lastMessageTs: v.number(),
+});
+
+export const messageDoc = v.object({
+  _id: v.id("messages"),
+  _creationTime: v.number(),
+  messageId: v.string(),
+  externalId: v.string(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  chatId: v.string(),
+  senderId: v.string(),
+  text: v.optional(v.string()),
+  out: v.boolean(),
+  deleted: v.boolean(),
+  ts: v.number(),
+  mediaId: v.optional(v.string()),
+});
+
+export const phoneAuthDoc = v.object({
+  _id: v.id("phoneAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  phone: v.string(),
+  step: phoneAuthStep,
+  phoneCodeHash: v.optional(v.string()),
+  loginCode: v.optional(v.string()),
+  passwordToken: v.optional(v.string()),
+  password: v.optional(v.string()),
+  passwordHint: v.optional(v.string()),
+  error: v.optional(v.string()),
+  assignedRobot: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+/** phoneAuthDoc without secrets — safe for human-facing queries. */
+export const phoneAuthPublicDoc = v.object({
+  _id: v.id("phoneAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  phone: v.string(),
+  step: phoneAuthStep,
+  passwordHint: v.optional(v.string()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const qrAuthDoc = v.object({
+  _id: v.id("qrAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  step: qrAuthStep,
+  qrUrl: v.optional(v.string()),
+  qrExpires: v.optional(v.number()),
+  telegramUserId: v.optional(v.int64()),
+  error: v.optional(v.string()),
+  assignedRobot: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const notificationDoc = v.object({
+  _id: v.id("notifications"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  severity: messageSeverity,
+  message: v.string(),
+  dismissed: v.boolean(),
+});
+
+// =============================================================================
 // Schema
 // =============================================================================
 
 export default defineSchema({
-  // ---- Users & Robots ----
-
-  humans: defineTable({
-    userId: v.string(), // Clerk token identifier (sub claim)
-    username: v.optional(v.string()), // email from JWT
-    displayName: v.optional(v.string()), // name from JWT
-    online: v.boolean(),
-    lastHeartbeat: v.number(), // Unix ms — used by cron to detect stale connections
-    updatedAt: v.number(), // Unix ms
-  })
-    .index("by_userId", ["userId"])
-    .index("by_online", ["online"]),
-
-  robots: defineTable({
-    robotId: v.string(), // JWT subject for robot
-    online: v.boolean(),
-    lastHeartbeat: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_robotId", ["robotId"])
-    .index("by_online", ["online"]),
-
   // ---- Clients (Telegram connections) ----
 
   clients: defineTable({
@@ -110,7 +182,7 @@ export default defineSchema({
   // ---- Messages ----
 
   messages: defineTable({
-    messageId: v.string(), // composite primary key from SpacetimeDB
+    messageId: v.string(), // composite primary key (chatId + messageId)
     externalId: v.string(), // Telegram message ID
     userId: v.string(), // FK to humans.userId
     clientId: v.id("clients"),

@@ -9,16 +9,12 @@
  */
 
 import type * as chats from "../chats.js";
-import type * as cleanup from "../cleanup.js";
 import type * as clients from "../clients.js";
-import type * as crons from "../crons.js";
 import type * as helpers_auth from "../helpers/auth.js";
-import type * as humans from "../humans.js";
 import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
 import type * as phoneAuth from "../phoneAuth.js";
 import type * as qrAuth from "../qrAuth.js";
-import type * as robots from "../robots.js";
 
 import type {
   ApiFromModules,
@@ -28,16 +24,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   chats: typeof chats;
-  cleanup: typeof cleanup;
   clients: typeof clients;
-  crons: typeof crons;
   "helpers/auth": typeof helpers_auth;
-  humans: typeof humans;
   messages: typeof messages;
   notifications: typeof notifications;
   phoneAuth: typeof phoneAuth;
   qrAuth: typeof qrAuth;
-  robots: typeof robots;
 }>;
 
 /**

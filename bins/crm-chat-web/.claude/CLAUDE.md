@@ -1,13 +1,12 @@
 # crm-chat-web
 
-React + Vite frontend using SpacetimeDB React SDK, shadcn/ui, and Clerk auth.
+React + Vite frontend using Convex React SDK, shadcn/ui, and Clerk auth.
 
 ## Project-Specific Notes
 
-- **Generated code**: `src/lib/spacetime/` is auto-generated — do not edit manually. Regenerate with `npm run gen`.
 - **React Compiler is enabled**: Do NOT use `useMemo`, `useCallback`, or `memo()`.
-- **SpacetimeDB patterns**: Use `useTable(tables.x)` and `useReducer(reducers.x)` from `spacetimedb/react`. Import `tables`/`reducers` from `@/lib/spacetime`.
-- **Biome config**: `biome.jsonc` extends Ultracite; generated spacetime files are excluded from linting.
+- **Convex patterns**: Use `useQuery(api.module.function)` and `useMutation(api.module.function)` from `convex/react`. Import `api` from `@/lib/convex`.
+- **Biome config**: `biome.jsonc` extends Ultracite.
 
 ## Ultracite Code Standards
 
