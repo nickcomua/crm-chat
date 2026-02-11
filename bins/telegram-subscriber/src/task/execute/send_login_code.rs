@@ -2,7 +2,7 @@
 //!
 //! This step requests a login code from Telegram for the given phone number.
 
-use convex_backend::PhoneAuthRobotCompleteSendCodeArgs;
+use convex_backend::{PhoneAuthRobotCompleteSendCodeArgs, PhoneAuthRobotCompleteSendCodeResult};
 use messanger_interface::MessengerClient;
 use tracing::{error, info, instrument, warn};
 
@@ -34,7 +34,7 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
                     .clone()
                     .phone_auth_robot_complete_send_code(PhoneAuthRobotCompleteSendCodeArgs {
                         authId: auth.id.clone(),
-                        result: serde_json::json!({ "type": "AlreadyAuthorized" }),
+                        result: PhoneAuthRobotCompleteSendCodeResult::AlreadyAuthorized,
                     })
                     .await,
             )?;
@@ -58,24 +58,21 @@ pub async fn execute(ctx: &TaskExecutionContext, auth: &PhoneAuth) -> Result<(),
     let result = match code_result {
         Err(_) => {
             error!("Timeout requesting login code");
-            serde_json::json!({
-                "type": "Failed",
-                "error": "Timeout requesting login code",
-            })
+            PhoneAuthRobotCompleteSendCodeResult::Failed {
+                error: "Timeout requesting login code".to_string(),
+            }
         }
         Ok(Err(e)) => {
             error!(error = %e, "Failed to request login code");
-            serde_json::json!({
-                "type": "Failed",
-                "error": format!("Failed to request login code: {}", e),
-            })
+            PhoneAuthRobotCompleteSendCodeResult::Failed {
+                error: format!("Failed to request login code: {}", e),
+            }
         }
         Ok(Ok(token)) => {
             info!("Login code requested successfully");
-            serde_json::json!({
-                "type": "Success",
-                "phoneCodeHash": token.phone_code_hash,
-            })
+            PhoneAuthRobotCompleteSendCodeResult::Success {
+                phoneCodeHash: token.phone_code_hash,
+            }
         }
     };
 

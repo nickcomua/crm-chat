@@ -1,24 +1,25 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireAuth, requireHuman, requireOwner } from "./helpers/auth";
-
-/** List all messages for the current user. */
-export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    return await ctx.db
-      .query("messages")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
-      .collect();
-  },
-});
+import { messageDoc } from "./schema";
+import { isRobotCaller, requireAuth, requireHuman, requireOwner } from "./helpers/auth";
 
 /** List messages for a specific chat, ordered by timestamp. */
 export const listByChat = query({
   args: { chatId: v.string() },
+  returns: v.array(messageDoc),
   handler: async (ctx, { chatId }) => {
     const caller = await requireHuman(ctx);
+
+    // Verify the caller owns this chat
+    const chat = await ctx.db
+      .query("chats")
+      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .unique();
+    if (!chat) {
+      throw new Error("Chat not found");
+    }
+    requireOwner(caller.id, chat.userId);
+
     return await ctx.db
       .query("messages")
       .withIndex("by_chatId_ts", (q) => q.eq("chatId", chatId))
@@ -42,10 +43,11 @@ export const upsert = mutation({
     ts: v.number(),
     mediaId: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const caller = await requireAuth(ctx);
 
-    const isRobot = caller.issuer === "crm-chat-robot";
+    const isRobot = isRobotCaller(caller);
     if (!isRobot) {
       requireOwner(caller.id, args.userId);
     }
@@ -72,6 +74,7 @@ export const upsert = mutation({
 /** Soft-delete a message by external ID. */
 export const markDeleted = mutation({
   args: { externalId: v.string() },
+  returns: v.null(),
   handler: async (ctx, { externalId }) => {
     const caller = await requireAuth(ctx);
 
@@ -85,7 +88,7 @@ export const markDeleted = mutation({
     }
 
     const msg = messages[0];
-    const isRobot = caller.issuer === "crm-chat-robot";
+    const isRobot = isRobotCaller(caller);
     if (!isRobot) {
       requireOwner(caller.id, msg.userId);
     }

@@ -13,8 +13,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # spacetimedb.url = "github:clockworklabs/SpacetimeDB/refs/tags/v1.10.0";
-
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
@@ -34,11 +32,6 @@
       inputs.flake-utils.follows = "flake-utils";
     };
 
-    spacetimedb = {
-      url = "path:./nix/spacetimedb";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
   };
 
   outputs = {
@@ -50,7 +43,6 @@
     advisory-db,
     # sccache,
     crm-chat-web-app,
-    spacetimedb,
     ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -61,8 +53,6 @@
         #   # overlays = [ sccache.overlays.default ];
         };
         # pkgs = nixpkgs.legacyPackages.${system};
-
-        spacetimedbPkg = spacetimedb.packages.${system}.default;
 
         # Pre-fetch swagger-ui zip for utoipa-swagger-ui (preserves zip format for build.rs)
         swaggerUiZipRaw = pkgs.fetchurl {
@@ -107,7 +97,6 @@
           '';
 
           nativeBuildInputs = [
-            spacetimedbPkg
             pkgs.lld
             pkgs.rustfmt
             pkgs.pkg-config
@@ -137,8 +126,6 @@
               pkgs.libiconv
             ];
 
-           # needed for spacetimedb-lib to build
-           SPACETIMEDB_NIX_BUILD_GIT_COMMIT = self.rev or "development";
            # Required for curl to verify SSL certificates during build
            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
            # Note: SWAGGER_UI_DOWNLOAD_URL is set dynamically in preConfigure above
@@ -162,9 +149,7 @@
               ./Cargo.lock
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
-              (craneLib.fileset.commonCargoSources ./bins/sdb_server)
               (craneLib.fileset.commonCargoSources ./bins/es-proxy)
-              (craneLib.fileset.commonCargoSources ./libs/sdb_api)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
@@ -268,7 +253,7 @@
 
         };
         packages = {
-          inherit telegram-subscriber spacetimedbPkg crm-chat-web crm-chat-web-img;
+          inherit telegram-subscriber crm-chat-web crm-chat-web-img;
 
           telegram-subscriber-img = pkgs.dockerTools.buildLayeredImage {
             name = "nick395/telegram-subscriber";
@@ -314,8 +299,6 @@
             pkgs.lld
             sqlite
             sccache
-          ] ++ [
-            spacetimedbPkg
           ];
         };
       }

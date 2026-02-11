@@ -1,51 +1,42 @@
 import { v } from "convex/values";
 
-import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { qrAuthDoc } from "./schema";
 import {
   isQrAuthTerminal,
   requireAssignedRobot,
   requireHuman,
   requireOwner,
   requireRobot,
+  sendError,
 } from "./helpers/auth";
-
-// =============================================================================
-// Helper
-// =============================================================================
-
-async function sendError(
-  ctx: MutationCtx,
-  userId: string,
-  message: string,
-): Promise<void> {
-  await ctx.db.insert("notifications", {
-    userId,
-    severity: "Error",
-    message,
-    dismissed: false,
-  });
-}
 
 // =============================================================================
 // Queries
 // =============================================================================
 
-/** All QR auths for the current user (including terminal). Used by frontend. */
+/** Active QR auths + most recent terminal auth for the current user. */
 export const listForUser = query({
   args: {},
+  returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
-    return await ctx.db
+    const all = await ctx.db
       .query("qrAuths")
       .withIndex("by_userId", (q) => q.eq("userId", caller.id))
       .collect();
+    const activeAuths = all.filter((a) => !isQrAuthTerminal(a.step));
+    const mostRecentTerminal = all
+      .filter((a) => isQrAuthTerminal(a.step))
+      .sort((a, b) => b._creationTime - a._creationTime)[0];
+    return mostRecentTerminal ? [...activeAuths, mostRecentTerminal] : activeAuths;
   },
 });
 
 /** Active (non-terminal) QR auths for the current human user. */
 export const active = query({
   args: {},
+  returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     const all = await ctx.db
@@ -59,6 +50,7 @@ export const active = query({
 /** Unclaimed QR auths (step=Pending, no assigned robot). For robot polling. */
 export const pendingForRobot = query({
   args: {},
+  returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
     await requireRobot(ctx);
     const pending = await ctx.db
@@ -72,6 +64,7 @@ export const pendingForRobot = query({
 /** QR auths assigned to the calling robot. */
 export const assignedToRobot = query({
   args: {},
+  returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
     const caller = await requireRobot(ctx);
     const assigned = await ctx.db
@@ -89,6 +82,7 @@ export const assignedToRobot = query({
 /** Start QR code authentication. No client is created yet. */
 export const start = mutation({
   args: {},
+  returns: v.null(),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     await ctx.db.insert("qrAuths", {
@@ -102,6 +96,7 @@ export const start = mutation({
 /** User cancels the QR auth flow. */
 export const cancel = mutation({
   args: { authId: v.id("qrAuths") },
+  returns: v.null(),
   handler: async (ctx, { authId }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -126,6 +121,7 @@ export const cancel = mutation({
 /** Robot claims a QR auth session. */
 export const robotClaim = mutation({
   args: { authId: v.id("qrAuths") },
+  returns: v.null(),
   handler: async (ctx, { authId }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);
@@ -153,6 +149,7 @@ export const robotUpdateQrToken = mutation({
     url: v.string(),
     expires: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, { authId, url, expires }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);
@@ -182,6 +179,7 @@ export const robotCompleteQrAuth = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
+  returns: v.null(),
   handler: async (ctx, { authId, result }) => {
     const caller = await requireRobot(ctx);
     const auth = await ctx.db.get(authId);

@@ -32,5 +32,77 @@ services:
       backend:
         condition: service_healthy
 
+#   elasticsearch:
+#     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+#     container_name: elasticsearch
+#     environment:
+#       - discovery.type=single-node
+#       - xpack.security.enabled=true
+#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+#       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+#     ports:
+#       - "9200:9200"
+#     volumes:
+#       - es_data:/usr/share/elasticsearch/data
+#     healthcheck:
+#       test: ["CMD-SHELL", "curl -f -u elastic:${ELASTIC_PASSWORD:-changeme} http://localhost:9200/_cluster/health || exit 1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 30
+#     restart: unless-stopped
+
+#   elasticsearch-setup:
+#     image: curlimages/curl:latest
+#     depends_on:
+#       elasticsearch:
+#         condition: service_healthy
+#     environment:
+#       - ELASTICSEARCH_URL=http://elasticsearch:9200
+#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+#       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+#       - INFERENCE_ID=${INFERENCE_ID:-openrouter-embeddings}
+#       - PIPELINE_ID=${PIPELINE_ID:-openrouter-pipeline}
+#       - INDEX_NAME=${INDEX_NAME:-my-index}
+#       - MODEL_ID=${MODEL_ID:-openai/text-embedding-3-small}
+#       - EMBEDDING_DIMS=${EMBEDDING_DIMS:-1536}
+#     volumes:
+#       - ./setup-scripts:/scripts
+#     entrypoint: ["/bin/sh", "/scripts/elasticsearch-setup.sh"]
+#     restart: "no"
+
+#   kibana:
+#     image: docker.elastic.co/kibana/kibana:8.15.0
+#     container_name: kibana
+#     environment:
+#       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+#       - ELASTICSEARCH_USERNAME=kibana_system
+#       - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+#       - xpack.security.enabled=true
+#     ports:
+#       - "5601:5601"
+#     depends_on:
+#       elasticsearch:
+#         condition: service_healthy
+#     restart: unless-stopped
+
+#   es-proxy:
+#     image: nick395/es-proxy:latest
+#     build:
+#       context: .
+#       dockerfile: bins/es-proxy/Dockerfile
+#     ports:
+#       - "3001:3001"
+#     environment:
+#       - ELASTICSEARCH_URL=http://elasticsearch:9200
+#       - ELASTIC_USERNAME=elastic
+#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+#       - INDEX_NAME=${INDEX_NAME:-crm-chat-msgs}
+#       - JWT_SECRET=${JWT_SECRET:-}
+#     depends_on:
+#       elasticsearch:
+#         condition: service_healthy
+#     restart: unless-stopped
+
 volumes:
   data:
+#   es_data:

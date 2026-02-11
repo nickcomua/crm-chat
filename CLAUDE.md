@@ -205,11 +205,11 @@ function Component(): React.ReactNode {
 }
 ```
 
-Key differences from previous SpacetimeDB setup:
-- `useQuery` returns `undefined` while loading (not an empty array) — components must handle loading state
-- IDs are strings (`_id`), not auto-increment `u64`/`bigint`
-- Enums are plain strings (e.g. `"Connected"`) or discriminated objects (`{ type: "Error", message: "..." }`), not tagged unions with `.tag`
-- Timestamps are Unix milliseconds as `number`, not Unix seconds as `bigint`
+Important Convex patterns:
+- `useQuery` returns `undefined` while loading — components must handle loading state
+- IDs are strings (`_id`)
+- Enums are plain strings (e.g. `"Connected"`) or discriminated objects (`{ type: "Error", message: "..." }`)
+- Timestamps are Unix milliseconds as `number`
 
 ### Authentication & Client Status
 

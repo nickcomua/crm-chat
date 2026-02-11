@@ -114,8 +114,7 @@ impl ConvexTestEnv {
         // (format: "test-instance|01abcdef...")
         let admin_key = stdout
             .lines()
-            .filter(|l| !l.is_empty())
-            .last()
+            .rfind(|l| !l.is_empty())
             .expect("No admin key in generate_admin_key.sh output")
             .to_string();
         eprintln!(

@@ -57,8 +57,7 @@
           window.import.meta = window.import.meta || {};
           window.import.meta.env = {
             VITE_CLERK_PUBLISHABLE_KEY: "''${VITE_CLERK_PUBLISHABLE_KEY:-}",
-            VITE_SPACETIMEDB_HOST: "''${VITE_SPACETIMEDB_HOST:-}",
-            VITE_SPACETIMEDB_MODULE: "''${VITE_SPACETIMEDB_MODULE:-}",
+            VITE_CONVEX_URL: "''${VITE_CONVEX_URL:-}",
             VITE_SENTRY_DSN: "''${VITE_SENTRY_DSN:-}",
             VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT:-production}"
           };
@@ -121,8 +120,7 @@
             };
             Env = [
               "VITE_CLERK_PUBLISHABLE_KEY="
-              "VITE_SPACETIMEDB_HOST="
-              "VITE_SPACETIMEDB_MODULE="
+              "VITE_CONVEX_URL="
               "VITE_SENTRY_DSN="
               "VITE_SENTRY_ENVIRONMENT=production"
             ];

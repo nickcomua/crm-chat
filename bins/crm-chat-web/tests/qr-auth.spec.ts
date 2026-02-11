@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import jsQR from "jsqr";
+import { PNG } from "pngjs";
 
 // Test credentials from environment (required)
 const TEST_CLERK_USERNAME = process.env.TEST_CLERK_USERNAME;
@@ -22,15 +24,6 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("QR Code Authentication", () => {
   test.beforeEach(async ({ page }) => {
-    // Listen for SpacetimeDB connection before navigating
-    const sdbConnected = new Promise<void>((resolve) => {
-      page.on("console", (msg) => {
-        if (msg.text().includes("Connected to SpacetimeDB")) {
-          resolve();
-        }
-      });
-    });
-
     // Navigate to the app - Clerk will redirect to sign-in
     await page.goto("/");
 
@@ -39,31 +32,30 @@ test.describe("QR Code Authentication", () => {
       timeout: 15_000,
     });
 
-    // Fill in credentials (both fields visible on the same page)
+    // Fill in identifier and submit (Clerk multi-step flow)
     await page.fill('input[name="identifier"]', TEST_CLERK_USERNAME);
-    await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
+    await page.click("button.cl-formButtonPrimary");
 
-    // Use Clerk's primary button class to avoid hitting "Continue with Google"
+    // Wait for password step and fill in
+    await page.waitForSelector('input[name="password"]', { timeout: 10_000 });
+    await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
     await page.click("button.cl-formButtonPrimary");
 
     // Wait for successful login and redirect to main app
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
 
-    // Wait for SpacetimeDB WebSocket connection to be fully established
-    // This ensures reducer calls won't be dropped
-    await sdbConnected;
+    // Give Convex subscriptions time to settle (queries cause re-renders after auth)
+    await page.waitForTimeout(3000);
+
+    // Navigate to settings and wait for it to be fully loaded
+    await page.locator('a[href="/#/settings"]').click({ timeout: 15_000 });
+    await page.waitForURL(SETTINGS_URL_PATTERN);
+    await page.waitForSelector("text=Telegram Clients", { timeout: 10_000 });
   });
 
   test("should display scannable QR code when clicking Add Client", async ({
     page,
   }) => {
-    // Navigate to settings page
-    await page.click('a[href="/#/settings"]');
-    await page.waitForURL(SETTINGS_URL_PATTERN);
-
-    // Wait for the page to load
-    await page.waitForSelector("text=Telegram Clients");
-
     // Click Add Client button
     await page.click('button:has-text("Add Client")');
 
@@ -83,6 +75,19 @@ test.describe("QR Code Authentication", () => {
     const qrSvg = qrCodeContainer.locator("svg");
     await expect(qrSvg).toBeVisible();
 
+    // Decode the QR code from a screenshot to verify it contains a valid Telegram login URL
+    const screenshotBuffer = await qrCodeContainer.screenshot();
+    const png = PNG.sync.read(screenshotBuffer);
+    const decoded = jsQR(
+      new Uint8ClampedArray(png.data),
+      png.width,
+      png.height
+    );
+
+    expect(decoded).not.toBeNull();
+    if (decoded === null) throw new Error("QR code could not be decoded");
+    expect(decoded.data).toMatch(/^tg:\/\/login\?token=.+/);
+
     // Verify instruction text
     await expect(
       page.locator("text=Scan with Telegram to sign in")
@@ -98,19 +103,15 @@ test.describe("QR Code Authentication", () => {
   });
 
   test("should be able to cancel QR auth", async ({ page }) => {
-    // Navigate to settings page
-    await page.click('a[href="/#/settings"]');
-    await page.waitForURL(SETTINGS_URL_PATTERN);
-
-    // Click Add Client button
+    // Click Add Client button (already on settings page from beforeEach)
     await page.click('button:has-text("Add Client")');
 
     // Wait for dialog with QR auth content
     await page.waitForSelector('[role="dialog"]');
 
-    // Close the dialog via the X close button (uses Dialog's onOpenChange)
+    // Close the dialog via the X close button
     // This triggers QrAuth unmount → auto-cancel cleanup
-    await page.click('[role="dialog"] button:has-text("Close")');
+    await page.click('[role="dialog"] [data-slot="dialog-close"]');
 
     // Dialog should close
     await expect(page.locator('[role="dialog"]')).toBeHidden({

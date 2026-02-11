@@ -3,6 +3,8 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 
+const ROBOT_ISSUER = "https://crm-chat-robot.local";
+
 /** Identity info extracted from ctx.auth */
 export type CallerIdentity = {
   /** Unique identifier (tokenIdentifier for Clerk, subject for robot JWT) */
@@ -26,10 +28,15 @@ export async function requireAuth(ctx: QueryCtx | MutationCtx): Promise<CallerId
   };
 }
 
+/** Check if a caller is a robot (custom JWT). */
+export function isRobotCaller(caller: CallerIdentity): boolean {
+  return caller.issuer === ROBOT_ISSUER;
+}
+
 /** Require the caller to be a human (Clerk-authenticated). */
 export async function requireHuman(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
-  if (caller.issuer === "https://crm-chat-robot.local") {
+  if (isRobotCaller(caller)) {
     throw new Error("Unauthorized: this action is for human users only");
   }
   return caller;
@@ -38,7 +45,7 @@ export async function requireHuman(ctx: QueryCtx | MutationCtx): Promise<CallerI
 /** Require the caller to be a robot (custom JWT). */
 export async function requireRobot(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
-  if (caller.issuer !== "https://crm-chat-robot.local") {
+  if (!isRobotCaller(caller)) {
     throw new Error("Unauthorized: only robots can perform this action");
   }
   return caller;
@@ -66,4 +73,18 @@ export function isPhoneAuthTerminal(step: string): boolean {
 /** Check if a QR auth step is terminal. */
 export function isQrAuthTerminal(step: string): boolean {
   return step === "Authorized" || step === "AlreadyAuthorized" || step === "Failed" || step === "Cancelled";
+}
+
+/** Insert an error notification for a user. */
+export async function sendError(
+  ctx: MutationCtx,
+  userId: string,
+  message: string,
+): Promise<void> {
+  await ctx.db.insert("notifications", {
+    userId,
+    severity: "Error" as const,
+    message,
+    dismissed: false,
+  });
 }
