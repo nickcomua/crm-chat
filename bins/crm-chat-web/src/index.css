@@ -50,6 +50,7 @@
 
 /* ─── Light Theme: Crisp white with teal-cyan accent ─── */
 :root {
+  color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(0.985 0.002 260);
   --foreground: oklch(0.14 0.015 260);
@@ -86,6 +87,7 @@
 
 /* ─── Dark Theme: Deep charcoal-navy with luminous teal ─── */
 .dark {
+  color-scheme: dark;
   --background: oklch(0.135 0.022 260);
   --foreground: oklch(0.94 0.006 260);
   --card: oklch(0.175 0.02 260);
