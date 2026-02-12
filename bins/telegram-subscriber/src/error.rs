@@ -5,14 +5,6 @@ use thiserror::Error;
 /// Errors that can occur during task execution.
 #[derive(Error, Debug)]
 pub enum TaskError {
-    /// Task is not a robot task and should not be processed by the robot.
-    #[error("task is not a robot task")]
-    NotRobotTask,
-
-    /// Task is not assigned to this robot.
-    #[error("task is not assigned to this robot")]
-    NotAssignedToMe,
-
     /// Failed to build Telegram client.
     #[error("failed to build Telegram client: {0}")]
     ClientBuildFailed(String),
@@ -21,13 +13,9 @@ pub enum TaskError {
     #[error("serialization error: {0}")]
     Serialization(String),
 
-    /// Failed to call SpacetimeDB reducer.
-    #[error("SpacetimeDB reducer error: {0}")]
-    ReducerFailed(String),
-
-    /// Login token not found (needed for VerifyLoginCode).
-    #[error("login token not found for phone: {0}")]
-    LoginTokenNotFound(String),
+    /// Failed to call Convex mutation.
+    #[error("Convex mutation error: {0}")]
+    MutationFailed(String),
 
     /// Password token deserialization failed.
     #[error("failed to deserialize password token: {0}")]

@@ -1,60 +1,37 @@
 //! Telegram subscriber service for CRM Chat.
 //!
-//! This service subscribes to SpacetimeDB task events and processes robot tasks
-//! for Telegram client authentication.
+//! This service connects to a Convex backend, subscribes to phone_auth and qr_auth
+//! queries, and processes robot tasks for Telegram client authentication.
 
 mod config;
 mod error;
+mod jwt;
 mod task;
+mod types;
 
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
+use std::time::Duration;
 
-use config::{get_session_dir, TelegramConfig};
-use sdb_api::module_bindings::{
-    DbConnection, ErrorContext, SubscriptionEventContext, Task, TaskTableAccess,
-};
-use spacetimedb_sdk::{DbContext, Error, Table, TableWithPrimaryKey};
-use tokio::sync::mpsc;
+use config::{TelegramConfig, get_session_dir};
+use convex::ConvexClient;
+use futures::StreamExt;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
-use crate::task::{execute_task, is_robot_task, pick_task, TaskExecutionContext};
+use crate::task::{
+    TaskExecutionContext, claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth,
+};
+use crate::types::{Client, ConvexApi, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
 
-/// Events from the task table.
-#[derive(Debug, Clone)]
-pub enum TaskEvent {
-    Insert(Task),
-    Update { old: Task, new: Task },
-}
-
-impl TaskEvent {
-    pub fn task(&self) -> &Task {
-        match self {
-            TaskEvent::Insert(t) => t,
-            TaskEvent::Update { new, .. } => new,
-        }
-    }
-}
-
-fn on_sub_applied(ctx: &SubscriptionEventContext) {
-    let tasks: Vec<_> = ctx.db.task().iter().collect();
-    info!(task_count = tasks.len(), "Subscription applied");
-    for task in &tasks {
-        debug!(
-            task_id = %task.id,
-            status = ?task.status,
-            payload_type = ?std::mem::discriminant(&task.payload),
-            "Found existing task"
-        );
-    }
-}
-
-fn on_sub_error(_ctx: &ErrorContext, err: Error) {
-    error!(error = %err, "Subscription failed");
-    std::process::exit(1);
+/// Handle for a running scan task (one per connected client).
+struct ScanTaskHandle {
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
 }
 
 #[tokio::main]
@@ -90,155 +67,217 @@ async fn main() -> anyhow::Result<()> {
 
     let config = TelegramConfig::from_env()?;
 
-    // Get robot identity from environment
-    let my_identity: spacetimedb_sdk::Identity = env::var("DIRTY_IDENTITY")
-        .expect("DIRTY_IDENTITY must be set")
-        .parse()
-        .expect("Invalid DIRTY_IDENTITY format");
+    // Load Convex connection settings
+    let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
+    let robot_id = env::var("ROBOT_ID").expect("ROBOT_ID must be set");
+    let robot_kid = env::var("ROBOT_KID").expect("ROBOT_KID must be set");
+    let private_key = env::var("ROBOT_JWT_PRIVATE_KEY")
+        .expect("ROBOT_JWT_PRIVATE_KEY must be set")
+        .replace("\\n", "\n");
 
-    info!(identity = %my_identity, "Robot identity loaded from DIRTY_IDENTITY");
+    // Mint JWT and connect to Convex
+    let token = jwt::mint_robot_jwt(&private_key, &robot_id, &robot_kid)?;
+    let mut client = ConvexClient::new(&convex_url).await?;
+    client.set_auth(Some(token)).await;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<TaskEvent>();
-    let token = env::var("DIRTY_TOKEN").expect("DIRTY_TOKEN must be set");
-    let conn = DbConnection::builder()
-        .with_module_name(
-            env::var("VITE_SPACETIMEDB_MODULE").expect("VITE_SPACETIMEDB_MODULE must be set"),
-        )
-        .with_uri(env::var("VITE_SPACETIMEDB_HOST").expect("VITE_SPACETIMEDB_HOST must be set"))
-        .with_token(Some(token))
-        .build()
-        .expect("Failed to connect");
+    info!(robot_id = %robot_id, "Connected to Convex");
 
-    info!("Connected to SpacetimeDB");
-
-    // Set up callbacks for task table events
-    let tx_insert = tx.clone();
-    conn.db.task().on_insert(move |_ctx, row| {
-        debug!(task_id = %row.id, "Task inserted");
-        if let Err(e) = tx_insert.send(TaskEvent::Insert(row.clone())) {
-            error!(error = %e, "Failed to send task insert event");
-        }
+    // Clone for TaskExecutionContext (mutations use their own clones internally)
+    let ctx = Arc::new(TaskExecutionContext {
+        client: client.clone(),
+        robot_id: robot_id.clone(),
+        config: config.clone(),
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+        qr_polling_tasks: Arc::new(Mutex::new(HashMap::new())),
     });
 
-    let tx_update = tx.clone();
-    conn.db.task().on_update(move |_ctx, old, new| {
-        debug!(task_id = %new.id, old_status = ?old.status, new_status = ?new.status, "Task updated");
-        if let Err(e) = tx_update.send(TaskEvent::Update {
-            old: old.clone(),
-            new: new.clone(),
-        }) {
-            error!(error = %e, "Failed to send task update event");
-        }
-    });
+    // Subscribe to auth queries
+    let mut phone_pending = client.subscribe_phone_auth_pending_for_robot().await?;
+    let mut phone_assigned = client.subscribe_phone_auth_assigned_to_robot().await?;
+    let mut qr_pending = client.subscribe_qr_auth_pending_for_robot().await?;
+    let mut qr_assigned = client.subscribe_qr_auth_assigned_to_robot().await?;
 
-    // Subscribe to tasks
-    conn.subscription_builder()
-        .on_applied(on_sub_applied)
-        .on_error(on_sub_error)
-        .subscribe(["SELECT * FROM task"]);
+    // Subscribe to connected clients (for scanning)
+    let mut connected_clients = client.subscribe_clients_connected_for_robot().await?;
 
     info!(session_dir = ?get_session_dir(), "Session files stored in");
 
-    // Create task execution context
-    let conn_arc = Arc::new(conn);
-    let ctx = TaskExecutionContext {
-        conn: conn_arc.clone(),
-        my_identity,
-        config: config.clone(),
-        sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        qr_polling_tasks: Arc::new(Mutex::new(std::collections::HashMap::new())),
-    };
+    // State tracking for diffing subscription snapshots
+    let mut phone_assigned_steps: HashMap<String, PhoneAuthStep> = HashMap::new();
+    let mut qr_assigned_steps: HashMap<String, QrAuthStep> = HashMap::new();
 
-    // Spawn the SpacetimeDB connection runner
-    let conn_for_run = conn_arc.clone();
-    tokio::spawn(async move {
-        if let Err(e) = conn_for_run.run_async().await {
-            error!(error = %e, "Error in SpacetimeDB run_async");
-        }
-    });
+    // Active scan tasks keyed by client._id
+    let mut scan_tasks: HashMap<String, ScanTaskHandle> = HashMap::new();
+
+    // Timer for JWT refresh
+    let mut jwt_refresh = tokio::time::interval(Duration::from_secs(50 * 60));
+    jwt_refresh.tick().await; // consume first immediate tick
 
     info!("Telegram subscriber started. Press Ctrl+C to exit.");
 
-    // Main event loop
     loop {
         tokio::select! {
-            Some(event) = rx.recv() => {
-                process_task_event(&ctx, event).await;
-            }
+            biased;
+
             _ = tokio::signal::ctrl_c() => {
                 info!("Shutting down...");
                 break;
             }
+
+            // JWT refresh: mint a new token before the old one expires
+            _ = jwt_refresh.tick() => {
+                match jwt::mint_robot_jwt(&private_key, &robot_id, &robot_kid) {
+                    Ok(new_token) => {
+                        let mut auth_client = client.clone();
+                        auth_client.set_auth(Some(new_token)).await;
+                        info!("JWT refreshed");
+                    }
+                    Err(e) => warn!(error = %e, "JWT refresh failed"),
+                }
+            }
+
+            // Pending phone auths: try to claim each one
+            Some(Ok(auths)) = phone_pending.next() => {
+                for auth in auths {
+                    debug!(auth_id = %auth.id, "Found pending phone auth, attempting claim");
+                    if let Err(e) = claim_phone_auth(&ctx.client, &auth.id).await {
+                        warn!(auth_id = %auth.id, error = %e, "Failed to claim phone auth");
+                    }
+                }
+            }
+
+            // Assigned phone auths: execute step transitions
+            Some(Ok(auths)) = phone_assigned.next() => {
+                let auths: Vec<PhoneAuth> = auths;
+                let new_steps: HashMap<String, PhoneAuthStep> = auths.iter()
+                    .map(|a| (a.id.clone(), a.step))
+                    .collect();
+
+                for auth in &auths {
+                    let should_execute = phone_assigned_steps.get(&auth.id)
+                        .map(|old_step| *old_step != auth.step)
+                        .unwrap_or(true); // new doc = always process
+
+                    if should_execute {
+                        match auth.step {
+                            PhoneAuthStep::SendingCode
+                            | PhoneAuthStep::VerifyingCode
+                            | PhoneAuthStep::VerifyingPassword => {
+                                info!(auth_id = %auth.id, step = ?auth.step, "Executing phone auth step");
+                                if let Err(e) = execute_phone_auth(&ctx, auth).await {
+                                    error!(auth_id = %auth.id, error = %e, "Failed to execute phone auth");
+                                }
+                            }
+                            _ => {
+                                debug!(auth_id = %auth.id, step = ?auth.step, "No robot action for phone auth step");
+                            }
+                        }
+                    }
+                }
+
+                phone_assigned_steps = new_steps;
+            }
+
+            // Pending QR auths: try to claim each one
+            Some(Ok(auths)) = qr_pending.next() => {
+                for auth in auths {
+                    debug!(auth_id = %auth.id, "Found pending QR auth, attempting claim");
+                    if let Err(e) = claim_qr_auth(&ctx.client, &auth.id).await {
+                        warn!(auth_id = %auth.id, error = %e, "Failed to claim QR auth");
+                    }
+                }
+            }
+
+            // Assigned QR auths: execute step transitions, cancel polling on disappearance
+            Some(Ok(auths)) = qr_assigned.next() => {
+                let auths: Vec<QrAuth> = auths;
+                let new_ids: std::collections::HashSet<String> = auths.iter()
+                    .map(|a| a.id.clone())
+                    .collect();
+
+                // Cancel polling for auths that disappeared (reached terminal state server-side)
+                let removed_ids: Vec<String> = qr_assigned_steps.keys()
+                    .filter(|id| !new_ids.contains(*id))
+                    .cloned()
+                    .collect();
+                for id in &removed_ids {
+                    ctx.cancel_qr_polling(id).await;
+                }
+
+                // Process auths with step changes
+                for auth in &auths {
+                    let should_execute = qr_assigned_steps.get(&auth.id)
+                        .map(|old_step| *old_step != auth.step)
+                        .unwrap_or(true);
+
+                    if should_execute && auth.step == QrAuthStep::Generating {
+                        info!(auth_id = %auth.id, "Executing QR auth");
+                        if let Err(e) = execute_qr_auth(&ctx, auth).await {
+                            error!(auth_id = %auth.id, error = %e, "Failed to execute QR auth");
+                        }
+                    }
+                }
+
+                qr_assigned_steps = auths.iter()
+                    .map(|a| (a.id.clone(), a.step))
+                    .collect();
+            }
+
+            // Connected clients: start/stop scan tasks
+            Some(Ok(clients)) = connected_clients.next() => {
+                let clients: Vec<Client> = clients;
+                let new_ids: std::collections::HashSet<String> = clients.iter()
+                    .map(|c| c.id.clone())
+                    .collect();
+
+                // Cancel scan tasks for clients that are no longer connected
+                let removed: Vec<String> = scan_tasks.keys()
+                    .filter(|id| !new_ids.contains(*id))
+                    .cloned()
+                    .collect();
+                for id in &removed {
+                    if let Some(handle) = scan_tasks.remove(id) {
+                        info!(client_id = %id, "Cancelling scan task (client disconnected)");
+                        handle.cancel.cancel();
+                        handle.task.abort();
+                    }
+                }
+
+                // Start scan tasks for newly connected clients
+                for client in &clients {
+                    if scan_tasks.contains_key(&client.id) {
+                        continue; // already scanning
+                    }
+
+                    let cancel = CancellationToken::new();
+                    let ctx_clone = ctx.clone();
+                    let client_clone = client.clone();
+                    let cancel_clone = cancel.clone();
+
+                    info!(client_id = %client.id, external_id = %client.external_id, "Starting scan task");
+
+                    let task = tokio::spawn(async move {
+                        if let Err(e) = task::scan::scan_client(&ctx_clone, &client_clone, cancel_clone).await {
+                            error!(
+                                client_id = %client_clone.id,
+                                error = %e,
+                                "Scan task failed"
+                            );
+                        }
+                    });
+
+                    scan_tasks.insert(client.id.clone(), ScanTaskHandle { cancel, task });
+                }
+            }
         }
+    }
+
+    // Clean up scan tasks on shutdown
+    for (id, handle) in scan_tasks {
+        info!(client_id = %id, "Cancelling scan task (shutdown)");
+        handle.cancel.cancel();
+        handle.task.abort();
     }
 
     Ok(())
-}
-
-/// Process a task event (insert or update).
-async fn process_task_event(ctx: &TaskExecutionContext, event: TaskEvent) {
-    let task = event.task();
-
-    // Skip non-robot tasks entirely
-    if !is_robot_task(&task.payload) {
-        return;
-    }
-
-    match &task.status {
-        sdb_api::module_bindings::TaskStatus::Unassigned => {
-            // Try to pick (assign) the task
-            debug!(task_id = %task.id, "Attempting to pick unassigned task");
-            match pick_task(&ctx.conn, task, ctx.my_identity) {
-                Ok(true) => {
-                    info!(task_id = %task.id, "Successfully picked task");
-                    // Don't execute yet - wait for the update event with Assigned status
-                }
-                Ok(false) => {
-                    debug!(
-                        task_id = %task.id,
-                        "Task not picked (already assigned or not a robot task)"
-                    );
-                }
-                Err(e) => {
-                    warn!(task_id = %task.id, error = %e, "Failed to pick task");
-                }
-            }
-        }
-        sdb_api::module_bindings::TaskStatus::Assigned(robot_id)
-            if *robot_id == ctx.my_identity =>
-        {
-            // Only execute if this is a fresh assignment (transition from Unassigned)
-            // Skip if this is just an update to an already-assigned task (e.g., QR token update)
-            let should_execute = match &event {
-                TaskEvent::Insert(_) => true,
-                TaskEvent::Update { old, .. } => {
-                    matches!(old.status, sdb_api::module_bindings::TaskStatus::Unassigned)
-                }
-            };
-
-            if should_execute {
-                info!(task_id = %task.id, "Executing newly assigned task");
-                if let Err(e) = execute_task(ctx, task).await {
-                    error!(task_id = %task.id, error = %e, "Failed to execute task");
-                }
-            } else {
-                debug!(task_id = %task.id, "Skipping execution - task already being processed");
-            }
-        }
-        sdb_api::module_bindings::TaskStatus::Assigned(_) => {
-            // Task is assigned to another robot - ignore
-            debug!(task_id = %task.id, "Task assigned to another robot, ignoring");
-        }
-        sdb_api::module_bindings::TaskStatus::Done => {
-            // Task is done - cancel any active QR polling for this task
-            debug!(task_id = %task.id, "Task is done");
-
-            // Check if this task has an active QR polling loop and cancel it
-            let mut polling_tasks = ctx.qr_polling_tasks.lock().await;
-            if let Some(handle) = polling_tasks.remove(&task.id) {
-                info!(task_id = %task.id, "Cancelling QR polling for completed/cancelled task");
-                handle.cancel.cancel();
-            }
-        }
-    }
 }

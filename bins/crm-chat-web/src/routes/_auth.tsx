@@ -1,4 +1,4 @@
-import { RedirectToSignIn, useAuth } from "@clerk/clerk-react";
+import { RedirectToSignIn, UserButton, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
@@ -6,40 +6,34 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { MessageSquare, Moon, Search, Settings, Sun } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { DbConnectionBuilder, Identity } from "spacetimedb";
-import { SpacetimeDBProvider } from "spacetimedb/react";
-import { RightSidebar } from "@/components/right-sidebar";
+import { useState } from "react";
+import { NotificationsBellPanel } from "@/components/right-sidebar";
 import { SearchDialog } from "@/components/search-dialog";
 import { Button } from "@/components/ui/button";
-import { env } from "@/env";
 import { useTheme } from "@/hooks/use-theme";
-import { DbConnection, type ErrorContext } from "@/lib/spacetime";
+import { convex } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_auth")({
   component: AuthLayout,
 });
 
-type ConnectionState =
-  | { status: "loading" }
-  | { status: "ready"; builder: DbConnectionBuilder<DbConnection> }
-  | { status: "error"; message: string };
-
 function ThemeToggle(): React.ReactNode {
   const { resolvedTheme, setTheme } = useTheme();
 
   return (
     <Button
+      className="h-8 w-8"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
       size="icon"
       variant="ghost"
     >
       {resolvedTheme === "dark" ? (
-        <Sun className="h-5 w-5" />
+        <Sun className="h-3.5 w-3.5" />
       ) : (
-        <Moon className="h-5 w-5" />
+        <Moon className="h-3.5 w-3.5" />
       )}
       <span className="sr-only">Toggle theme</span>
     </Button>
@@ -47,215 +41,101 @@ function ThemeToggle(): React.ReactNode {
 }
 
 function AuthLayout(): React.ReactNode {
-  const { isLoaded, isSignedIn, getToken } = useAuth();
-  const [connectionState, setConnectionState] = useState<ConnectionState>({
-    status: "loading",
-  });
-  const [connectionKey, setConnectionKey] = useState(0);
+  const { isLoaded, isSignedIn } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
-  const retryCountRef = useRef(0);
-  const connectionBuilderRef = useRef<DbConnectionBuilder<DbConnection> | null>(
-    null
-  );
-  const maxRetries = 3;
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const navigate = useNavigate();
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const onConnect = (
-      _conn: DbConnection,
-      identity: Identity,
-      token: string
-    ) => {
-      localStorage.setItem("auth_token", token);
-      if (import.meta.env.DEV) {
-        console.log(
-          "Connected to SpacetimeDB with identity:",
-          identity.toHexString()
-        );
-      }
-      retryCountRef.current = 0;
-    };
-
-    const onDisconnect = () => {
-      if (import.meta.env.DEV) {
-        console.log("Disconnected from SpacetimeDB");
-      }
-    };
-
-    const onConnectError = (_ctx: ErrorContext, err: Error | Event): void => {
-      console.error("Error connecting to SpacetimeDB:", err);
-
-      if (err instanceof Event) {
-        return;
-      }
-
-      retryCountRef.current += 1;
-
-      if (retryCountRef.current < maxRetries && !cancelled) {
-        // Retry connection
-        setTimeout(() => {
-          if (!cancelled) {
-            setConnectionKey((k) => k + 1);
-          }
-        }, 1000 * retryCountRef.current);
-      } else if (!cancelled) {
-        const errorMessage =
-          (err as Error & { message?: string })?.message ?? "unknown error";
-        setConnectionState({
-          status: "error",
-          message: `Connection error: ${errorMessage}`,
-        });
-      }
-    };
-
-    const initConnection = async () => {
-      try {
-        // Wait for Clerk to load
-        if (!isLoaded) {
-          return;
-        }
-
-        // Get Clerk session token for SpacetimeDB auth
-        let token: string | undefined;
-        if (isSignedIn) {
-          // Use Clerk JWT for authenticated users
-          token = (await getToken()) ?? undefined;
-        } else {
-          // Fall back to stored token for anonymous/returning users
-          token = localStorage.getItem("auth_token") ?? undefined;
-        }
-
-        if (cancelled) {
-          return;
-        }
-
-        const builder = DbConnection.builder()
-          .withUri(env.VITE_SPACETIMEDB_HOST)
-          .withModuleName(env.VITE_SPACETIMEDB_MODULE)
-          .withToken(token)
-          .onConnect(onConnect)
-          .onDisconnect(onDisconnect)
-          .onConnectError(onConnectError);
-
-        connectionBuilderRef.current = builder;
-        setConnectionState({ status: "ready", builder });
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to initialize connection:", error);
-          setConnectionState({
-            status: "error",
-            message: "Failed to initialize connection",
-          });
-        }
-      }
-    };
-
-    initConnection();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [connectionKey, isLoaded, isSignedIn, getToken]);
-
-  // Wait for Clerk to load
   if (!isLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  // Require sign-in
-  if (!isSignedIn) {
-    return <RedirectToSignIn />;
-  }
-
-  if (connectionState.status === "loading") {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="text-muted-foreground">Connecting...</div>
-      </div>
-    );
-  }
-
-  if (connectionState.status === "error") {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="space-y-4 text-center">
-          <div className="text-destructive">{connectionState.message}</div>
-          <button
-            className="rounded-lg bg-primary px-4 py-2 font-medium text-primary-foreground text-sm transition-colors hover:bg-primary/90"
-            onClick={() => window.location.reload()}
-            type="button"
-          >
-            Refresh Page
-          </button>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+          <span className="font-display text-muted-foreground text-sm">
+            Loading...
+          </span>
         </div>
       </div>
     );
   }
 
+  if (!isSignedIn) {
+    return <RedirectToSignIn />;
+  }
+
   return (
-    <SpacetimeDBProvider
-      connectionBuilder={connectionState.builder}
-      key={connectionKey}
-    >
+    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <div className="flex h-screen flex-col">
-        <header className="sticky top-0 z-50 border-border border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex h-14 items-center justify-between px-4">
-            <div className="flex items-center gap-6">
-              <h1 className="font-semibold text-xl">CRM Chat</h1>
-              <nav className="flex items-center gap-1">
+        <header className="sticky top-0 z-50 border-border/40 border-b bg-background/90 backdrop-blur-xl">
+          <div className="flex h-12 items-center justify-between px-4">
+            <div className="flex items-center gap-4">
+              <h1 className="font-display font-semibold text-base tracking-tight">
+                CRM Chat
+              </h1>
+              <div className="hidden h-4 w-px bg-border sm:block" />
+              <nav className="flex items-center gap-0.5">
                 <Link
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
                     currentPath.startsWith("/chats")
-                      ? "bg-accent text-accent-foreground"
+                      ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                   to="/chats"
                 >
-                  <MessageSquare className="h-4 w-4" />
-                  Chats
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Chats</span>
                 </Link>
                 <Link
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
                     currentPath === "/settings"
-                      ? "bg-accent text-accent-foreground"
+                      ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                   to="/settings"
                 >
-                  <Settings className="h-4 w-4" />
-                  Settings
+                  <Settings className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Settings</span>
                 </Link>
               </nav>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <Button
+                className="h-8 w-8"
                 onClick={() => setSearchOpen(true)}
                 size="icon"
                 variant="ghost"
               >
-                <Search className="h-5 w-5" />
+                <Search className="h-3.5 w-3.5" />
                 <span className="sr-only">Search messages</span>
               </Button>
+              <NotificationsBellPanel
+                onOpenChange={setNotificationsOpen}
+                open={notificationsOpen}
+              />
               <ThemeToggle />
+              <div className="ml-1.5 h-4 w-px bg-border" />
+              <div className="ml-1.5">
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: "h-6 w-6",
+                    },
+                  }}
+                />
+              </div>
             </div>
           </div>
+          <div className="h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
         </header>
         <div className="flex flex-1 overflow-hidden">
           <main className="flex-1 overflow-hidden">
             <Outlet />
           </main>
-          <RightSidebar />
         </div>
       </div>
       <SearchDialog
@@ -268,6 +148,6 @@ function AuthLayout(): React.ReactNode {
         }}
         open={searchOpen}
       />
-    </SpacetimeDBProvider>
+    </ConvexProviderWithClerk>
   );
 }
