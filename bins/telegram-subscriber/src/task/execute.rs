@@ -30,6 +30,7 @@ pub struct SessionKey {
 }
 
 /// Context needed for task execution.
+#[derive(Clone)]
 pub struct TaskExecutionContext {
     /// Convex client (cloneable, shares underlying connection)
     pub client: ConvexClient,

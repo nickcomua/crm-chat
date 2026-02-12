@@ -131,11 +131,11 @@ export const updateScanEnabled = mutation({
       .unique();
     if (!chat) throw new Error("Chat not found");
     requireOwner(caller.id, chat.userId);
-    await ctx.db.patch(chat._id, { scanEnabled });
-
     if (!scanEnabled) {
-      await ctx.db.patch(chat._id, { fullScanned: false });
+      await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
       await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
+    } else {
+      await ctx.db.patch(chat._id, { scanEnabled });
     }
   },
 });
@@ -157,10 +157,20 @@ export const markFullScanned = mutation({
 
 const PURGE_BATCH_SIZE = 200;
 
-/** Delete all messages and media for a chat in batches. Self-scheduling. */
+/** Delete all messages and media for a chat in batches. Self-scheduling.
+ *  Stops early if the chat has been re-enabled (to avoid racing with a new scan). */
 export const purgeChatData = internalMutation({
   args: { chatId: v.string() },
   handler: async (ctx, { chatId }) => {
+    // Guard: stop purging if scan was re-enabled since the purge was scheduled
+    const chat = await ctx.db
+      .query("chats")
+      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .unique();
+    if (!chat || chat.scanEnabled) {
+      return;
+    }
+
     let hasMore = false;
 
     // Delete messages in batch

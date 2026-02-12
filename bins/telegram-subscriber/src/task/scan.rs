@@ -304,27 +304,47 @@ async fn listen_updates(
     let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
     refresh_interval.tick().await; // consume first immediate tick
 
+    // Backfill runs as a separate spawned task so it doesn't block real-time updates.
+    let mut backfill_handle: Option<tokio::task::JoinHandle<()>> = None;
+
     loop {
         tokio::select! {
             biased;
 
             _ = cancel.cancelled() => {
                 info!("Update listener cancelled");
+                if let Some(h) = backfill_handle.take() {
+                    h.abort();
+                }
                 return Ok(());
             }
 
             // Periodically refresh the set of scan-enabled chats
             _ = refresh_interval.tick() => {
+                // Skip if a backfill is already running
+                if backfill_handle.as_ref().is_some_and(|h| !h.is_finished()) {
+                    debug!("Backfill still running, skipping refresh");
+                    continue;
+                }
+
                 match load_scan_enabled_chats(ctx, client).await {
                     Ok(new_set) => {
                         if new_set != scan_enabled_chats {
                             info!(count = new_set.len(), "Refreshed scan-enabled chats");
                             scan_enabled_chats = new_set;
 
-                            // Backfill messages for newly-enabled chats that aren't fully scanned
-                            if let Err(e) = full_scan_messages(ctx, client, tg_client).await {
-                                warn!(error = %e, "Failed to backfill newly-enabled chats");
-                            }
+                            // Spawn backfill as a separate task to avoid blocking updates
+                            let bf_ctx = ctx.clone();
+                            let bf_client = client.clone();
+                            let bf_tg = tg_client.clone();
+                            backfill_handle = Some(tokio::spawn(async move {
+                                if let Err(e) = full_scan_messages(&bf_ctx, &bf_client, &bf_tg).await {
+                                    warn!(error = %e, "Failed to backfill newly-enabled chats");
+                                }
+                                if let Err(e) = download_pending_media(&bf_ctx, &bf_client, &bf_tg).await {
+                                    warn!(error = %e, "Failed to download pending media after backfill");
+                                }
+                            }));
                         }
                     }
                     Err(e) => warn!(error = %e, "Failed to refresh scan-enabled chats"),
@@ -416,22 +436,32 @@ async fn process_update(
                     .await,
             )?;
 
-            // Real-time media download: immediately download and upload media for new messages
+            // Real-time media download: spawn as a separate task so we don't block
+            // the update loop while waiting for the Telegram client Mutex (which may
+            // be held by a long-running backfill scan).
             if matches!(update, Update::NewMessage(_)) {
                 if let Some(ref summary) = msg.media_summary {
                     if let Some(ref media_ext_id) = msg.media_external_id {
-                        if let Err(e) = download_and_upload_media(
-                            ctx,
-                            tg_client,
-                            &msg.chat_external_id,
-                            &msg.external_id,
-                            media_ext_id,
-                            summary,
-                        )
-                        .await
-                        {
-                            warn!(media_id = %media_ext_id, error = %e, "Failed to download media for real-time message");
-                        }
+                        let dl_ctx = ctx.clone();
+                        let dl_tg = tg_client.clone();
+                        let dl_chat_ext = msg.chat_external_id.clone();
+                        let dl_msg_ext = msg.external_id.clone();
+                        let dl_media_ext = media_ext_id.clone();
+                        let dl_summary = summary.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = download_and_upload_media(
+                                &dl_ctx,
+                                &dl_tg,
+                                &dl_chat_ext,
+                                &dl_msg_ext,
+                                &dl_media_ext,
+                                &dl_summary,
+                            )
+                            .await
+                            {
+                                warn!(media_id = %dl_media_ext, error = %e, "Failed to download media for real-time message");
+                            }
+                        });
                     }
                 }
             }
