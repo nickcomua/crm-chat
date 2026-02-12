@@ -57,6 +57,40 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** Default MIME type for a media kind (used as fallback when mimeType is absent). */
+function defaultMimeType(kind: MediaKind): string {
+  switch (kind) {
+    case "Photo":
+      return "image/jpeg";
+    case "Video":
+    case "VideoNote":
+    case "Animation":
+      return "video/mp4";
+    case "Audio":
+      return "audio/mpeg";
+    case "Voice":
+      return "audio/ogg";
+    case "Sticker":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/** Download a file with a proper filename via programmatic fetch + blob. */
+function downloadFile(url: string, fileName: string): void {
+  fetch(url)
+    .then((res) => res.blob())
+    .then((blob) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    });
+}
+
 function PendingMedia({
   kind,
   isOutgoing,
@@ -194,8 +228,11 @@ function MediaLightbox({
             className="max-h-[88vh] max-w-full rounded"
             controls
             playsInline
-            src={media.url}
           >
+            <source
+              src={media.url}
+              type={media.mimeType ?? defaultMimeType(media.kind)}
+            />
             <track kind="captions" />
           </video>
         ) : (
@@ -209,6 +246,57 @@ function MediaLightbox({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DocumentMedia({
+  media,
+  isOutgoing,
+}: MediaRendererProps): React.ReactNode {
+  return (
+    <button
+      className={cn(
+        "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left",
+        isOutgoing
+          ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
+          : "bg-muted/60 hover:bg-muted"
+      )}
+      onClick={() => {
+        if (media.url) {
+          downloadFile(media.url, media.fileName ?? "document");
+        }
+      }}
+      type="button"
+    >
+      <Download
+        className={cn(
+          "h-4 w-4 shrink-0",
+          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground/70"
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "truncate font-medium text-[12px]",
+            isOutgoing ? "text-primary-foreground" : "text-foreground"
+          )}
+        >
+          {media.fileName ?? "Document"}
+        </p>
+        {media.fileSize !== undefined && (
+          <p
+            className={cn(
+              "text-[10px]",
+              isOutgoing
+                ? "text-primary-foreground/50"
+                : "text-muted-foreground/50"
+            )}
+          >
+            {formatFileSize(media.fileSize)}
+          </p>
+        )}
+      </div>
+    </button>
   );
 }
 
@@ -252,8 +340,11 @@ function StoredMedia({
             loop
             muted
             playsInline
-            src={media.url}
           >
+            <source
+              src={media.url}
+              type={media.mimeType ?? defaultMimeType(media.kind)}
+            />
             <track kind="captions" />
           </video>
         </MediaLightbox>
@@ -271,8 +362,11 @@ function StoredMedia({
               )}
               playsInline
               preload="metadata"
-              src={media.url}
             >
+              <source
+                src={media.url}
+                type={media.mimeType ?? defaultMimeType(media.kind)}
+              />
               <track kind="captions" />
             </video>
             {media.duration !== undefined && (
@@ -288,7 +382,11 @@ function StoredMedia({
     case "Voice":
       return (
         <div className="flex min-w-[200px] items-center gap-2">
-          <audio controls preload="metadata" src={media.url}>
+          <audio controls preload="metadata">
+            <source
+              src={media.url}
+              type={media.mimeType ?? defaultMimeType(media.kind)}
+            />
             <track kind="captions" />
           </audio>
           {media.duration !== undefined && (
@@ -307,51 +405,7 @@ function StoredMedia({
       );
 
     default:
-      return (
-        <a
-          className={cn(
-            "flex items-center gap-2 rounded-lg px-2 py-1.5",
-            isOutgoing
-              ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
-              : "bg-muted/60 hover:bg-muted"
-          )}
-          download={media.fileName ?? true}
-          href={media.url}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          <Download
-            className={cn(
-              "h-4 w-4 shrink-0",
-              isOutgoing
-                ? "text-primary-foreground/70"
-                : "text-muted-foreground/70"
-            )}
-          />
-          <div className="min-w-0 flex-1">
-            <p
-              className={cn(
-                "truncate font-medium text-[12px]",
-                isOutgoing ? "text-primary-foreground" : "text-foreground"
-              )}
-            >
-              {media.fileName ?? "Document"}
-            </p>
-            {media.fileSize !== undefined && (
-              <p
-                className={cn(
-                  "text-[10px]",
-                  isOutgoing
-                    ? "text-primary-foreground/50"
-                    : "text-muted-foreground/50"
-                )}
-              >
-                {formatFileSize(media.fileSize)}
-              </p>
-            )}
-          </div>
-        </a>
-      );
+      return <DocumentMedia isOutgoing={isOutgoing} media={media} />;
   }
 }
 

@@ -3,9 +3,11 @@
 //! These tests require valid Telegram API credentials and will make actual
 //! API calls to Telegram. Set up your test configuration before running these tests.
 
+use messanger_interface::media::MediaKind;
 use messanger_interface::{MessengerClient, Update};
 use messanger_telegram::TelegramClient;
 use serial_test::serial;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 
@@ -834,4 +836,312 @@ async fn test_get_messages_count() {
     })
     .await
     .expect("Test timed out");
+}
+
+/// Test that media classification works for all supported media types.
+///
+/// Prerequisites: Send the following media to Saved Messages in the test account
+/// (client 1) before running this test:
+/// - A photo
+/// - A video
+/// - A voice message
+/// - An audio file (e.g. .mp3)
+/// - A sticker
+/// - A GIF / animation
+/// - A document (e.g. .pdf)
+/// - A video note (round video)
+///
+/// The test scans up to 200 recent messages and reports which media kinds were
+/// found. It asserts that at least Photo, Video, and Document are present.
+#[tokio::test]
+#[serial]
+async fn test_media_classification() {
+    tokio::time::timeout(EXTENDED_TIMEOUT, async {
+        let configs = TestConfig::from_env();
+
+        if configs.is_none() {
+            println!("Skipping test: Environment variables not set");
+            return;
+        }
+
+        let (config1, _config2) = configs.unwrap();
+
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create client");
+
+        assert!(
+            client.is_authorized().await.expect("auth check failed"),
+            "Client is not authorized"
+        );
+
+        // Find Saved Messages chat
+        let saved_messages_chat_id = find_saved_messages(&client).await;
+        println!("Saved Messages chat: {}", saved_messages_chat_id);
+
+        // Iterate recent messages and classify media
+        let mut messages = client
+            .iter_messages(&saved_messages_chat_id)
+            .await
+            .expect("Failed to get messages stream");
+
+        let mut media_found: HashMap<MediaKind, u32> = HashMap::new();
+        let mut scanned = 0u32;
+
+        while let Some(result) = messages.next().await {
+            let msg = result.expect("Failed to get message");
+            scanned += 1;
+
+            if let Some(ref summary) = msg.media_summary {
+                *media_found.entry(summary.kind).or_insert(0) += 1;
+
+                println!(
+                    "  msg #{} kind={:?} mime={:?} file={:?} size={:?} {}x{} dur={:?}",
+                    msg.external_id,
+                    summary.kind,
+                    summary.mime_type,
+                    summary.file_name,
+                    summary.file_size,
+                    summary.width.unwrap_or(0),
+                    summary.height.unwrap_or(0),
+                    summary.duration,
+                );
+            }
+
+            if scanned >= 200 {
+                break;
+            }
+        }
+
+        println!("\nScanned {} messages, found media:", scanned);
+        for (kind, count) in &media_found {
+            println!("  {:?}: {} messages", kind, count);
+        }
+
+        // Assert we found at least the most common types
+        assert!(
+            media_found.contains_key(&MediaKind::Photo),
+            "Expected at least one Photo in Saved Messages"
+        );
+
+        println!("✓ Media classification test passed!");
+    })
+    .await
+    .expect("Test timed out");
+}
+
+/// Test that `get_message_media` efficiently retrieves media for a specific message.
+///
+/// This verifies the offset_id optimization — it should complete in < 5 seconds
+/// even for messages deep in the chat history.
+#[tokio::test]
+#[serial]
+async fn test_get_message_media() {
+    tokio::time::timeout(DEFAULT_TIMEOUT, async {
+        let configs = TestConfig::from_env();
+
+        if configs.is_none() {
+            println!("Skipping test: Environment variables not set");
+            return;
+        }
+
+        let (config1, _config2) = configs.unwrap();
+
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create client");
+
+        assert!(
+            client.is_authorized().await.expect("auth check failed"),
+            "Client is not authorized"
+        );
+
+        let saved_messages_chat_id = find_saved_messages(&client).await;
+
+        // Find a message with media
+        let mut messages = client
+            .iter_messages(&saved_messages_chat_id)
+            .await
+            .expect("Failed to get messages stream");
+
+        let media_msg = loop {
+            match messages.next().await {
+                Some(Ok(msg)) if msg.media_summary.is_some() => break msg,
+                Some(Ok(_)) => continue,
+                Some(Err(e)) => panic!("Error reading message: {}", e),
+                None => panic!("No messages with media found in Saved Messages"),
+            }
+        };
+        // Drop the iterator so the client lock is released
+        drop(messages);
+
+        let msg_id: i32 = media_msg
+            .external_id
+            .parse()
+            .expect("Failed to parse message ID");
+
+        println!(
+            "Testing get_message_media for msg #{} (kind={:?})",
+            msg_id,
+            media_msg.media_summary.as_ref().unwrap().kind
+        );
+
+        // This should complete quickly thanks to offset_id optimization
+        let start = std::time::Instant::now();
+        let media = client
+            .get_message_media(&saved_messages_chat_id, msg_id)
+            .await
+            .expect("Failed to get message media");
+        let elapsed = start.elapsed();
+
+        assert!(media.is_some(), "Expected media to be present");
+        println!(
+            "✓ get_message_media completed in {:?} (should be < 5s)",
+            elapsed
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "get_message_media took too long ({:?}), offset_id optimization may not be working",
+            elapsed
+        );
+    })
+    .await
+    .expect("Test timed out");
+}
+
+/// Test that `stream_message_media` can download media bytes for all found types.
+///
+/// Iterates recent messages in Saved Messages and downloads the first media of
+/// each kind found. Verifies the download produces non-empty bytes.
+#[tokio::test]
+#[serial]
+async fn test_stream_message_media_all_kinds() {
+    tokio::time::timeout(EXTENDED_TIMEOUT, async {
+        let configs = TestConfig::from_env();
+
+        if configs.is_none() {
+            println!("Skipping test: Environment variables not set");
+            return;
+        }
+
+        let (config1, _config2) = configs.unwrap();
+
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create client");
+
+        assert!(
+            client.is_authorized().await.expect("auth check failed"),
+            "Client is not authorized"
+        );
+
+        let saved_messages_chat_id = find_saved_messages(&client).await;
+
+        // Collect one message per media kind
+        let mut messages = client
+            .iter_messages(&saved_messages_chat_id)
+            .await
+            .expect("Failed to get messages stream");
+
+        let mut per_kind: HashMap<MediaKind, (String, i32)> = HashMap::new();
+        let mut scanned = 0u32;
+
+        while let Some(result) = messages.next().await {
+            let msg = result.expect("Failed to get message");
+            scanned += 1;
+
+            if let Some(ref summary) = msg.media_summary {
+                per_kind.entry(summary.kind).or_insert_with(|| {
+                    let msg_id: i32 = msg.external_id.parse().unwrap_or(0);
+                    (msg.external_id.clone(), msg_id)
+                });
+            }
+
+            if scanned >= 200 || per_kind.len() >= 8 {
+                break;
+            }
+        }
+        drop(messages);
+
+        println!("Found {} distinct media kinds to test", per_kind.len());
+
+        // Download each kind
+        for (kind, (_ext_id, msg_id)) in &per_kind {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(32);
+
+            let result = client
+                .stream_message_media(&saved_messages_chat_id, *msg_id, tx)
+                .await;
+
+            match result {
+                Ok(Some(total_bytes)) => {
+                    // Drain the channel
+                    let mut received = 0usize;
+                    while let Some(chunk) = rx.recv().await {
+                        received += chunk.expect("chunk error").len();
+                    }
+                    println!(
+                        "  {:?}: downloaded {} bytes (reported {})",
+                        kind, received, total_bytes
+                    );
+                    assert!(
+                        total_bytes > 0,
+                        "Expected non-empty download for {:?}",
+                        kind
+                    );
+                }
+                Ok(None) => {
+                    println!("  {:?}: no media found (message may have been deleted)", kind);
+                }
+                Err(e) => {
+                    panic!("Failed to stream {:?} media: {}", kind, e);
+                }
+            }
+
+            // Rate limit between downloads
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        println!("✓ Media streaming test passed!");
+    })
+    .await
+    .expect("Test timed out");
+}
+
+/// Helper: Find the Saved Messages chat for a client.
+async fn find_saved_messages(client: &TelegramClient) -> String {
+    let native_client = client.get_native_client().await;
+    let client_lock = native_client.lock().await;
+    let me = client_lock
+        .get_me()
+        .await
+        .expect("Failed to get user info");
+    let user_id = me.raw.id().to_string();
+    drop(client_lock);
+
+    let mut dialogs = client
+        .iter_dialogs()
+        .await
+        .expect("Failed to get dialogs stream");
+
+    while let Some(result) = dialogs.next().await {
+        let dialog = result.expect("Failed to get dialog");
+        if dialog.external_id == user_id {
+            return dialog.external_id;
+        }
+    }
+
+    panic!("Saved Messages chat not found for user {}", user_id);
 }

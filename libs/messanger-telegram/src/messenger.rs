@@ -134,6 +134,9 @@ impl TelegramClient {
 
     /// Get the grammers Media object from a message by chat+message IDs.
     /// Used by the background download task to re-fetch media for pending records.
+    ///
+    /// Uses `offset_id` to jump directly to the message instead of iterating
+    /// through the entire chat history (which could be thousands of API calls).
     pub async fn get_message_media(
         &self,
         chat_external_id: &str,
@@ -149,8 +152,10 @@ impl TelegramClient {
             ))
         })?;
 
-        let mut messages = client.iter_messages(chat_ref);
-        while let Ok(Some(msg)) = messages.next().await {
+        // offset_id returns messages with IDs < offset, so offset_id(msg + 1)
+        // starts right at the target message.
+        let mut messages = client.iter_messages(chat_ref).offset_id(message_id + 1);
+        if let Ok(Some(msg)) = messages.next().await {
             if msg.id() == message_id {
                 return Ok(msg.media());
             }
@@ -171,12 +176,28 @@ impl TelegramClient {
         message_id: i32,
         chunk_tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
     ) -> Result<Option<usize>, MessengerError> {
-        let media = match self.get_message_media(chat_external_id, message_id).await? {
-            Some(m) => m,
-            None => return Ok(None),
+        // Perform lookup + download under a single lock acquisition to avoid
+        // deadlocking (get_message_media and iter_download both need the lock).
+        let client = self.client.lock().await;
+        let dialog = Self::find_dialog_with_client(&client, &chat_external_id.to_string()).await?;
+        let chat = dialog.peer();
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+
+        // Use offset_id for efficient O(1) lookup.
+        let mut messages = client.iter_messages(chat_ref).offset_id(message_id + 1);
+        let media = match messages.next().await {
+            Ok(Some(msg)) if msg.id() == message_id => match msg.media() {
+                Some(m) => m,
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
         };
 
-        let client = self.client.lock().await;
         let mut download = client.iter_download(&media);
         let mut total = 0usize;
         while let Some(chunk) = download.next().await.map_err(|e| {
