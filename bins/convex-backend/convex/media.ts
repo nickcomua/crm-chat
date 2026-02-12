@@ -79,7 +79,9 @@ export const storeMedia = mutation({
       .unique();
 
     if (!existing) {
-      throw new Error(`Media record not found: ${args.externalId}`);
+      // Record may have been deleted by purgeChatData — clean up orphaned storage
+      await ctx.storage.delete(args.storageId);
+      return null;
     }
 
     const { externalId: _, ...updates } = args;
@@ -110,7 +112,8 @@ export const markFailed = mutation({
       .unique();
 
     if (!existing) {
-      throw new Error(`Media record not found: ${externalId}`);
+      // Record may have been deleted by purgeChatData — nothing to mark
+      return null;
     }
 
     await ctx.db.patch(existing._id, {
