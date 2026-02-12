@@ -1,115 +1,96 @@
 import { expect, test } from "@playwright/test";
-
-// Test credentials from environment (required)
-const TEST_CLERK_USERNAME = process.env.TEST_CLERK_USERNAME;
-const TEST_CLERK_PASSWORD = process.env.TEST_CLERK_PASSWORD;
-
-if (!(TEST_CLERK_USERNAME && TEST_CLERK_PASSWORD)) {
-  throw new Error(
-    "TEST_CLERK_USERNAME and TEST_CLERK_PASSWORD environment variables are required"
-  );
-}
+import jsQR from "jsqr";
+import { PNG } from "pngjs";
 
 // URL patterns for navigation
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const SETTINGS_URL_PATTERN = /\/settings/;
+const TG_LOGIN_URL_PATTERN = /^tg:\/\/login\?token=.+/;
+
+// Telegram subscriber needs time to claim the auth and fetch the QR token
+const QR_CODE_TIMEOUT = 30_000;
+
+// Run tests sequentially — they share a single Clerk test account
+test.describe.configure({ mode: "serial" });
 
 test.describe("QR Code Authentication", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the app - Clerk will redirect to sign-in
+    // Auth is handled by storageState from auth.setup.ts
     await page.goto("/");
-
-    // Wait for Clerk sign-in page to load
-    await page.waitForSelector('[data-testid="sign-in-root"]', {
-      timeout: 10_000,
-    });
-
-    // Fill in credentials
-    await page.fill('input[name="identifier"]', TEST_CLERK_USERNAME);
-    await page.click('button:has-text("Continue")');
-
-    // Wait for password field and fill it
-    await page.waitForSelector('input[name="password"]', { timeout: 5000 });
-    await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
-    await page.click('button:has-text("Continue")');
-
-    // Wait for successful login and redirect to main app
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
+    await page.waitForTimeout(2000);
+
+    // Navigate to settings
+    await page.locator('a[href="/#/settings"]').click({ timeout: 15_000 });
+    await page.waitForURL(SETTINGS_URL_PATTERN);
+    await page.waitForSelector("text=Telegram Clients", { timeout: 10_000 });
   });
 
-  test("should display QR code when clicking Add Client", async ({ page }) => {
-    // Navigate to settings page
-    await page.click('a[href="/settings"]');
-    await page.waitForURL(SETTINGS_URL_PATTERN);
-
-    // Wait for the page to load
-    await page.waitForSelector("text=Telegram Clients");
-
+  test("should display scannable QR code when clicking Add Client", async ({
+    page,
+  }) => {
     // Click Add Client button
     await page.click('button:has-text("Add Client")');
 
     // Wait for dialog to open
     await page.waitForSelector('[role="dialog"]');
 
-    // Verify QR auth component is displayed
-    // Initially it should show "Generating QR code..." message
-    const generatingText = page.locator("text=Generating QR code...");
-    const qrCode = page.locator("svg"); // QRCodeSVG renders as SVG
+    // First we should see the loading state
+    await expect(page.locator("text=Generating QR code...")).toBeVisible();
 
-    // Either we see the generating message or the QR code
-    await expect(
-      generatingText.or(
-        qrCode.filter({ has: page.locator('rect[fill="#FFFFFF"]') })
-      )
-    ).toBeVisible({ timeout: 10_000 });
+    // Wait for the actual QR code to appear (subscriber must generate the token)
+    const qrCodeContainer = page.locator(
+      '[role="dialog"] .rounded-lg.bg-white'
+    );
+    await expect(qrCodeContainer).toBeVisible({ timeout: QR_CODE_TIMEOUT });
 
-    // If we wait a bit longer, we should see the actual QR code
-    // (this depends on the backend being available)
-    await page.waitForTimeout(2000);
+    // Verify the QR code SVG is rendered inside the container
+    const qrSvg = qrCodeContainer.locator("svg");
+    await expect(qrSvg).toBeVisible();
 
-    // Check if QR code is now visible (it has a specific structure)
-    const qrCodeContainer = page.locator(".bg-white.rounded-lg");
-    const isQrVisible = await qrCodeContainer.isVisible().catch(() => false);
+    // Decode the QR code from a screenshot to verify it contains a valid Telegram login URL
+    const screenshotBuffer = await qrCodeContainer.screenshot();
+    const png = PNG.sync.read(screenshotBuffer);
+    const decoded = jsQR(
+      new Uint8ClampedArray(png.data),
+      png.width,
+      png.height
+    );
 
-    if (isQrVisible) {
-      // Verify the QR code SVG is present
-      const qrSvg = qrCodeContainer.locator("svg");
-      await expect(qrSvg).toBeVisible();
-
-      // Verify instruction text is shown
-      await expect(
-        page.locator("text=Scan with Telegram to sign in")
-      ).toBeVisible();
-
-      // Verify expiration countdown is shown (if token is received)
-      const expiresText = page.locator("text=Expires in");
-      const hasExpiry = await expiresText.isVisible().catch(() => false);
-      if (hasExpiry) {
-        await expect(expiresText).toBeVisible();
-      }
+    expect(decoded).not.toBeNull();
+    if (decoded === null) {
+      throw new Error("QR code could not be decoded");
     }
+    expect(decoded.data).toMatch(TG_LOGIN_URL_PATTERN);
+
+    // Verify instruction text
+    await expect(
+      page.locator("text=Scan with Telegram to sign in")
+    ).toBeVisible();
+
+    // Verify expiration countdown is shown
+    await expect(page.locator("text=/Expires in \\d+s/")).toBeVisible();
 
     // Verify cancel button is present
-    await expect(page.locator('button:has-text("Cancel")')).toBeVisible();
+    await expect(
+      page.locator('[role="dialog"] button:has-text("Cancel")')
+    ).toBeVisible();
   });
 
   test("should be able to cancel QR auth", async ({ page }) => {
-    // Navigate to settings page
-    await page.click('a[href="/settings"]');
-    await page.waitForURL(SETTINGS_URL_PATTERN);
-
-    // Click Add Client button
+    // Click Add Client button (already on settings page from beforeEach)
     await page.click('button:has-text("Add Client")');
 
-    // Wait for dialog
+    // Wait for dialog with QR auth content
     await page.waitForSelector('[role="dialog"]');
 
-    // Click cancel
-    await page.click('[role="dialog"] button:has-text("Cancel")');
+    // Close the dialog via the X close button
+    // This triggers QrAuth unmount → auto-cancel cleanup
+    await page.click('[role="dialog"] [data-slot="dialog-close"]');
 
     // Dialog should close
-    await expect(page.locator('[role="dialog"]')).not.toBeVisible({
-      timeout: 5000,
+    await expect(page.locator('[role="dialog"]')).toBeHidden({
+      timeout: 10_000,
     });
   });
 });

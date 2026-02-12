@@ -3,6 +3,8 @@
 ignore = [
   # protobuf
   "RUSTSEC-2024-0437",
+  # rsa: Marvin Attack (no fix available, used only in dev-dependencies for test keypair generation)
+  "RUSTSEC-2023-0071",
 ]
 
 [yanked]

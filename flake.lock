@@ -112,8 +112,7 @@
         "crm-chat-web-app": "crm-chat-web-app",
         "fenix": "fenix",
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
-        "spacetimedb": "spacetimedb"
+        "nixpkgs": "nixpkgs"
       }
     },
     "rust-analyzer-src": {
@@ -132,25 +131,6 @@
         "repo": "rust-analyzer",
         "type": "github"
       }
-    },
-    "spacetimedb": {
-      "inputs": {
-        "flake-utils": [
-          "flake-utils"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "path": "./nix/spacetimedb",
-        "type": "path"
-      },
-      "original": {
-        "path": "./nix/spacetimedb",
-        "type": "path"
-      },
-      "parent": []
     },
     "systems": {
       "locked": {

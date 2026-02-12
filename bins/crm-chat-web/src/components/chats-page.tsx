@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import { MessageSquare } from "lucide-react";
-import { useTable } from "spacetimedb/react";
-import { tables } from "@/lib/spacetime";
+import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./chat-list";
 import { MessageList } from "./message-list";
@@ -11,16 +11,12 @@ export function ChatsPage(): React.ReactNode {
   const navigate = useNavigate();
   const selectedChatId = params.chatId ?? null;
 
-  const [clients] = useTable(tables.client);
-  const [humans] = useTable(tables.human);
-  const [chats] = useTable(tables.chat);
-  const [tasks] = useTable(tables.task);
+  const clients = useQuery(api.clients.list);
+  const chats = useQuery(api.chats.list);
 
   if (import.meta.env.DEV) {
     console.log({ clients });
-    console.log({ humans });
     console.log({ chats });
-    console.log({ tasks });
   }
 
   const handleSelectChat = (chatId: string | null): void => {
@@ -39,7 +35,7 @@ export function ChatsPage(): React.ReactNode {
     <div className="flex h-full">
       <div
         className={cn(
-          "h-full w-full flex-shrink-0 border-r md:w-80 lg:w-96",
+          "h-full w-full shrink-0 border-border/50 border-r md:w-80 lg:w-96",
           selectedChatId ? "hidden md:block" : "block"
         )}
       >
@@ -59,11 +55,13 @@ export function ChatsPage(): React.ReactNode {
           <MessageList chatId={selectedChatId} onBack={handleBack} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-              <MessageSquare className="h-8 w-8 text-muted-foreground" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
+              <MessageSquare className="h-7 w-7 text-primary/40" />
             </div>
-            <h3 className="mt-4 font-medium text-lg">Select a chat</h3>
-            <p className="mt-1 max-w-sm text-muted-foreground text-sm">
+            <h3 className="mt-5 font-display font-medium text-base">
+              Select a chat
+            </h3>
+            <p className="mt-1.5 max-w-xs text-muted-foreground/70 text-sm">
               Choose a conversation from the list to view messages
             </p>
           </div>

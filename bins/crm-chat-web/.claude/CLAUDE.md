@@ -1,8 +1,18 @@
-# Ultracite Code Standards
+# crm-chat-web
+
+React + Vite frontend using Convex React SDK, shadcn/ui, and Clerk auth.
+
+## Project-Specific Notes
+
+- **React Compiler is enabled**: Do NOT use `useMemo`, `useCallback`, or `memo()`.
+- **Convex patterns**: Use `useQuery(api.module.function)` and `useMutation(api.module.function)` from `convex/react`. Import `api` from `@/lib/convex`.
+- **Biome config**: `biome.jsonc` extends Ultracite.
+
+## Ultracite Code Standards
 
 This project uses **Ultracite**, a zero-config preset that enforces strict code quality standards through automated formatting and linting.
 
-## Quick Reference
+### Quick Reference
 
 - **Format code**: `npm exec -- ultracite fix`
 - **Check for issues**: `npm exec -- ultracite check`
@@ -12,7 +22,7 @@ Biome (the underlying engine) provides robust linting and formatting. Most issue
 
 ---
 
-## Core Principles
+### Core Principles
 
 Write code that is **accessible, performant, type-safe, and maintainable**. Focus on clarity and explicit intent over brevity.
 
@@ -83,20 +93,10 @@ Write code that is **accessible, performant, type-safe, and maintainable**. Focu
 - Use top-level regex literals instead of creating them in loops
 - Prefer specific imports over namespace imports
 - Avoid barrel files (index files that re-export everything)
-- Use proper image components (e.g., Next.js `<Image>`) over `<img>` tags
 
-### Framework-Specific Guidance
+### React 19+
 
-**Next.js:**
-- Use Next.js `<Image>` component for images
-- Use `next/head` or App Router metadata API for head elements
-- Use Server Components for async data fetching instead of async Client Components
-
-**React 19+:**
 - Use ref as a prop instead of `React.forwardRef`
-
-**Solid/Svelte/Vue/Qwik:**
-- Use `class` and `for` attributes (not `className` or `htmlFor`)
 
 ---
 
