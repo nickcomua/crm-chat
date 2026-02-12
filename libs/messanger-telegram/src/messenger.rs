@@ -4,21 +4,193 @@ use async_stream::stream;
 use async_trait::async_trait;
 use grammers_client::{
     client::UpdatesConfiguration,
+    media::{Downloadable, Media},
     peer::{Dialog, Peer},
     update::Update as TgUpdate,
     Client,
 };
 use grammers_tl_types as tl;
 use messanger_interface::{
-    ChatSummary, DialogStream, ExternalId, MessageStream, MessageSummary, MessengerClient,
-    MessengerError, NativePayload, Update, UpdateStream,
+    ChatSummary, DialogStream, ExternalId, MediaKind, MediaSummary, MessageStream, MessageSummary,
+    MessengerClient, MessengerError, NativePayload, Update, UpdateStream,
 };
 use tokio_stream as tokio_stream_wrappers;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::TelegramClient;
 
+/// Classify a grammers `Media` into our `MediaSummary` with type and metadata.
+fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSummary> {
+    let external_id = format!("media:{}:{}", chat_id, msg_id);
+
+    match media {
+        Media::Photo(photo) => {
+            let thumbs = photo.thumbs();
+            let largest = thumbs.iter().max_by_key(|t| t.size());
+            // Extract dimensions from the largest thumbnail via pattern matching.
+            // PhotoSize inner structs aren't re-exported, but we can destructure the variants.
+            let (width, height) = largest
+                .and_then(|t| {
+                    use grammers_client::media::PhotoSize;
+                    match t {
+                        PhotoSize::Size(s) => Some((s.width, s.height)),
+                        PhotoSize::Progressive(s) => Some((s.width, s.height)),
+                        PhotoSize::Cached(s) => Some((s.width, s.height)),
+                        _ => None,
+                    }
+                })
+                .unwrap_or((0, 0));
+
+            Some(MediaSummary {
+                external_id,
+                kind: MediaKind::Photo,
+                url: None,
+                metadata: None,
+                mime_type: Some("image/jpeg".to_string()),
+                file_name: None,
+                file_size: photo.size(),
+                width: if width > 0 { Some(width) } else { None },
+                height: if height > 0 { Some(height) } else { None },
+                duration: None,
+            })
+        }
+        Media::Sticker(sticker) => {
+            let doc = &sticker.document;
+            Some(MediaSummary {
+                external_id,
+                kind: MediaKind::Sticker,
+                url: None,
+                metadata: None,
+                mime_type: doc.mime_type().map(String::from),
+                file_name: doc.name().map(String::from),
+                file_size: doc.size(),
+                width: doc.resolution().map(|(w, _)| w),
+                height: doc.resolution().map(|(_, h)| h),
+                duration: None,
+            })
+        }
+        Media::Document(doc) => {
+            // Classify by top-level flags on MessageMediaDocument
+            let kind = if doc.raw.voice {
+                MediaKind::Voice
+            } else if doc.raw.round {
+                MediaKind::VideoNote
+            } else if doc.raw.video {
+                if doc.is_animated() {
+                    MediaKind::Animation
+                } else {
+                    MediaKind::Video
+                }
+            } else if doc.is_animated() {
+                MediaKind::Animation
+            } else if doc
+                .mime_type()
+                .map_or(false, |m| m.starts_with("audio/"))
+            {
+                MediaKind::Audio
+            } else {
+                MediaKind::Document
+            };
+
+            let (width, height) = doc
+                .resolution()
+                .map(|(w, h)| (Some(w), Some(h)))
+                .unwrap_or((None, None));
+
+            Some(MediaSummary {
+                external_id,
+                kind,
+                url: None,
+                metadata: None,
+                mime_type: doc.mime_type().map(String::from),
+                file_name: doc.name().map(String::from),
+                file_size: doc.size(),
+                width,
+                height,
+                duration: doc.duration(),
+            })
+        }
+        // Non-downloadable types (Contact, Poll, Geo, Dice, Venue, GeoLive, WebPage)
+        _ => None,
+    }
+}
+
 impl TelegramClient {
+    /// Download media bytes from Telegram.
+    pub async fn download_media(
+        &self,
+        downloadable: &impl Downloadable,
+    ) -> Result<Vec<u8>, MessengerError> {
+        let client = self.client.lock().await;
+        let mut download = client.iter_download(downloadable);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = download.next().await.map_err(|e| {
+            MessengerError::Connection(format!("Failed to download media chunk: {}", e))
+        })? {
+            bytes.extend(chunk);
+        }
+        Ok(bytes)
+    }
+
+    /// Get the grammers Media object from a message by chat+message IDs.
+    /// Used by the background download task to re-fetch media for pending records.
+    pub async fn get_message_media(
+        &self,
+        chat_external_id: &str,
+        message_id: i32,
+    ) -> Result<Option<Media>, MessengerError> {
+        let client = self.client.lock().await;
+        let dialog = Self::find_dialog_with_client(&client, &chat_external_id.to_string()).await?;
+        let chat = dialog.peer();
+        let chat_ref = chat.to_ref().ok_or_else(|| {
+            MessengerError::NotFound(format!(
+                "Could not get reference for chat: {}",
+                chat.id().bare_id()
+            ))
+        })?;
+
+        let mut messages = client.iter_messages(chat_ref);
+        while let Ok(Some(msg)) = messages.next().await {
+            if msg.id() == message_id {
+                return Ok(msg.media());
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Stream-download media for a message, sending chunks through a channel.
+    ///
+    /// Returns `Ok(None)` if the message has no media, or `Ok(Some(total_bytes))`
+    /// after all chunks have been sent through `chunk_tx`. The caller typically
+    /// feeds the receiver side into a streaming HTTP upload (e.g. reqwest
+    /// `Body::wrap_stream`) so the file never sits fully in memory.
+    pub async fn stream_message_media(
+        &self,
+        chat_external_id: &str,
+        message_id: i32,
+        chunk_tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+    ) -> Result<Option<usize>, MessengerError> {
+        let media = match self.get_message_media(chat_external_id, message_id).await? {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        let client = self.client.lock().await;
+        let mut download = client.iter_download(&media);
+        let mut total = 0usize;
+        while let Some(chunk) = download.next().await.map_err(|e| {
+            MessengerError::Connection(format!("Failed to download media chunk: {}", e))
+        })? {
+            total += chunk.len();
+            chunk_tx.send(Ok(chunk)).await.map_err(|_| {
+                MessengerError::Connection("Upload receiver dropped".to_string())
+            })?;
+        }
+
+        Ok(Some(total))
+    }
+
     /// Find a dialog by external ID using an already-locked client.
     /// This is used internally to avoid deadlocks when the caller already holds the lock.
     pub(crate) async fn find_dialog_with_client(
@@ -195,16 +367,19 @@ impl MessengerClient for TelegramClient {
             let mut count = 0;
             while let Ok(Some(msg)) = messages.next().await {
                 if let Some(sender_id) = msg.sender_id() {
+                    let chat_bare_id = chat.id().bare_id();
+                    let media_summary = msg.media().and_then(|m| classify_media(&m, chat_bare_id, msg.id()));
                     let summary = MessageSummary {
                         external_id: msg.id().to_string(),
-                        chat_external_id: chat.id().bare_id().to_string(),
+                        chat_external_id: chat_bare_id.to_string(),
                         text: Some(msg.text().to_string()),
                         sender_id: sender_id.to_string(),
                         outgoing: msg.outgoing(),
                         timestamp_ms: Some(msg.date().timestamp_millis() as u64),
                         media_external_id: msg
                             .media()
-                            .map(|_| format!("media:{}:{}", chat.id().bare_id(), msg.id())),
+                            .map(|_| format!("media:{}:{}", chat_bare_id, msg.id())),
+                        media_summary,
                     };
                     count += 1;
                     // If receiver is dropped, stop producing to avoid unnecessary work
@@ -275,6 +450,7 @@ impl MessengerClient for TelegramClient {
                                     chat_id = chat_id,
                                     "Received new message update"
                                 );
+                                let media_summary = message.media().and_then(|m| classify_media(&m, chat_id, message.id()));
                                 Update::NewMessage(MessageSummary {
                                     external_id: message.id().to_string(),
                                     chat_external_id: chat_id.to_string(),
@@ -285,6 +461,7 @@ impl MessengerClient for TelegramClient {
                                     media_external_id: message
                                         .media()
                                         .map(|_| format!("media:{}:{}", chat_id, message.id())),
+                                    media_summary,
                                 })
                             }
                             TgUpdate::MessageEdited(message) => {
@@ -301,6 +478,7 @@ impl MessengerClient for TelegramClient {
                                     chat_id = chat_id,
                                     "Received message edited update"
                                 );
+                                let media_summary = message.media().and_then(|m| classify_media(&m, chat_id, message.id()));
                                 Update::MessageEdited(MessageSummary {
                                     external_id: message.id().to_string(),
                                     chat_external_id: chat_id.to_string(),
@@ -311,6 +489,7 @@ impl MessengerClient for TelegramClient {
                                     media_external_id: message
                                         .media()
                                         .map(|_| format!("media:{}:{}", chat_id, message.id())),
+                                    media_summary,
                                 })
                             }
                             TgUpdate::MessageDeleted(deleted) => {

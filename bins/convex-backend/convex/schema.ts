@@ -48,9 +48,31 @@ export const qrAuthStep = v.union(
 export const mediaKind = v.union(
   v.literal("Photo"),
   v.literal("Video"),
+  v.literal("VideoNote"),
   v.literal("Audio"),
-  v.literal("MessageRef"),
+  v.literal("Voice"),
+  v.literal("Sticker"),
+  v.literal("Animation"),
+  v.literal("Document"),
 );
+
+export const mediaStatus = v.union(
+  v.literal("pending"),
+  v.literal("stored"),
+  v.literal("failed"),
+  v.literal("skipped"),
+);
+
+export const mediaSettingsValidator = v.object({
+  savePhotos: v.optional(v.boolean()),
+  saveVideos: v.optional(v.boolean()),
+  saveAudio: v.optional(v.boolean()),
+  saveVoice: v.optional(v.boolean()),
+  saveStickers: v.optional(v.boolean()),
+  saveDocuments: v.optional(v.boolean()),
+  saveAnimations: v.optional(v.boolean()),
+  saveVideoNotes: v.optional(v.boolean()),
+});
 
 // =============================================================================
 // Document validators (for typed query returns)
@@ -64,6 +86,7 @@ export const clientDoc = v.object({
   externalId: v.string(),
   activeChats: v.array(v.string()),
   status: clientStatus,
+  mediaSettings: v.optional(mediaSettingsValidator),
 });
 
 export const chatDoc = v.object({
@@ -94,6 +117,27 @@ export const messageDoc = v.object({
   deleted: v.boolean(),
   ts: v.number(),
   mediaId: v.optional(v.string()),
+  mediaKind: v.optional(mediaKind),
+});
+
+export const mediaDoc = v.object({
+  _id: v.id("media"),
+  _creationTime: v.number(),
+  externalId: v.string(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  chatId: v.string(),
+  messageId: v.string(),
+  status: mediaStatus,
+  storageId: v.optional(v.id("_storage")),
+  kind: mediaKind,
+  mimeType: v.optional(v.string()),
+  fileName: v.optional(v.string()),
+  fileSize: v.optional(v.number()),
+  width: v.optional(v.number()),
+  height: v.optional(v.number()),
+  duration: v.optional(v.number()),
+  error: v.optional(v.string()),
 });
 
 export const phoneAuthDoc = v.object({
@@ -161,6 +205,7 @@ export default defineSchema({
     externalId: v.string(), // phone auth: phone number; QR auth: "telegram:{user_id}"
     activeChats: v.array(v.string()),
     status: clientStatus,
+    mediaSettings: v.optional(mediaSettingsValidator),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_externalId", ["userId", "externalId"]),
@@ -197,11 +242,36 @@ export default defineSchema({
     deleted: v.boolean(),
     ts: v.number(), // Unix ms
     mediaId: v.optional(v.string()),
+    mediaKind: v.optional(mediaKind),
   })
     .index("by_messageId", ["messageId"])
     .index("by_externalId", ["externalId"])
     .index("by_userId", ["userId"])
     .index("by_chatId_ts", ["chatId", "ts"]),
+
+  // ---- Media ----
+
+  media: defineTable({
+    externalId: v.string(), // matches messages.mediaId
+    userId: v.string(),
+    clientId: v.id("clients"),
+    chatId: v.string(),
+    messageId: v.string(), // FK to messages.messageId
+    status: mediaStatus,
+    storageId: v.optional(v.id("_storage")),
+    kind: mediaKind,
+    mimeType: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    fileSize: v.optional(v.number()), // bytes
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    duration: v.optional(v.number()), // seconds
+    error: v.optional(v.string()),
+  })
+    .index("by_externalId", ["externalId"])
+    .index("by_messageId", ["messageId"])
+    .index("by_clientId_status", ["clientId", "status"])
+    .index("by_chatId", ["chatId"]),
 
   // ---- Phone Auth State Machine ----
 

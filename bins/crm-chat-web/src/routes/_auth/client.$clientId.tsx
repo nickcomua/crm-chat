@@ -9,8 +9,10 @@ function ClientSettingsPage(): React.ReactNode {
   const { clientId } = Route.useParams();
 
   return (
-    <div className="container px-4 py-8">
-      <ClientSettings clientId={clientId} />
+    <div className="h-full overflow-y-auto">
+      <div className="container px-4 py-8">
+        <ClientSettings clientId={clientId} />
+      </div>
     </div>
   );
 }

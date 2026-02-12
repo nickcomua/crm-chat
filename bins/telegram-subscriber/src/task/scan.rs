@@ -11,9 +11,11 @@ use std::sync::Arc;
 
 use convex_backend::{
     ChatsListForRobotArgs, ChatsMarkFullScannedArgs, ChatsUpsertArgs, ChatsUpsertChatType,
-    MessagesMarkDeletedArgs, MessagesUpsertArgs,
+    MediaListPendingForClientArgs, MediaListPendingForClientReturnKind, MediaMarkFailedArgs,
+    MediaStoreMediaArgs, MessagesMarkDeletedArgs, MessagesUpsertArgs,
 };
 use futures::StreamExt;
+use messanger_interface::media::MediaSummary;
 use messanger_interface::{MessengerClient, Update};
 use messanger_telegram::TelegramClient;
 use tokio_util::sync::CancellationToken;
@@ -21,7 +23,7 @@ use tracing::{debug, info, instrument, warn};
 
 use super::TaskExecutionContext;
 use crate::error::TaskError;
-use crate::types::{Client, ConvexApi, check_result};
+use crate::types::{Client, ConvexApi, check_result, to_upsert_media_kind};
 
 /// Run the full scan lifecycle for a connected client.
 ///
@@ -84,7 +86,13 @@ pub async fn scan_client(
     }
     full_scan_messages(ctx, client, &tg_client).await?;
 
-    // Phase 3: Listen for real-time updates (runs until cancelled)
+    // Phase 3: Download pending media from current and previous scans
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    download_pending_media(ctx, client, &tg_client).await?;
+
+    // Phase 4: Listen for real-time updates (runs until cancelled)
     listen_updates(ctx, client, &tg_client, cancel).await?;
 
     Ok(())
@@ -228,6 +236,7 @@ async fn full_scan_messages(
                         deleted: false,
                         ts,
                         mediaId: msg.media_external_id,
+                        mediaKind: msg.media_summary.as_ref().map(|s| to_upsert_media_kind(s.kind)),
                     })
                     .await,
             )?;
@@ -276,7 +285,7 @@ async fn full_scan_messages(
 async fn listen_updates(
     ctx: &TaskExecutionContext,
     client: &Client,
-    tg_client: &TelegramClient,
+    tg_client: &Arc<TelegramClient>,
     cancel: CancellationToken,
 ) -> Result<(), TaskError> {
     info!("Starting real-time update listener");
@@ -325,7 +334,7 @@ async fn listen_updates(
             update = update_stream.next() => {
                 match update {
                     Some(Ok(update)) => {
-                        if let Err(e) = process_update(ctx, client, &update, &scan_enabled_chats).await {
+                        if let Err(e) = process_update(ctx, client, tg_client, &update, &scan_enabled_chats).await {
                             warn!(error = %e, "Failed to process update");
                         }
                     }
@@ -371,6 +380,7 @@ async fn load_scan_enabled_chats(
 async fn process_update(
     ctx: &TaskExecutionContext,
     client: &Client,
+    tg_client: &Arc<TelegramClient>,
     update: &Update,
     scan_enabled_chats: &HashSet<String>,
 ) -> Result<(), TaskError> {
@@ -394,16 +404,37 @@ async fn process_update(
                         externalId: msg.external_id.clone(),
                         userId: client.user_id.clone(),
                         clientId: client.id.clone(),
-                        chatId: chat_id,
+                        chatId: chat_id.clone(),
                         senderId: msg.sender_id.clone(),
                         text: msg.text.clone(),
                         out: msg.outgoing,
                         deleted: false,
                         ts,
                         mediaId: msg.media_external_id.clone(),
+                        mediaKind: msg.media_summary.as_ref().map(|s| to_upsert_media_kind(s.kind)),
                     })
                     .await,
             )?;
+
+            // Real-time media download: immediately download and upload media for new messages
+            if matches!(update, Update::NewMessage(_)) {
+                if let Some(ref summary) = msg.media_summary {
+                    if let Some(ref media_ext_id) = msg.media_external_id {
+                        if let Err(e) = download_and_upload_media(
+                            ctx,
+                            tg_client,
+                            &msg.chat_external_id,
+                            &msg.external_id,
+                            media_ext_id,
+                            summary,
+                        )
+                        .await
+                        {
+                            warn!(media_id = %media_ext_id, error = %e, "Failed to download media for real-time message");
+                        }
+                    }
+                }
+            }
         }
 
         Update::MessageDeleted {
@@ -438,6 +469,268 @@ async fn process_update(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Media download & upload pipeline
+// ============================================================================
+
+/// Download all pending media for a client from Telegram and upload to Convex storage.
+#[instrument(skip(ctx, tg_client), fields(client_id = %client.id))]
+async fn download_pending_media(
+    ctx: &TaskExecutionContext,
+    client: &Client,
+    tg_client: &Arc<TelegramClient>,
+) -> Result<(), TaskError> {
+    let pending = ctx
+        .client
+        .clone()
+        .query_media_list_pending_for_client(MediaListPendingForClientArgs {
+            clientId: client.id.clone(),
+        })
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to query pending media: {e}")))?;
+
+    if pending.is_empty() {
+        info!("No pending media to download");
+        return Ok(());
+    }
+
+    info!(count = pending.len(), "Downloading pending media");
+
+    let mut success = 0u32;
+    let mut failed = 0u32;
+
+    for record in &pending {
+        // Parse externalId format: "media:{chat_id}:{msg_id}"
+        let (chat_ext_id, msg_id) = match parse_media_external_id(&record.external_id) {
+            Some(parsed) => parsed,
+            None => {
+                warn!(external_id = %record.external_id, "Invalid media external ID format");
+                mark_media_failed(ctx, &record.external_id, "Invalid external ID format").await;
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Download from Telegram and upload to Convex
+        let content_type = default_mime_for_pending_kind(&record.kind);
+        match download_and_upload(
+            ctx,
+            tg_client,
+            &chat_ext_id,
+            msg_id,
+            &record.external_id,
+            content_type,
+            None, // mime_type — will be inferred from content_type
+            None, // file_name
+            None, // width
+            None, // height
+            None, // duration
+        )
+        .await
+        {
+            Ok(()) => success += 1,
+            Err(e) => {
+                warn!(external_id = %record.external_id, error = %e, "Failed to upload media");
+                mark_media_failed(ctx, &record.external_id, &e.to_string()).await;
+                failed += 1;
+            }
+        }
+
+        // Rate-limit to avoid hitting Telegram download limits
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    info!(success, failed, "Pending media download complete");
+    Ok(())
+}
+
+/// Download and upload media for a single message (used in real-time updates).
+async fn download_and_upload_media(
+    ctx: &TaskExecutionContext,
+    tg_client: &Arc<TelegramClient>,
+    chat_external_id: &str,
+    msg_external_id: &str,
+    media_external_id: &str,
+    summary: &MediaSummary,
+) -> Result<(), TaskError> {
+    let msg_id: i32 = msg_external_id
+        .parse()
+        .map_err(|_| TaskError::MutationFailed(format!("Invalid message ID: {msg_external_id}")))?;
+
+    let content_type = summary
+        .mime_type
+        .as_deref()
+        .unwrap_or_else(|| default_mime_for_kind(summary.kind));
+
+    download_and_upload(
+        ctx,
+        tg_client,
+        chat_external_id,
+        msg_id,
+        media_external_id,
+        content_type,
+        summary.mime_type.as_deref(),
+        summary.file_name.as_deref(),
+        summary.width.map(|w| w as f64),
+        summary.height.map(|h| h as f64),
+        summary.duration,
+    )
+    .await
+}
+
+/// Stream-download from Telegram and pipe directly to Convex storage upload.
+///
+/// Uses an `mpsc` channel to bridge the download iterator (which holds the
+/// Telegram client lock) with reqwest's streaming body — the file never
+/// sits fully in memory.
+#[allow(clippy::too_many_arguments)]
+async fn download_and_upload(
+    ctx: &TaskExecutionContext,
+    tg_client: &Arc<TelegramClient>,
+    chat_external_id: &str,
+    msg_id: i32,
+    external_id: &str,
+    content_type: &str,
+    mime_type: Option<&str>,
+    file_name: Option<&str>,
+    width: Option<f64>,
+    height: Option<f64>,
+    duration: Option<f64>,
+) -> Result<(), TaskError> {
+    // Step 1: Get a presigned upload URL from Convex (before locking Telegram client)
+    let upload_url = ctx
+        .client
+        .clone()
+        .media_generate_upload_url()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to generate upload URL: {e}")))?;
+
+    // Step 2: Set up a channel to stream download chunks into the upload body
+    let (chunk_tx, chunk_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
+    let stream = tokio_stream::wrappers::ReceiverStream::new(chunk_rx);
+    let body = reqwest::Body::wrap_stream(stream);
+
+    // Step 3: Spawn the download task (holds Telegram client lock while streaming)
+    let tg = tg_client.clone();
+    let chat_ext = chat_external_id.to_string();
+    let download_handle = tokio::spawn(async move {
+        tg.stream_message_media(&chat_ext, msg_id, chunk_tx).await
+    });
+
+    // Step 4: Upload the streaming body to Convex storage with correct Content-Type
+    let http_client = reqwest::Client::new();
+    let response = http_client
+        .post(&upload_url)
+        .header("Content-Type", content_type)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to upload to Convex storage: {e}")))?;
+
+    // Step 5: Wait for the download task to finish and get the total size
+    let total_bytes = download_handle
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Download task panicked: {e}")))?
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to download from Telegram: {e}")))?
+        .ok_or_else(|| TaskError::MutationFailed("No media in Telegram message".to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(TaskError::MutationFailed(format!(
+            "Convex storage upload failed (HTTP {status}): {body}"
+        )));
+    }
+
+    let upload_result: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to parse upload response: {e}")))?;
+
+    let storage_id = upload_result["storageId"]
+        .as_str()
+        .ok_or_else(|| TaskError::MutationFailed("Missing storageId in upload response".to_string()))?;
+
+    // Step 6: Update the media record in Convex with the storageId + metadata
+    check_result(
+        ctx.client
+            .clone()
+            .media_store_media(MediaStoreMediaArgs {
+                externalId: external_id.to_string(),
+                storageId: storage_id.to_string(),
+                mimeType: mime_type.map(String::from),
+                fileName: file_name.map(String::from),
+                fileSize: Some(total_bytes as f64),
+                width,
+                height,
+                duration,
+            })
+            .await,
+    )?;
+
+    info!(external_id, storage_id, total_bytes, content_type, "Media streamed to Convex storage");
+    Ok(())
+}
+
+/// Helper to mark a media record as failed without propagating errors.
+async fn mark_media_failed(ctx: &TaskExecutionContext, external_id: &str, error: &str) {
+    if let Err(e) = ctx
+        .client
+        .clone()
+        .media_mark_failed(MediaMarkFailedArgs {
+            externalId: external_id.to_string(),
+            error: error.to_string(),
+        })
+        .await
+    {
+        warn!(external_id, error = %e, "Failed to mark media as failed");
+    }
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Map a `MediaKind` (from messanger-interface) to its default MIME type.
+fn default_mime_for_kind(kind: messanger_interface::media::MediaKind) -> &'static str {
+    use messanger_interface::media::MediaKind;
+    match kind {
+        MediaKind::Photo => "image/jpeg",
+        MediaKind::Video => "video/mp4",
+        MediaKind::VideoNote => "video/mp4",
+        MediaKind::Audio => "audio/mpeg",
+        MediaKind::Voice => "audio/ogg",
+        MediaKind::Sticker => "image/webp",
+        MediaKind::Animation => "video/mp4",
+        MediaKind::Document => "application/octet-stream",
+    }
+}
+
+/// Map a pending record's kind (from convex-typegen) to its default MIME type.
+fn default_mime_for_pending_kind(kind: &MediaListPendingForClientReturnKind) -> &'static str {
+    match kind {
+        MediaListPendingForClientReturnKind::Photo => "image/jpeg",
+        MediaListPendingForClientReturnKind::Video => "video/mp4",
+        MediaListPendingForClientReturnKind::VideoNote => "video/mp4",
+        MediaListPendingForClientReturnKind::Audio => "audio/mpeg",
+        MediaListPendingForClientReturnKind::Voice => "audio/ogg",
+        MediaListPendingForClientReturnKind::Sticker => "image/webp",
+        MediaListPendingForClientReturnKind::Animation => "video/mp4",
+        MediaListPendingForClientReturnKind::Document => "application/octet-stream",
+    }
+}
+
+/// Parse a media external ID ("media:{chat_id}:{msg_id}") into its components.
+fn parse_media_external_id(external_id: &str) -> Option<(String, i32)> {
+    let parts: Vec<&str> = external_id.split(':').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let chat_ext_id = parts[1].to_string();
+    let msg_id: i32 = parts[2].parse().ok()?;
+    Some((chat_ext_id, msg_id))
 }
 
 /// Map a Telegram chat type string to a Convex ChatType enum.

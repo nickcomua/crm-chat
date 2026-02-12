@@ -3,6 +3,7 @@ import { Filter, MessageSquare, Pin, Search, Users } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
+import { type MediaKind, mediaKindLabel } from "./media-renderer";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -79,7 +80,6 @@ function getExternalIdColorStyle(externalId: string): {
 } {
   let hash = 0;
   for (let i = 0; i < externalId.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
     hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = Math.abs(hash) % 360;
@@ -99,7 +99,14 @@ export function ChatList({
   const lastMessages = useQuery(
     api.messages.getLastPerChat,
     chatIds ? { chatIds } : "skip"
-  ) as Array<{ chatId: string; text?: string; mediaId?: string }> | undefined;
+  ) as
+    | Array<{
+        chatId: string;
+        text?: string;
+        mediaId?: string;
+        mediaKind?: string;
+      }>
+    | undefined;
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [showClientFilter, setShowClientFilter] = useState(false);
@@ -156,7 +163,16 @@ export function ChatList({
     if (!entry) {
       return null;
     }
-    return entry.text ?? (entry.mediaId ? "[Media]" : null);
+    if (entry.text) {
+      return entry.text;
+    }
+    if (entry.mediaKind) {
+      return mediaKindLabel(entry.mediaKind as MediaKind);
+    }
+    if (entry.mediaId) {
+      return "[Media]";
+    }
+    return null;
   };
 
   if (chats.length === 0) {

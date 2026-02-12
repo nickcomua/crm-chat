@@ -11,6 +11,7 @@
 import type * as chats from "../chats.js";
 import type * as clients from "../clients.js";
 import type * as helpers_auth from "../helpers/auth.js";
+import type * as media from "../media.js";
 import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
 import type * as phoneAuth from "../phoneAuth.js";
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   chats: typeof chats;
   clients: typeof clients;
   "helpers/auth": typeof helpers_auth;
+  media: typeof media;
   messages: typeof messages;
   notifications: typeof notifications;
   phoneAuth: typeof phoneAuth;
