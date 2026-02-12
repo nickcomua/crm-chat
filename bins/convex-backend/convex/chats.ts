@@ -1,4 +1,5 @@
-import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { chatDoc, chatType } from "./schema";
 import { isRobotCaller, requireAuth, requireHuman, requireOwner, requireRobot } from "./helpers/auth";
@@ -116,7 +117,9 @@ export const updatePinnedName = mutation({
   },
 });
 
-/** Toggle scanning for a specific chat. Human-only. */
+/** Toggle scanning for a specific chat. Human-only.
+ *  Turning OFF resets fullScanned and schedules data purge (messages + media).
+ *  Turning ON triggers a fresh rescan since fullScanned is already false. */
 export const updateScanEnabled = mutation({
   args: { chatId: v.string(), scanEnabled: v.boolean() },
   returns: v.null(),
@@ -129,6 +132,11 @@ export const updateScanEnabled = mutation({
     if (!chat) throw new Error("Chat not found");
     requireOwner(caller.id, chat.userId);
     await ctx.db.patch(chat._id, { scanEnabled });
+
+    if (!scanEnabled) {
+      await ctx.db.patch(chat._id, { fullScanned: false });
+      await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
+    }
   },
 });
 
@@ -144,6 +152,48 @@ export const markFullScanned = mutation({
       .unique();
     if (!chat) throw new Error("Chat not found");
     await ctx.db.patch(chat._id, { fullScanned: true });
+  },
+});
+
+const PURGE_BATCH_SIZE = 200;
+
+/** Delete all messages and media for a chat in batches. Self-scheduling. */
+export const purgeChatData = internalMutation({
+  args: { chatId: v.string() },
+  handler: async (ctx, { chatId }) => {
+    let hasMore = false;
+
+    // Delete messages in batch
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_chatId_ts", (q) => q.eq("chatId", chatId))
+      .take(PURGE_BATCH_SIZE);
+    for (const msg of messages) {
+      await ctx.db.delete(msg._id);
+    }
+    if (messages.length === PURGE_BATCH_SIZE) {
+      hasMore = true;
+    }
+
+    // Delete media in batch (also clean up storage files)
+    const mediaRecords = await ctx.db
+      .query("media")
+      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .take(PURGE_BATCH_SIZE);
+    for (const media of mediaRecords) {
+      if (media.storageId) {
+        await ctx.storage.delete(media.storageId);
+      }
+      await ctx.db.delete(media._id);
+    }
+    if (mediaRecords.length === PURGE_BATCH_SIZE) {
+      hasMore = true;
+    }
+
+    // Re-schedule if more records remain
+    if (hasMore) {
+      await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
+    }
   },
 });
 

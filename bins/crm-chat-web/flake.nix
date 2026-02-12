@@ -157,8 +157,7 @@
 
             # Override install phase to create empty output
             installPhase = ''
-              mkdir -p $out
-              echo "Lint checks passed" > $out/result
+              touch $out
             '';
 
             doCheck = false;

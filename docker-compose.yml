@@ -9,8 +9,10 @@ services:
     volumes:
       - data:/convex/data
     environment:
-      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${PORT:-3210}}
-      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${SITE_PROXY_PORT:-3211}}
+      # - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${PORT:-3210}}
+      - CONVEX_CLOUD_ORIGIN=https://backend.crm-chat.orb.local
+      # - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${SITE_PROXY_PORT:-3211}}
+      - CONVEX_SITE_ORIGIN=https://backend.crm-chat.orb.local:3211
       - INSTANCE_NAME
       - INSTANCE_SECRET
       - RUST_LOG=${RUST_LOG:-info}

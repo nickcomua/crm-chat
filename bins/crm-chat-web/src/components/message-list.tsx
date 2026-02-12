@@ -1,8 +1,9 @@
 import { usePaginatedQuery, useQuery } from "convex/react";
-import { ArrowLeft, Ban, Image as ImageIcon, Loader2 } from "lucide-react";
+import { ArrowLeft, Ban, Loader2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
+import { type MediaInfo, MediaRenderer } from "./media-renderer";
 import { Button } from "./ui/button";
 
 const PAGE_SIZE = 50;
@@ -68,6 +69,7 @@ interface MessageDoc {
   deleted: boolean;
   ts: number;
   mediaId?: string;
+  mediaKind?: string;
   chatId: string;
 }
 
@@ -85,15 +87,23 @@ function shouldShowDateHeader(
   return messageDate !== prevDate;
 }
 
-function MessageBubble({ message }: { message: MessageDoc }): React.ReactNode {
+function MessageBubble({
+  message,
+  media,
+}: {
+  message: MessageDoc;
+  media?: MediaInfo;
+}): React.ReactNode {
   const isOutgoing = message.out;
   const isDeleted = message.deleted;
+  const hasMedia = media !== undefined;
 
   return (
     <div className={cn("flex", isOutgoing ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[70%] overflow-hidden rounded-2xl px-3.5 py-2 shadow-sm",
+          "max-w-[70%] overflow-hidden rounded-2xl shadow-sm",
+          hasMedia ? "p-1" : "px-3.5 py-2",
           isDeleted && "opacity-50",
           isOutgoing
             ? "rounded-br-md bg-primary text-primary-foreground"
@@ -101,36 +111,33 @@ function MessageBubble({ message }: { message: MessageDoc }): React.ReactNode {
         )}
       >
         {isDeleted && (
-          <div className="mb-1 flex items-center gap-1 text-[11px] opacity-70">
+          <div className="mb-1 flex items-center gap-1 px-2.5 pt-1 text-[11px] opacity-70">
             <Ban className="h-3 w-3" />
             <span className="italic">Deleted</span>
           </div>
         )}
 
-        {(() => {
-          if (message.text) {
-            return (
-              <p className="whitespace-pre-wrap break-all text-[13px] leading-relaxed">
-                {message.text}
-              </p>
-            );
-          }
-          if (message.mediaId) {
-            return (
-              <div className="flex items-center gap-2 text-[13px]">
-                <ImageIcon className="h-4 w-4 opacity-60" />
-                <span className="italic opacity-70">Media</span>
-              </div>
-            );
-          }
-          return (
-            <p className="text-[13px] italic opacity-50">[Empty message]</p>
-          );
-        })()}
+        {hasMedia && <MediaRenderer isOutgoing={isOutgoing} media={media} />}
+
+        {message.text && (
+          <p
+            className={cn(
+              "whitespace-pre-wrap break-all text-[13px] leading-relaxed",
+              hasMedia && "px-2.5 pt-1"
+            )}
+          >
+            {message.text}
+          </p>
+        )}
+
+        {!(message.text || hasMedia) && (
+          <p className="text-[13px] italic opacity-50">[Empty message]</p>
+        )}
 
         <div
           className={cn(
             "mt-0.5 text-right text-[10px]",
+            hasMedia && "px-2.5 pb-1",
             isOutgoing
               ? "text-primary-foreground/50"
               : "text-muted-foreground/60"
@@ -173,6 +180,21 @@ export function MessageList({
   // Query returns desc (newest first); reverse for display (oldest at top).
   const sortedMessages = [...results].reverse() as MessageDoc[];
   const activeMessageCount = sortedMessages.filter((m) => !m.deleted).length;
+
+  // Batch-query media records for messages that have media attached.
+  const mediaMessageIds = sortedMessages
+    .filter((m) => m.mediaId)
+    .map((m) => m.messageId);
+  const mediaRecords = useQuery(
+    api.media.getForMessages,
+    mediaMessageIds.length > 0 ? { messageIds: mediaMessageIds } : "skip"
+  );
+  const mediaMap = new Map<string, MediaInfo>();
+  if (mediaRecords) {
+    for (const record of mediaRecords) {
+      mediaMap.set(record.messageId, record);
+    }
+  }
 
   // Restore scroll position after older messages are prepended.
   useLayoutEffect(() => {
@@ -305,7 +327,10 @@ export function MessageList({
                       <div className="h-px flex-1 bg-border/50" />
                     </div>
                   )}
-                  <MessageBubble message={message} />
+                  <MessageBubble
+                    media={mediaMap.get(message.messageId)}
+                    message={message}
+                  />
                 </div>
               );
             })}

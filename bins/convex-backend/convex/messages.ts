@@ -8,6 +8,7 @@ import {
 	requireHuman,
 	requireOwner,
 } from "./helpers/auth";
+import { mediaKind } from "./schema";
 
 const MAX_CHAT_IDS = 100;
 
@@ -19,6 +20,7 @@ export const getLastPerChat = query({
 			chatId: v.string(),
 			text: v.optional(v.string()),
 			mediaId: v.optional(v.string()),
+			mediaKind: v.optional(mediaKind),
 		}),
 	),
 	handler: async (ctx, { chatIds }) => {
@@ -42,7 +44,7 @@ export const getLastPerChat = query({
 					.order("desc")
 					.first();
 				if (!msg) return null;
-				return { chatId, text: msg.text, mediaId: msg.mediaId };
+				return { chatId, text: msg.text, mediaId: msg.mediaId, mediaKind: msg.mediaKind };
 			}),
 		);
 		return entries.filter((e): e is NonNullable<typeof e> => e !== null);
@@ -87,6 +89,7 @@ export const upsert = mutation({
 		deleted: v.boolean(),
 		ts: v.number(),
 		mediaId: v.optional(v.string()),
+		mediaKind: v.optional(mediaKind),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -109,9 +112,31 @@ export const upsert = mutation({
 				deleted: args.deleted,
 				ts: args.ts,
 				mediaId: args.mediaId,
+				mediaKind: args.mediaKind,
 			});
 		} else {
 			await ctx.db.insert("messages", args);
+		}
+
+		// Auto-create pending media record if this message has media
+		const { mediaId: mid, mediaKind: mk } = args;
+		if (mid && mk) {
+			const existingMedia = await ctx.db
+				.query("media")
+				.withIndex("by_externalId", (q) => q.eq("externalId", mid))
+				.unique();
+
+			if (!existingMedia) {
+				await ctx.db.insert("media", {
+					externalId: mid,
+					userId: args.userId,
+					clientId: args.clientId,
+					chatId: args.chatId,
+					messageId: args.messageId,
+					status: "pending" as const,
+					kind: mk,
+				});
+			}
 		}
 	},
 });
