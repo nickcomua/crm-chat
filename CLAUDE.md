@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CRM Chat is an AI-powered application that aggregates conversations from Telegram (with potential future integrations to other messengers), stores them in SpacetimeDB, and generates summaries for each contact. It highlights promises, plans, and recurring discussion topics, providing a personal CRM-like assistant.
+CRM Chat is an AI-powered application that aggregates conversations from Telegram (with potential future integrations to other messengers), stores them in a self-hosted Convex backend, and generates summaries for each contact. It highlights promises, plans, and recurring discussion topics, providing a personal CRM-like assistant.
 
 ## Version Control
 
@@ -54,30 +54,38 @@ Jujutsu maintains compatibility with git:
 
 ## Architecture
 
-This is a Rust/TypeScript monorepo with a SpacetimeDB backend and React frontend:
+This is a Rust/TypeScript monorepo with a self-hosted Convex backend and React frontend:
 
-### Backend (Rust)
-- **bins/sdb_server**: SpacetimeDB module defining the database schema, tables, and reducers
-  - Contains the core data model (User, Client, Chat, Message, Media, Board, QA, Note tables)
-  - Implements reducers for database operations (upsert_client, add_messages, client_connected, etc.)
-  - See bins/sdb_server/README.md for the ER diagram and RLS (Row Level Security) overview
-- **bins/telegram-subscriber**: Service that subscribes to SpacetimeDB client events and spawns Telegram client connections
-- **libs/sdb_api**: Generated Rust bindings for the SpacetimeDB module (auto-generated, do not edit manually)
+### Backend (Convex + Rust)
+- **bins/convex-backend**: Self-hosted Convex project with schema, queries, and mutations
+  - `convex/schema.ts` — all table definitions (humans, robots, clients, chats, messages, phoneAuths, qrAuths, notifications)
+  - `convex/helpers/auth.ts` — shared auth helpers (requireHuman, requireRobot, requireOwner)
+  - Auth is modeled as table-based state machines (`phoneAuth.ts`, `qrAuth.ts`)
+  - Dual auth: Clerk JWTs for humans, self-signed RS256 JWTs for robot services
+  - Run with `npx convex dev` (reads `.env.local` for self-hosted URL and admin key)
+- **bins/telegram-subscriber**: Rust service that connects to Convex via the Rust SDK, subscribes to auth queries, and spawns Telegram client connections
+- **bins/es-proxy**: Elasticsearch proxy for semantic search / embeddings
+- **bins/qr-login-test**: QR login testing utility
+- **libs/convex-typegen**: Forked codegen tool that generates Rust types from `convex/schema.ts`
 - **libs/messanger-interface**: Platform-agnostic traits for messenger clients (MessengerClient, ChatSummary, MessageSummary, etc.)
 - **libs/messanger-telegram**: Telegram-specific implementation of the messenger interface using grammers
+- **libs/hack**: Shared utilities
 
 ### Frontend (TypeScript/React)
 - **bins/crm-chat-web**: React + Vite web application
-  - Uses SpacetimeDB React SDK for real-time database connection
-  - TypeScript bindings in src/lib/spacetime/ are auto-generated from the SpacetimeDB module
+  - Uses Convex React SDK (`useQuery`, `useMutation`) for real-time database subscriptions
   - Uses shadcn/ui components (Radix UI primitives)
-  - Clerk for authentication
+  - Clerk for authentication, wrapped with `ConvexProviderWithClerk`
   - Follows Ultracite code standards (Biome-based linting/formatting)
+
+### Infrastructure
+- **docker-compose.yml**: Self-hosted Convex backend (port 3210) + dashboard (port 6791)
+- Robot JWT auth: RS256 keypair — private key in `ROBOT_JWT_PRIVATE_KEY` env var for telegram-subscriber, public key configured as JWKS in Convex auth config
 
 ### Key Data Flow
 1. Telegram clients connect through telegram-subscriber service
-2. Messages/chats are synced to SpacetimeDB via reducers
-3. React frontend subscribes to SpacetimeDB tables for real-time updates
+2. Messages/chats are synced to Convex via mutations
+3. React frontend subscribes to Convex queries for real-time updates
 4. Users can view aggregated conversations and AI-generated summaries
 
 ## Development Commands
@@ -85,7 +93,7 @@ This is a Rust/TypeScript monorepo with a SpacetimeDB backend and React frontend
 ### Nix Development Environment
 This project uses Nix flakes for reproducible development environments:
 ```bash
-# Enter dev shell (provides all dependencies including SpacetimeDB CLI)
+# Enter dev shell
 nix develop
 
 # Build the entire project
@@ -93,6 +101,19 @@ nix build
 
 # Run checks (clippy, formatting, tests, audit)
 nix flake check
+```
+
+### Self-Hosted Convex Backend
+
+Start the Convex backend (requires Docker):
+```bash
+docker compose up -d
+```
+
+Deploy/develop Convex functions (from `bins/convex-backend/`):
+```bash
+npx convex dev          # dev mode with hot reload
+npx convex deploy       # deploy to self-hosted backend
 ```
 
 ### Rust Backend
@@ -124,49 +145,26 @@ Audit dependencies:
 cargo audit
 ```
 
-### SpacetimeDB Module
-
-Publish the SpacetimeDB module (from bins/sdb_server):
-```bash
-cd bins/sdb_server
-spacetime publish <module-name> --clear-database
-```
-
-Generate client bindings:
-```bash
-# Rust bindings (updates libs/sdb_api/src/module_bindings/)
-cd bins/sdb_server
-spacetime generate --lang rust --out-dir ../../libs/sdb_api/src/module_bindings
-
-# TypeScript bindings for web frontend
-cd bins/crm-chat-web
-npm run gen
-# or: spacetime generate --lang typescript --out-dir ./src/lib/spacetime --project-path ../sdb_server
-```
-
 ### Frontend (crm-chat-web)
 
 All commands run from `bins/crm-chat-web/`:
 
 ```bash
 # Install dependencies
-npm install
+yarn install
 
 # Development server
-npm run dev
+npx vite dev
 
 # Build for production
-npm run build
+npx vite build
 
 # Preview production build
-npm run preview
+npx vite preview
 
 # Lint/format with Ultracite (Biome)
 npx ultracite fix
 npx ultracite check
-
-# Generate SpacetimeDB TypeScript bindings
-npm run gen
 ```
 
 ### Frontend Code Standards
@@ -183,46 +181,61 @@ The frontend follows Ultracite rules (see bins/crm-chat-web/.cursor/rules/ultrac
 
 ## Important Implementation Details
 
-### SpacetimeDB Integration
+### Convex Integration
 
-The frontend uses SpacetimeDB React SDK:
-- Generated TypeScript bindings are in `bins/crm-chat-web/src/lib/spacetime/`
-- Use the `useSpacetime()` hook to access connection state
-- Tables are reactive and automatically update UI when data changes
-- Reducers are called to modify data (e.g., `upsert_client_reducer`, `add_messages_reducer`)
+The frontend uses the Convex React SDK:
+- `ConvexProviderWithClerk` in `_auth.tsx` provides authenticated access
+- `api` imported from `@/lib/convex` (uses `anyApi` until `npx convex dev` generates typed bindings)
+- Use `useQuery(api.module.function)` for reactive queries
+- Use `useMutation(api.module.function)` for mutations
 
 Example pattern:
 ```typescript
-import { useSpacetime } from "@/hooks/use-spacetime";
-import { Client } from "@/lib/spacetime";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/lib/convex";
 
-function Component() {
-  const { connection, identity } = useSpacetime();
-  const clients = connection.db.client.getAll(); // Reactive query
+function Component(): React.ReactNode {
+  const clients = useQuery(api.clients.list);
+  const deleteClient = useMutation(api.clients.deleteClient);
 
-  // Call a reducer
-  connection.reducers.upsertClient({ /* args */ });
+  if (clients === undefined) return <Spinner />;
+
+  // Call a mutation
+  deleteClient({ clientId: client._id });
 }
 ```
 
-### Client Status Flow
+Important Convex patterns:
+- `useQuery` returns `undefined` while loading — components must handle loading state
+- IDs are strings (`_id`)
+- Enums are plain strings (e.g. `"Connected"`) or discriminated objects (`{ type: "Error", message: "..." }`)
+- Timestamps are Unix milliseconds as `number`
 
-Clients have a status enum (WaitingPhone, WaitingCode, WaitingPassword, Connected):
-- Frontend displays appropriate UI based on client.status
-- telegram-subscriber watches for client inserts/updates and manages authentication
-- Session data is stored in client.session field
+### Authentication & Client Status
+
+Client status is `{ type: "Authenticating" } | { type: "Connected" } | { type: "Error", message: string }`. Detailed auth state lives in separate tables:
+- **PhoneAuth**: State machine with steps `SendingCode → WaitingCode → VerifyingCode → WaitingPassword → VerifyingPassword → Connected/Failed/Cancelled`
+- **QrAuth**: QR-code-based login flow with its own step progression
+- **Notification**: User-facing messages with severity (Info/Warning/Error)
+
+telegram-subscriber subscribes to Convex queries for pending/assigned auth sessions and drives the authentication flow via `robot_*` mutations.
 
 ### Generated Code
 
-These files are auto-generated and should not be manually edited:
-- `libs/sdb_api/src/module_bindings/` - Regenerate with `spacetime generate --lang rust`
-- `bins/crm-chat-web/src/lib/spacetime/` - Regenerate with `npm run gen`
+- `bins/convex-backend/convex/_generated/` — auto-generated by `npx convex dev`, do not edit manually
+- `libs/convex-typegen` — generates Rust types from `convex/schema.ts` (used as build dependency)
 
 ### Environment Variables
 
-See `.env.example` for required environment variables:
+Required environment variables:
+- `VITE_CONVEX_URL`: Convex backend URL (e.g. `http://127.0.0.1:3210`)
+- `VITE_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`: Clerk authentication
+- `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`: Convex self-hosted admin (for `bins/convex-backend/`)
+- `ROBOT_JWT_PRIVATE_KEY`: RS256 private key for robot JWT minting (telegram-subscriber)
 - `TG_ID`, `TG_HASH`: Telegram API credentials
-- `SURREAL_*`: SurrealDB connection (legacy, may be removed)
+- `OPENROUTER_API_KEY`: OpenRouter for embeddings
+- `ES_*`: Elasticsearch configuration (optional)
+- `SENTRY_URL`: Sentry error tracking (optional)
 
 Frontend env vars are validated with `@t3-oss/env-core` and Zod in `bins/crm-chat-web/src/env.ts`.
 
@@ -238,4 +251,7 @@ Run specific test:
 cargo test -p messanger-telegram test_name
 ```
 
-Frontend tests are not yet implemented.
+Frontend tests use Playwright (from `bins/crm-chat-web/`):
+```bash
+npx playwright test
+```

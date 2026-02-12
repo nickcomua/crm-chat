@@ -236,7 +236,6 @@ struct AppState {
     elasticsearch_auth: ElasticsearchAuth,
     index_name: String,
     jwks_cache: Arc<RwLock<JwksCache>>,
-    use_spacetimedb_identity: bool,
     clerk_issuer: String,
     http_client: reqwest::Client,
 }
@@ -358,27 +357,6 @@ async fn get_decoding_key(
         .ok_or_else(|| format!("Key with kid {} not found in JWKS", kid))
 }
 
-/// Compute SpacetimeDB Identity from issuer and subject (matching Rust implementation)
-fn compute_spacetimedb_identity(issuer: &str, subject: &str) -> String {
-    let input = format!("{issuer}|{subject}");
-    let first_hash = blake3::hash(input.as_bytes());
-    let id_hash = &first_hash.as_bytes()[..26];
-
-    let mut checksum_input = [0u8; 28];
-    checksum_input[2..].copy_from_slice(id_hash);
-    checksum_input[0] = 0xc2;
-    checksum_input[1] = 0x00;
-    let checksum_hash = blake3::hash(&checksum_input);
-
-    let mut final_bytes = [0u8; 32];
-    final_bytes[0] = 0xc2;
-    final_bytes[1] = 0x00;
-    final_bytes[2..6].copy_from_slice(&checksum_hash.as_bytes()[..4]);
-    final_bytes[6..].copy_from_slice(id_hash);
-
-    hex::encode(final_bytes)
-}
-
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     mut request: Request,
@@ -434,13 +412,7 @@ async fn auth_middleware(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Compute user_id
-    let user_id = if state.use_spacetimedb_identity {
-        let issuer = claims.iss.as_deref().unwrap_or(&state.clerk_issuer);
-        compute_spacetimedb_identity(issuer, &claims.sub)
-    } else {
-        claims.sub.clone()
-    };
+    let user_id = claims.sub.clone();
 
     info!("Authenticated user: {} (sub: {})", user_id, claims.sub);
 
@@ -730,9 +702,6 @@ async fn main() {
         elasticsearch_auth: es_auth,
         index_name: std::env::var("INDEX_NAME").unwrap_or_else(|_| "crm-chat-msgs".to_string()),
         jwks_cache: Arc::new(RwLock::new(JwksCache::default())),
-        use_spacetimedb_identity: std::env::var("USE_SPACETIMEDB_IDENTITY")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false),
         clerk_issuer: std::env::var("CLERK_ISSUER")
             .unwrap_or_else(|_| "https://noted-rabbit-14.clerk.accounts.dev".to_string()),
         http_client,
@@ -741,10 +710,6 @@ async fn main() {
     info!("Starting ES proxy on port 3001");
     info!("Elasticsearch URL: {}", state.elasticsearch_url);
     info!("Index: {}", state.index_name);
-    info!(
-        "Using SpacetimeDB identity: {}",
-        state.use_spacetimedb_identity
-    );
     info!("Accepting tokens from issuer: {}", state.clerk_issuer);
 
     let cors = CorsLayer::new()
