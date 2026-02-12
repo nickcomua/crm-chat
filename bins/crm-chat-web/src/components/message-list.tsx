@@ -1,9 +1,11 @@
-import { useQuery } from "convex/react";
-import { ArrowLeft, Ban, Image as ImageIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { usePaginatedQuery, useQuery } from "convex/react";
+import { ArrowLeft, Ban, Image as ImageIcon, Loader2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+
+const PAGE_SIZE = 50;
 
 interface MessageListProps {
   chatId: string;
@@ -147,35 +149,88 @@ export function MessageList({
 }: MessageListProps): React.ReactNode {
   const chats = useQuery(api.chats.list);
   const clients = useQuery(api.clients.list);
-  const messages = useQuery(api.messages.listByChat, { chatId });
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.messages.listByChat,
+    { chatId },
+    { initialNumItems: PAGE_SIZE }
+  );
+
+  const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const prevChatIdRef = useRef(chatId);
+  const prevMessageCountRef = useRef(0);
+  // True while waiting for older messages to arrive after loadMore.
+  const loadingOlderRef = useRef(false);
+  // Saved distance-from-bottom for scroll restoration after prepend.
+  const savedDistRef = useRef(0);
 
   const chat = chats?.find((c: { chatId: string }) => c.chatId === chatId);
   const client = chat
     ? clients?.find((c: { _id: string }) => c._id === chat.clientId)
     : undefined;
 
-  const sortedMessages: MessageDoc[] = messages
-    ? [...messages].sort((a: MessageDoc, b: MessageDoc) => a.ts - b.ts)
-    : [];
+  // Query returns desc (newest first); reverse for display (oldest at top).
+  const sortedMessages = [...results].reverse() as MessageDoc[];
   const activeMessageCount = sortedMessages.filter((m) => !m.deleted).length;
 
-  const prevChatIdRef = useRef(chatId);
-  const prevMessageCountRef = useRef(sortedMessages.length);
-
-  useEffect(() => {
-    const chatChanged = prevChatIdRef.current !== chatId;
-    const messagesChanged =
-      prevMessageCountRef.current !== sortedMessages.length;
-
-    if (chatChanged || messagesChanged) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      prevChatIdRef.current = chatId;
-      prevMessageCountRef.current = sortedMessages.length;
+  // Restore scroll position after older messages are prepended.
+  useLayoutEffect(() => {
+    if (loadingOlderRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop =
+        scrollRef.current.scrollHeight - savedDistRef.current;
+      loadingOlderRef.current = false;
     }
   });
 
-  if (messages === undefined) {
+  // Scroll to bottom on chat switch or initial load only.
+  useEffect(() => {
+    const chatChanged = prevChatIdRef.current !== chatId;
+    const isInitialLoad =
+      prevMessageCountRef.current === 0 && sortedMessages.length > 0;
+
+    if (chatChanged || isInitialLoad) {
+      messagesEndRef.current?.scrollIntoView();
+    }
+
+    prevChatIdRef.current = chatId;
+    prevMessageCountRef.current = sortedMessages.length;
+  });
+
+  // IntersectionObserver: preload older messages before user reaches the top.
+  useEffect(() => {
+    if (status !== "CanLoadMore") {
+      return;
+    }
+    const sentinel = sentinelRef.current;
+    const container = scrollRef.current;
+    if (!(sentinel && container)) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries[0].isIntersecting &&
+          scrollRef.current &&
+          !loadingOlderRef.current
+        ) {
+          savedDistRef.current =
+            scrollRef.current.scrollHeight - scrollRef.current.scrollTop;
+          loadingOlderRef.current = true;
+          loadMore(PAGE_SIZE);
+        }
+      },
+      // Trigger 1500px before sentinel enters the viewport so messages
+      // are already loaded by the time the user scrolls there.
+      { root: container, rootMargin: "1500px 0px 0px 0px" }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [status, loadMore]);
+
+  if (status === "LoadingFirstPage") {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
@@ -206,7 +261,8 @@ export function MessageList({
               <span className="mr-1.5">{getClientDisplayName(client)}</span>
             )}
             <span>
-              {activeMessageCount} message
+              {activeMessageCount}
+              {status !== "Exhausted" ? "+" : ""} message
               {activeMessageCount !== 1 ? "s" : ""}
               {activeMessageCount !== sortedMessages.length &&
                 ` (${sortedMessages.length - activeMessageCount} deleted)`}
@@ -215,13 +271,25 @@ export function MessageList({
         </div>
       </div>
 
-      <div className="messages-bg flex-1 overflow-y-auto p-4">
+      <div className="messages-bg flex-1 overflow-y-auto p-4" ref={scrollRef}>
         {sortedMessages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-muted-foreground/60 text-sm">No messages yet</p>
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Sentinel for infinite scroll — triggers loading older messages */}
+            <div className="h-px" ref={sentinelRef} />
+            {status === "LoadingMore" && (
+              <div className="flex justify-center py-2">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground/50" />
+              </div>
+            )}
+            {status === "Exhausted" && sortedMessages.length >= PAGE_SIZE && (
+              <p className="py-2 text-center text-muted-foreground/40 text-xs">
+                Beginning of conversation
+              </p>
+            )}
             {sortedMessages.map((message, index) => {
               const prevMessage = sortedMessages[index - 1];
               const showDateHeader = shouldShowDateHeader(message, prevMessage);

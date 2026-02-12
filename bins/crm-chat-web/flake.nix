@@ -152,9 +152,6 @@
             # which matches ultracite's biome "!!**/build" ignore pattern.
             # A symlink doesn't work because biome resolves to the real path.
             buildPhase = ''
-              rm -rf /tmp/lint-source
-              cp -r . /tmp/lint-source
-              cd /tmp/lint-source
               npm run lint
             '';
 
