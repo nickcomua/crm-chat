@@ -1,9 +1,9 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
 import { Filter, MessageSquare, Pin, Search, Users } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
-import { type MediaKind, mediaKindLabel } from "./media-renderer";
+import { type MediaKind, mediaKindLabel } from "./media-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -80,6 +80,7 @@ function getExternalIdColorStyle(externalId: string): {
 } {
   let hash = 0;
   for (let i = 0; i < externalId.length; i++) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
     hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = Math.abs(hash) % 360;
@@ -282,14 +283,32 @@ export function ChatList({
                     <div className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
                   )}
 
-                  <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-medium text-white text-xs shadow-sm"
-                    style={{ background: getAvatarGradient(displayName) }}
-                  >
-                    {chat.chatType === "Group" ? (
-                      <Users className="h-4 w-4" />
-                    ) : (
-                      getInitials(displayName)
+                  <div className="relative shrink-0">
+                    <div
+                      className="flex h-9 w-9 items-center justify-center rounded-full font-medium text-white text-xs shadow-sm"
+                      style={{ background: getAvatarGradient(displayName) }}
+                    >
+                      {chat.chatType === "Group" ? (
+                        <Users className="h-4 w-4" />
+                      ) : (
+                        getInitials(displayName)
+                      )}
+                    </div>
+                    {chat.photoUrl && (
+                      // biome-ignore lint/a11y/noNoninteractiveElementInteractions: onError hides broken image to show gradient fallback
+                      <img
+                        alt=""
+                        className="absolute inset-0 h-9 w-9 rounded-full object-cover shadow-sm"
+                        height={36}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                        src={chat.photoUrl}
+                        width={36}
+                      />
+                    )}
+                    {chat.scanPhase === "listening" && (
+                      <div className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-sidebar bg-emerald-500" />
                     )}
                   </div>
 

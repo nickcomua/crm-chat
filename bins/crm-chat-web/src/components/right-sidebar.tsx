@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
 import { Bell, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/convex";

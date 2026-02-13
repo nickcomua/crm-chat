@@ -2,6 +2,8 @@
 
 use async_stream::stream;
 use async_trait::async_trait;
+use std::collections::BTreeMap;
+
 use grammers_client::{
     client::UpdatesConfiguration,
     media::{Downloadable, Media},
@@ -83,10 +85,7 @@ fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSumma
                 }
             } else if doc.is_animated() {
                 MediaKind::Animation
-            } else if doc
-                .mime_type()
-                .is_some_and(|m| m.starts_with("audio/"))
-            {
+            } else if doc.mime_type().is_some_and(|m| m.starts_with("audio/")) {
                 MediaKind::Audio
             } else {
                 MediaKind::Document
@@ -115,6 +114,109 @@ fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSumma
     }
 }
 
+/// Handle returned by [`TelegramClient::stream_message_media`].
+///
+/// The file size (from Telegram metadata) is available immediately. Chunks
+/// arrive on the [`chunks`] receiver as the download progresses. Await
+/// [`download_handle`] to get the total number of bytes downloaded.
+pub struct MediaStream {
+    /// File size from Telegram metadata (available before the download starts).
+    pub file_size: Option<usize>,
+    /// Receiver for download chunks.
+    pub chunks: tokio::sync::mpsc::Receiver<Result<Vec<u8>, std::io::Error>>,
+    /// Join handle for the spawned download task. Resolves to `bytes_downloaded`.
+    pub download_handle: tokio::task::JoinHandle<Result<usize, MessengerError>>,
+}
+
+/// Download a large file using multiple parallel workers, each handling a
+/// contiguous range of chunks. An internal BTreeMap reorders out-of-order
+/// chunks before forwarding them sequentially through `chunk_tx`.
+async fn stream_concurrent_download(
+    client: &Client,
+    media: &Media,
+    size: usize,
+    worker_count: usize,
+    max_chunk_size: usize,
+    chunk_tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+) -> Result<usize, MessengerError> {
+    let total_chunks = size.div_ceil(max_chunk_size);
+    let chunks_per_worker = total_chunks.div_ceil(worker_count);
+
+    info!(
+        size,
+        total_chunks, worker_count, "Starting concurrent download"
+    );
+
+    // Each worker sends (chunk_index, data) through an internal channel.
+    let (internal_tx, mut internal_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<(usize, Vec<u8>), String>>();
+
+    let mut handles = Vec::new();
+    for worker_id in 0..worker_count {
+        let start = worker_id * chunks_per_worker;
+        if start >= total_chunks {
+            break;
+        }
+        let count = std::cmp::min(chunks_per_worker, total_chunks - start);
+
+        // Create an independent DownloadIter positioned at this worker's range.
+        let mut download = client.iter_download(media).skip_chunks(start as i32);
+        let tx = internal_tx.clone();
+
+        handles.push(tokio::spawn(async move {
+            for i in 0..count {
+                match download.next().await {
+                    Ok(Some(data)) => {
+                        if tx.send(Ok((start + i, data))).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        tx.send(Err(format!(
+                            "Worker {} chunk {} failed: {}",
+                            worker_id,
+                            start + i,
+                            e
+                        )))
+                        .ok();
+                        break;
+                    }
+                }
+            }
+        }));
+    }
+    drop(internal_tx);
+
+    // Reorder and forward chunks sequentially to the upload stream.
+    let mut next_chunk = 0usize;
+    let mut buffer: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+    let mut total = 0usize;
+
+    while let Some(result) = internal_rx.recv().await {
+        let (idx, data) = result.map_err(MessengerError::Connection)?;
+        buffer.insert(idx, data);
+
+        // Flush all sequential chunks that are ready.
+        while let Some(data) = buffer.remove(&next_chunk) {
+            total += data.len();
+            chunk_tx
+                .send(Ok(data))
+                .await
+                .map_err(|_| MessengerError::Connection("Upload receiver dropped".to_string()))?;
+            next_chunk += 1;
+        }
+    }
+
+    // Wait for all workers to finish.
+    for handle in handles {
+        handle.await.ok();
+    }
+
+    info!(total, next_chunk, "Concurrent download complete");
+    Ok(total)
+}
+
 impl TelegramClient {
     /// Download media bytes from Telegram.
     pub async fn download_media(
@@ -130,6 +232,43 @@ impl TelegramClient {
             bytes.extend(chunk);
         }
         Ok(bytes)
+    }
+
+    /// Get the Telegram photo_id for a chat's profile photo, or None if unset.
+    pub async fn get_chat_photo_id(
+        &self,
+        chat_external_id: &str,
+    ) -> Result<Option<String>, MessengerError> {
+        let client = self.client.lock().await;
+        let dialog = Self::find_dialog_with_client(&client, &chat_external_id.to_string()).await?;
+        let peer = dialog.peer();
+        let photo_id = match peer {
+            Peer::User(user) => user.photo().map(|p| p.photo_id),
+            Peer::Group(group) => group.photo().map(|p| p.photo_id),
+            Peer::Channel(channel) => channel.photo().map(|p| p.photo_id),
+        };
+        Ok(photo_id.map(|id| id.to_string()))
+    }
+
+    /// Download a chat's profile photo bytes (JPEG), or None if no photo is set.
+    pub async fn download_chat_photo(
+        &self,
+        chat_external_id: &str,
+    ) -> Result<Option<Vec<u8>>, MessengerError> {
+        let client = self.client.lock().await;
+        let dialog = Self::find_dialog_with_client(&client, &chat_external_id.to_string()).await?;
+        let photo = match dialog.peer().photo(true) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let mut download = client.iter_download(&photo);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = download.next().await.map_err(|e| {
+            MessengerError::Connection(format!("Failed to download chat photo: {}", e))
+        })? {
+            bytes.extend(chunk);
+        }
+        Ok(Some(bytes))
     }
 
     /// Get the grammers Media object from a message by chat+message IDs.
@@ -164,22 +303,29 @@ impl TelegramClient {
         Ok(None)
     }
 
-    /// Stream-download media for a message, sending chunks through a channel.
+    /// Stream-download media for a message.
     ///
-    /// Returns `Ok(None)` if the message has no media, or `Ok(Some(total_bytes))`
-    /// after all chunks have been sent through `chunk_tx`. The caller typically
-    /// feeds the receiver side into a streaming HTTP upload (e.g. reqwest
+    /// Returns `Ok(None)` if the message has no media, or `Ok(Some(stream))`
+    /// with the file size available immediately and a chunk receiver that
+    /// delivers data as it downloads. The download is spawned internally; the
+    /// caller feeds the receiver into a streaming upload (e.g. reqwest
     /// `Body::wrap_stream`) so the file never sits fully in memory.
+    ///
+    /// For files >10 MB, 4 parallel download workers are used automatically.
     pub async fn stream_message_media(
         &self,
         chat_external_id: &str,
         message_id: i32,
-        chunk_tx: tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
-    ) -> Result<Option<usize>, MessengerError> {
-        // Perform lookup + download under a single lock acquisition to avoid
-        // deadlocking (get_message_media and iter_download both need the lock).
-        let client = self.client.lock().await;
-        let dialog = Self::find_dialog_with_client(&client, &chat_external_id.to_string()).await?;
+    ) -> Result<Option<MediaStream>, MessengerError> {
+        const BIG_FILE_SIZE: usize = 10 * 1024 * 1024;
+        const MAX_CHUNK_SIZE: usize = 512 * 1024;
+        const WORKER_COUNT: usize = 4;
+
+        // Lock the Telegram client just long enough to find the media, then
+        // clone the inner Client (cheap Arc bump) and release the Mutex so
+        // other operations (dialog lookups, auth, real-time updates) aren't blocked.
+        let guard = self.client.lock().await;
+        let dialog = Self::find_dialog_with_client(&guard, &chat_external_id.to_string()).await?;
         let chat = dialog.peer();
         let chat_ref = chat.to_ref().ok_or_else(|| {
             MessengerError::NotFound(format!(
@@ -188,8 +334,7 @@ impl TelegramClient {
             ))
         })?;
 
-        // Use offset_id for efficient O(1) lookup.
-        let mut messages = client.iter_messages(chat_ref).offset_id(message_id + 1);
+        let mut messages = guard.iter_messages(chat_ref).offset_id(message_id + 1);
         let media = match messages.next().await {
             Ok(Some(msg)) if msg.id() == message_id => match msg.media() {
                 Some(m) => m,
@@ -198,18 +343,50 @@ impl TelegramClient {
             _ => return Ok(None),
         };
 
-        let mut download = client.iter_download(&media);
-        let mut total = 0usize;
-        while let Some(chunk) = download.next().await.map_err(|e| {
-            MessengerError::Connection(format!("Failed to download media chunk: {}", e))
-        })? {
-            total += chunk.len();
-            chunk_tx.send(Ok(chunk)).await.map_err(|_| {
-                MessengerError::Connection("Upload receiver dropped".to_string())
-            })?;
-        }
+        let file_size = match &media {
+            Media::Photo(p) => p.size(),
+            Media::Document(d) => d.size(),
+            Media::Sticker(s) => s.document.size(),
+            _ => Downloadable::size(&media),
+        };
+        let client_clone = guard.clone();
+        drop(guard); // Release the Mutex before downloading!
 
-        Ok(Some(total))
+        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
+
+        // Spawn the download task — returns bytes_downloaded when done.
+        let download_handle = tokio::spawn(async move {
+            let bytes_downloaded = if let Some(size) = file_size.filter(|&s| s > BIG_FILE_SIZE) {
+                stream_concurrent_download(
+                    &client_clone,
+                    &media,
+                    size,
+                    WORKER_COUNT,
+                    MAX_CHUNK_SIZE,
+                    chunk_tx,
+                )
+                .await?
+            } else {
+                let mut download = client_clone.iter_download(&media);
+                let mut total = 0usize;
+                while let Some(chunk) = download.next().await.map_err(|e| {
+                    MessengerError::Connection(format!("Failed to download media chunk: {}", e))
+                })? {
+                    total += chunk.len();
+                    chunk_tx.send(Ok(chunk)).await.map_err(|_| {
+                        MessengerError::Connection("Upload receiver dropped".to_string())
+                    })?;
+                }
+                total
+            };
+            Ok(bytes_downloaded)
+        });
+
+        Ok(Some(MediaStream {
+            file_size,
+            chunks: chunk_rx,
+            download_handle,
+        }))
     }
 
     /// Find a dialog by external ID using an already-locked client.
@@ -389,7 +566,9 @@ impl MessengerClient for TelegramClient {
             while let Ok(Some(msg)) = messages.next().await {
                 if let Some(sender_id) = msg.sender_id() {
                     let chat_bare_id = chat.id().bare_id();
-                    let media_summary = msg.media().and_then(|m| classify_media(&m, chat_bare_id, msg.id()));
+                    let media_summary = msg
+                        .media()
+                        .and_then(|m| classify_media(&m, chat_bare_id, msg.id()));
                     let summary = MessageSummary {
                         external_id: msg.id().to_string(),
                         chat_external_id: chat_bare_id.to_string(),

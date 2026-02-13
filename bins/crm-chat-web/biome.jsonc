@@ -18,6 +18,16 @@
       }
     },
     {
+      "includes": ["src/lib/convex.ts"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "noBarrelFile": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/routes/**/*.$*.tsx"],
       "linter": {
         "rules": {

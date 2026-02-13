@@ -1,19 +1,24 @@
-import { useQuery } from "convex/react";
+import { Link } from "@tanstack/react-router";
+import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   Download,
+  ExternalLink,
   File,
   Image as ImageIcon,
   Loader2,
   Music,
+  RefreshCw,
   Sticker,
   Video,
+  X,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
-import type { MediaKind } from "./media-renderer";
+import type { MediaKind } from "./media-types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,6 +26,7 @@ import type { MediaKind } from "./media-renderer";
 
 interface MediaRecord {
   externalId: string;
+  messageId: string;
   kind: MediaKind;
   status: "pending" | "downloading" | "stored" | "failed" | "skipped";
   bytesDownloaded?: number;
@@ -28,6 +34,8 @@ interface MediaRecord {
   fileName?: string;
   mimeType?: string;
   chatId: string;
+  chatName?: string;
+  messageTs?: number;
   error?: string;
   createdAt: number;
 }
@@ -43,26 +51,43 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function getKindIcon(
-  kind: MediaKind
-): React.ComponentType<{ className?: string }> {
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) {
+    return `${Math.round(bytesPerSec)} B/s`;
+  }
+  if (bytesPerSec < 1024 * 1024) {
+    return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  }
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function KindIcon({
+  kind,
+  className,
+}: {
+  kind: MediaKind;
+  className?: string;
+}): React.ReactNode {
   switch (kind) {
     case "Photo":
-      return ImageIcon;
+      return <ImageIcon className={className} />;
     case "Video":
     case "VideoNote":
     case "Animation":
-      return Video;
+      return <Video className={className} />;
     case "Audio":
     case "Voice":
-      return Music;
+      return <Music className={className} />;
     case "Sticker":
-      return Sticker;
+      return <Sticker className={className} />;
     default:
-      return File;
+      return <File className={className} />;
   }
 }
 
@@ -97,122 +122,229 @@ function timeAgo(ms: number): string {
   return `${days}d ago`;
 }
 
+function formatDate(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const isThisYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(isThisYear ? {} : { year: "numeric" }),
+  });
+}
+
 // ---------------------------------------------------------------------------
-// Progress bar
+// Shared sub-components
 // ---------------------------------------------------------------------------
 
-function ProgressBar({
-  bytesDownloaded,
-  fileSize,
-}: {
-  bytesDownloaded: number;
-  fileSize?: number;
-}): React.ReactNode {
-  const percentage =
-    fileSize && fileSize > 0
-      ? Math.min(100, Math.round((bytesDownloaded / fileSize) * 100))
-      : undefined;
+/** Chat name + message date line. */
+function MediaMeta({ record }: { record: MediaRecord }): React.ReactNode {
+  const label = record.chatName ?? record.chatId;
+  const date = record.messageTs ? formatDate(record.messageTs) : undefined;
 
   return (
-    <div className="flex w-full items-center gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        {percentage !== undefined ? (
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-300"
-            style={{ width: `${percentage}%` }}
-          />
-        ) : (
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/60" />
-        )}
-      </div>
-      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-        {percentage !== undefined
-          ? `${percentage}%`
-          : formatFileSize(bytesDownloaded)}
-      </span>
-    </div>
+    <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground/70">
+      <span className="truncate">{label}</span>
+      {date && (
+        <>
+          <span className="shrink-0">·</span>
+          <span className="shrink-0">{date}</span>
+        </>
+      )}
+    </p>
   );
+}
+
+/** Small button that navigates to the message in its chat. */
+function GoToChatButton({ record }: { record: MediaRecord }): React.ReactNode {
+  return (
+    <Link
+      className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      params={{ chatId: record.chatId }}
+      search={{ messageId: record.messageId }}
+      to="/chats/$chatId"
+    >
+      <ExternalLink className="h-3 w-3" />
+      Chat
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speed tracking hook
+// ---------------------------------------------------------------------------
+
+/** Compute download speed from reactive bytesDownloaded changes. */
+function useDownloadSpeed(bytesDownloaded: number): number {
+  const prevRef = useRef({ bytes: 0, time: 0 });
+  const [speed, setSpeed] = useState(0);
+
+  useEffect(() => {
+    const now = Date.now();
+    if (prevRef.current.time === 0) {
+      prevRef.current = { bytes: bytesDownloaded, time: now };
+      return;
+    }
+    const elapsed = (now - prevRef.current.time) / 1000;
+    if (elapsed >= 1 && bytesDownloaded > prevRef.current.bytes) {
+      const delta = bytesDownloaded - prevRef.current.bytes;
+      setSpeed(delta / elapsed);
+      prevRef.current = { bytes: bytesDownloaded, time: now };
+    } else if (bytesDownloaded < prevRef.current.bytes) {
+      prevRef.current = { bytes: bytesDownloaded, time: now };
+      setSpeed(0);
+    }
+  }, [bytesDownloaded]);
+
+  return speed;
 }
 
 // ---------------------------------------------------------------------------
 // Row components
 // ---------------------------------------------------------------------------
 
+function CancelButton({ record }: { record: MediaRecord }): React.ReactNode {
+  const cancelDownload = useMutation(api.media.cancelDownload);
+  return (
+    <button
+      className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      onClick={() => cancelDownload({ externalId: record.externalId })}
+      type="button"
+    >
+      <X className="h-3 w-3" />
+      Cancel
+    </button>
+  );
+}
+
 function DownloadingRow({ record }: { record: MediaRecord }): React.ReactNode {
-  const Icon = getKindIcon(record.kind);
+  const downloaded = record.bytesDownloaded ?? 0;
+  const total = record.fileSize;
+  const speed = useDownloadSpeed(downloaded);
+  const hasSize = total !== undefined && total > 0;
+  const percentage = hasSize
+    ? Math.min(100, Math.round((downloaded / total) * 100))
+    : undefined;
+
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-card px-3 py-2.5">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
-        <Icon className="h-4 w-4 text-primary" />
+        <KindIcon className="h-4 w-4 text-primary" kind={record.kind} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-[13px]">
-          {record.fileName ?? kindLabel(record.kind)}
-        </p>
-        <div className="mt-1">
-          <ProgressBar
-            bytesDownloaded={record.bytesDownloaded ?? 0}
-            fileSize={record.fileSize}
-          />
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="truncate font-medium text-[13px]">
+            {record.fileName ?? kindLabel(record.kind)}
+          </p>
+          {speed > 0 && (
+            <span className="shrink-0 text-[11px] text-primary tabular-nums">
+              {formatSpeed(speed)}
+            </span>
+          )}
         </div>
+        <MediaMeta record={record} />
+        {hasSize ? (
+          <>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-500"
+                style={{ width: `${percentage}%` }}
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+              {formatFileSize(downloaded)} / {formatFileSize(total)} —{" "}
+              {percentage}%
+            </p>
+          </>
+        ) : (
+          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {formatFileSize(downloaded)}
+          </p>
+        )}
       </div>
-      {record.fileSize !== undefined && (
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {formatFileSize(record.fileSize)}
-        </span>
-      )}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <GoToChatButton record={record} />
+        <CancelButton record={record} />
+      </div>
     </div>
   );
 }
 
 function QueuedRow({ record }: { record: MediaRecord }): React.ReactNode {
-  const Icon = getKindIcon(record.kind);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border/30 px-3 py-2">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted/60">
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <KindIcon
+          className="h-4 w-4 text-muted-foreground"
+          kind={record.kind}
+        />
       </div>
-      <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
-        {record.fileName ?? kindLabel(record.kind)}
-      </p>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13px] text-muted-foreground">
+          {record.fileName ?? kindLabel(record.kind)}
+        </p>
+        <MediaMeta record={record} />
+      </div>
       {record.fileSize !== undefined && (
         <span className="shrink-0 text-[11px] text-muted-foreground/60">
           {formatFileSize(record.fileSize)}
         </span>
       )}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <GoToChatButton record={record} />
+        <CancelButton record={record} />
+      </div>
     </div>
   );
 }
 
 function FailedRow({ record }: { record: MediaRecord }): React.ReactNode {
-  const Icon = getKindIcon(record.kind);
+  const retryDownload = useMutation(api.media.retryDownload);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10">
-        <Icon className="h-4 w-4 text-destructive" />
+        <KindIcon className="h-4 w-4 text-destructive" kind={record.kind} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium text-[13px]">
           {record.fileName ?? kindLabel(record.kind)}
         </p>
+        <MediaMeta record={record} />
         {record.error && (
           <p className="truncate text-[11px] text-destructive/80">
             {record.error}
           </p>
         )}
       </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <GoToChatButton record={record} />
+        <button
+          className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={() => retryDownload({ externalId: record.externalId })}
+          type="button"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Retry
+        </button>
+      </div>
     </div>
   );
 }
 
 function RecentRow({ record }: { record: MediaRecord }): React.ReactNode {
-  const Icon = getKindIcon(record.kind);
   return (
-    <div className="flex items-center gap-3 px-3 py-1.5">
-      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-      <p className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
-        {record.fileName ?? kindLabel(record.kind)}
-      </p>
+    <div className="flex items-center gap-3 rounded-md px-3 py-1.5">
+      <KindIcon
+        className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60"
+        kind={record.kind}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] text-muted-foreground">
+          {record.fileName ?? kindLabel(record.kind)}
+        </p>
+        <MediaMeta record={record} />
+      </div>
       {record.fileSize !== undefined && (
         <span className="shrink-0 text-[11px] text-muted-foreground/50">
           {formatFileSize(record.fileSize)}
@@ -221,6 +353,7 @@ function RecentRow({ record }: { record: MediaRecord }): React.ReactNode {
       <span className="shrink-0 text-[11px] text-muted-foreground/40">
         {timeAgo(record.createdAt)}
       </span>
+      <GoToChatButton record={record} />
     </div>
   );
 }
@@ -287,6 +420,9 @@ export function DownloadManager(): React.ReactNode {
   const recentMedia = useQuery(api.media.listByStatus, {
     statuses: ["stored"],
   });
+  const counts = useQuery(api.media.countByStatus, {
+    statuses: ["pending", "failed"],
+  });
 
   const isLoading =
     activeMedia === undefined ||
@@ -303,10 +439,14 @@ export function DownloadManager(): React.ReactNode {
 
   const downloading = activeMedia.filter((m) => m.status === "downloading");
   const queued = activeMedia.filter((m) => m.status === "pending");
+  const pendingCount =
+    counts?.find((c) => c.status === "pending")?.count ?? queued.length;
+  const failedCount =
+    counts?.find((c) => c.status === "failed")?.count ?? failedMedia.length;
   const isEmpty =
     downloading.length === 0 &&
-    queued.length === 0 &&
-    failedMedia.length === 0 &&
+    pendingCount === 0 &&
+    failedCount === 0 &&
     recentMedia.length === 0;
 
   return (
@@ -339,7 +479,7 @@ export function DownloadManager(): React.ReactNode {
           </Section>
 
           <Section
-            count={queued.length}
+            count={pendingCount}
             icon={<Clock className="h-4 w-4 text-muted-foreground" />}
             title="Queued"
           >
@@ -349,7 +489,7 @@ export function DownloadManager(): React.ReactNode {
           </Section>
 
           <Section
-            count={failedMedia.length}
+            count={failedCount}
             icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
             title="Failed"
             variant="destructive"

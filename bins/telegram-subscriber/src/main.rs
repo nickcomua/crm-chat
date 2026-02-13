@@ -14,7 +14,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
-use config::{TelegramConfig, get_session_dir};
+use config::{TelegramConfig, discover_session_files, get_session_dir};
 use convex::ConvexClient;
 use futures::StreamExt;
 use tokio::sync::Mutex;
@@ -27,6 +27,9 @@ use crate::task::{
     TaskExecutionContext, claim_phone_auth, claim_qr_auth, execute_phone_auth, execute_qr_auth,
 };
 use crate::types::{Client, ConvexApi, PhoneAuth, PhoneAuthStep, QrAuth, QrAuthStep};
+use convex_backend::ClientsRobotRegisterConnectedArgs;
+use messanger_interface::MessengerClient;
+use messanger_telegram::TelegramClient;
 
 /// Handle for a running scan task (one per connected client).
 struct ScanTaskHandle {
@@ -48,13 +51,21 @@ async fn main() -> anyhow::Result<()> {
         ))
     });
 
-    // Initialize tracing with Sentry layer
+    // Initialize tracing with file + stdout + Sentry layers
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,telegram_subscriber=debug"));
+
+    let file_appender = tracing_appender::rolling::hourly("logs", "telegram-subscriber.log");
+    let (non_blocking, _file_guard) = tracing_appender::non_blocking(file_appender);
 
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(non_blocking),
+        )
         .with(sentry_tracing::layer());
 
     tracing::subscriber::set_global_default(subscriber)?;
@@ -101,6 +112,9 @@ async fn main() -> anyhow::Result<()> {
     let mut connected_clients = client.subscribe_clients_connected_for_robot().await?;
 
     info!(session_dir = ?get_session_dir(), "Session files stored in");
+
+    // Discover existing session files and register them as Connected in Convex
+    discover_and_register_sessions(&mut client, &config).await;
 
     // State tracking for diffing subscription snapshots
     let mut phone_assigned_steps: HashMap<String, PhoneAuthStep> = HashMap::new();
@@ -280,4 +294,98 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Discover existing session files on disk and register them as Connected in Convex.
+///
+/// For each `.session` file found, attempts to connect to Telegram, verify
+/// authorization, and call `robotRegisterConnected` so the subscription loop
+/// picks them up automatically.
+async fn discover_and_register_sessions(client: &mut ConvexClient, config: &TelegramConfig) {
+    let sessions = discover_session_files();
+    if sessions.is_empty() {
+        info!("No existing session files found");
+        return;
+    }
+
+    info!(
+        count = sessions.len(),
+        "Found session files on disk, checking authorization"
+    );
+
+    let mut registered = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+
+    for (owner_id, session_path) in &sessions {
+        let path_str = session_path.to_string_lossy().to_string();
+
+        // Try to create a TelegramClient from the session file
+        let tg_client =
+            match TelegramClient::new(config.api_id, config.api_hash.clone(), path_str).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(path = ?session_path, error = %e, "Failed to load session file");
+                    failed += 1;
+                    continue;
+                }
+            };
+
+        // Check if the session is still authorized
+        match tg_client.is_authorized().await {
+            Ok(true) => {}
+            Ok(false) => {
+                debug!(path = ?session_path, "Session not authorized, skipping");
+                skipped += 1;
+                continue;
+            }
+            Err(e) => {
+                warn!(path = ?session_path, error = %e, "Failed to check authorization");
+                failed += 1;
+                continue;
+            }
+        }
+
+        // Get the Telegram external ID from the session
+        let external_id = match tg_client.get_client_external_id().await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(path = ?session_path, error = %e, "Failed to get client external ID");
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Register as Connected in Convex (upserts — safe to call multiple times)
+        match client
+            .clone()
+            .clients_robot_register_connected(ClientsRobotRegisterConnectedArgs {
+                userId: owner_id.clone(),
+                externalId: external_id.clone(),
+                kind: "Telegram".to_string(),
+            })
+            .await
+        {
+            Ok(client_id) => {
+                registered += 1;
+                info!(
+                    client_id,
+                    external_id = %external_id,
+                    owner = %owner_id,
+                    "Registered session from disk"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    external_id = %external_id,
+                    owner = %owner_id,
+                    error = %e,
+                    "Failed to register session in Convex"
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    info!(registered, skipped, failed, "Session discovery complete");
 }

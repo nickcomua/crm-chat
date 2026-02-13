@@ -3,9 +3,12 @@ import { useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronRight,
   MessageSquare,
   Pencil,
   Pin,
+  RefreshCw,
   Users,
   X,
 } from "lucide-react";
@@ -17,6 +20,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface MediaSettings {
+  savePhotos?: boolean;
+  saveVideos?: boolean;
+  saveAudio?: boolean;
+  saveVoice?: boolean;
+  saveStickers?: boolean;
+  saveDocuments?: boolean;
+  saveAnimations?: boolean;
+  saveVideoNotes?: boolean;
+}
+
 interface ChatDoc {
   _id: string;
   chatId: string;
@@ -26,22 +44,63 @@ interface ChatDoc {
   lastMessageTs: number;
   scanEnabled?: boolean;
   fullScanned?: boolean;
+  mediaSettings?: MediaSettings;
+  totalMessages?: number;
+  syncedMessages?: number;
+  scanPhase?: "scanning_messages" | "downloading_media" | "listening";
 }
 
+interface ClientDoc {
+  _id: string;
+  externalId: string;
+  mediaSettings?: MediaSettings;
+}
+
+// ---------------------------------------------------------------------------
+// Media settings config
+// ---------------------------------------------------------------------------
+
+const MEDIA_SETTINGS_ITEMS: { key: keyof MediaSettings; label: string }[] = [
+  { key: "savePhotos", label: "Photos" },
+  { key: "saveVideos", label: "Videos" },
+  { key: "saveVideoNotes", label: "Video notes" },
+  { key: "saveAudio", label: "Audio" },
+  { key: "saveVoice", label: "Voice messages" },
+  { key: "saveStickers", label: "Stickers" },
+  { key: "saveAnimations", label: "GIFs" },
+  { key: "saveDocuments", label: "Documents" },
+];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function getScanStatus(chat: ChatDoc): { label: string; className: string } {
+  if (chat.scanPhase === "listening") {
+    return {
+      label: "Listening",
+      className: "bg-emerald-500/15 text-emerald-700",
+    };
+  }
+  if (chat.scanPhase === "downloading_media") {
+    return {
+      label: "Downloading media...",
+      className: "bg-blue-500/15 text-blue-700",
+    };
+  }
+  if (chat.scanPhase === "scanning_messages") {
+    return {
+      label: "Scanning messages...",
+      className: "bg-amber-500/15 text-amber-700",
+    };
+  }
   if (chat.fullScanned) {
     return { label: "Synced", className: "bg-emerald-500/15 text-emerald-700" };
   }
   if (chat.scanEnabled) {
-    return {
-      label: "Syncing...",
-      className: "bg-amber-500/15 text-amber-700",
-    };
+    return { label: "Syncing...", className: "bg-amber-500/15 text-amber-700" };
   }
-  return {
-    label: "Not scanned",
-    className: "bg-muted text-muted-foreground",
-  };
+  return { label: "Not scanned", className: "bg-muted text-muted-foreground" };
 }
 
 function getChatDisplayName(chat: {
@@ -53,6 +112,27 @@ function getChatDisplayName(chat: {
   }
   return `Chat ${chat.chatId.slice(0, 8)}`;
 }
+
+/** Resolve the effective value for a media setting (chat → client → default true). */
+function resolveMediaSetting(
+  key: keyof MediaSettings,
+  chatSettings?: MediaSettings,
+  clientSettings?: MediaSettings
+): boolean {
+  const chatVal = chatSettings?.[key];
+  if (chatVal !== undefined) {
+    return chatVal;
+  }
+  const clientVal = clientSettings?.[key];
+  if (clientVal !== undefined) {
+    return clientVal;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
 
 function EditableName({
   chatId,
@@ -67,10 +147,7 @@ function EditableName({
 
   const handleSave = (): void => {
     const trimmed = value.trim();
-    updatePinnedName({
-      chatId,
-      pinnedName: trimmed || undefined,
-    });
+    updatePinnedName({ chatId, pinnedName: trimmed || undefined });
     setEditing(false);
   };
 
@@ -137,6 +214,234 @@ function EditableName({
   );
 }
 
+function ProgressBar({
+  label,
+  percent,
+}: {
+  label: string;
+  percent: number;
+}): React.ReactNode {
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-muted-foreground">{label}</span>
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {percent}%
+        </span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-500"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
+  const mediaCounts = useQuery(
+    api.media.countByStatusForChat,
+    chat.scanEnabled ? { chatId: chat.chatId } : "skip"
+  );
+
+  if (!chat.scanEnabled) {
+    return null;
+  }
+
+  const msgTotal = chat.totalMessages ?? 0;
+  const msgSynced = chat.syncedMessages ?? 0;
+  const msgPercent =
+    msgTotal > 0 ? Math.min(100, Math.round((msgSynced / msgTotal) * 100)) : 0;
+
+  const mediaTotal = mediaCounts ? mediaCounts.total - mediaCounts.skipped : 0;
+  const mediaStored = mediaCounts?.stored ?? 0;
+  const mediaPercent =
+    mediaTotal > 0
+      ? Math.min(100, Math.round((mediaStored / mediaTotal) * 100))
+      : 0;
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      {chat.scanPhase === "scanning_messages" && msgTotal > 0 && (
+        <ProgressBar
+          label={`${msgSynced} / ${msgTotal} messages`}
+          percent={msgPercent}
+        />
+      )}
+      {mediaCounts && mediaTotal > 0 && mediaPercent < 100 && (
+        <ProgressBar
+          label={`${mediaStored} / ${mediaTotal} media`}
+          percent={mediaPercent}
+        />
+      )}
+      {chat.scanPhase === "listening" && (
+        <div className="flex items-center gap-1.5">
+          <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          <span className="text-[11px] text-muted-foreground">
+            Listening for updates
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MediaSettingsPanel({
+  chat,
+  clientSettings,
+}: {
+  chat: ChatDoc;
+  clientSettings?: MediaSettings;
+}): React.ReactNode {
+  const updateMediaSettings = useMutation(api.chats.updateMediaSettings);
+
+  const handleToggle = (key: keyof MediaSettings, checked: boolean): void => {
+    const current = chat.mediaSettings ?? {};
+    updateMediaSettings({
+      chatId: chat.chatId,
+      mediaSettings: { ...current, [key]: checked },
+    });
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-2 pb-1">
+      {MEDIA_SETTINGS_ITEMS.map(({ key, label }) => {
+        const effective = resolveMediaSetting(
+          key,
+          chat.mediaSettings,
+          clientSettings
+        );
+        const isInherited = chat.mediaSettings?.[key] === undefined;
+        return (
+          <div className="flex items-center justify-between gap-2" key={key}>
+            <span
+              className={cn(
+                "text-[12px]",
+                isInherited ? "text-muted-foreground/70" : "text-foreground"
+              )}
+            >
+              {label}
+              {isInherited && (
+                <span className="ml-1 text-[10px] text-muted-foreground/50">
+                  (default)
+                </span>
+              )}
+            </span>
+            <Switch
+              aria-label={`Download ${label}`}
+              checked={effective}
+              className="scale-75"
+              onCheckedChange={(checked) => handleToggle(key, checked)}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChatRow({
+  chat,
+  clientSettings,
+}: {
+  chat: ChatDoc;
+  clientSettings?: MediaSettings;
+}): React.ReactNode {
+  const updateScanEnabled = useMutation(api.chats.updateScanEnabled);
+  const rescan = useMutation(api.chats.rescan);
+  const [expanded, setExpanded] = useState(false);
+  const scanStatus = getScanStatus(chat);
+  const displayName = getChatDisplayName(chat);
+
+  return (
+    <div className="px-6 py-3">
+      <div className="flex items-center gap-3">
+        <div
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+            "bg-muted text-muted-foreground"
+          )}
+        >
+          {chat.chatType === "Group" ? (
+            <Users className="h-4 w-4" />
+          ) : (
+            <MessageSquare className="h-4 w-4" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <EditableName chatId={chat.chatId} currentName={displayName} />
+            {chat.isPinned && (
+              <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-2">
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs",
+                scanStatus.className
+              )}
+            >
+              {scanStatus.label}
+            </span>
+            {chat.scanEnabled && chat.fullScanned && (
+              <button
+                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => rescan({ chatId: chat.chatId })}
+                title="Re-scan all messages"
+                type="button"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Rescan
+              </button>
+            )}
+          </div>
+          <ChatProgressBars chat={chat} />
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {chat.scanEnabled && (
+            <button
+              aria-label="Toggle media settings"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() => setExpanded(!expanded)}
+              type="button"
+            >
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+          )}
+          <Switch
+            aria-label={`Toggle scanning for ${displayName}`}
+            checked={chat.scanEnabled ?? false}
+            onCheckedChange={(checked) =>
+              updateScanEnabled({ chatId: chat.chatId, scanEnabled: checked })
+            }
+          />
+        </div>
+      </div>
+
+      {expanded && chat.scanEnabled && (
+        <div className="mt-2 ml-12 rounded-lg border border-border/50 px-4 py-2">
+          <p className="mb-1 font-medium text-[12px] text-muted-foreground">
+            Auto-download media types
+          </p>
+          <MediaSettingsPanel chat={chat} clientSettings={clientSettings} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function ClientSettings({
   clientId,
 }: {
@@ -146,7 +451,6 @@ export function ClientSettings({
     | ChatDoc[]
     | undefined;
   const clients = useQuery(api.clients.list);
-  const updateScanEnabled = useMutation(api.chats.updateScanEnabled);
   const navigate = useNavigate();
 
   if (chats === undefined || clients === undefined) {
@@ -157,7 +461,9 @@ export function ClientSettings({
     );
   }
 
-  const client = clients.find((c: { _id: string }) => c._id === clientId);
+  const client = clients.find((c: { _id: string }) => c._id === clientId) as
+    | ClientDoc
+    | undefined;
 
   if (!client) {
     return (
@@ -216,63 +522,13 @@ export function ClientSettings({
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">
-              {sortedChats.map((chat) => {
-                const scanStatus = getScanStatus(chat);
-                const displayName = getChatDisplayName(chat);
-
-                return (
-                  <div
-                    className="flex items-center gap-3 px-6 py-3"
-                    key={chat._id}
-                  >
-                    <div
-                      className={cn(
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
-                        "bg-muted text-muted-foreground"
-                      )}
-                    >
-                      {chat.chatType === "Group" ? (
-                        <Users className="h-4 w-4" />
-                      ) : (
-                        <MessageSquare className="h-4 w-4" />
-                      )}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <EditableName
-                          chatId={chat.chatId}
-                          currentName={displayName}
-                        />
-                        {chat.isPinned && (
-                          <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        )}
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-xs",
-                            scanStatus.className
-                          )}
-                        >
-                          {scanStatus.label}
-                        </span>
-                      </div>
-                    </div>
-
-                    <Switch
-                      aria-label={`Toggle scanning for ${displayName}`}
-                      checked={chat.scanEnabled ?? false}
-                      onCheckedChange={(checked) =>
-                        updateScanEnabled({
-                          chatId: chat.chatId,
-                          scanEnabled: checked,
-                        })
-                      }
-                    />
-                  </div>
-                );
-              })}
+              {sortedChats.map((chat) => (
+                <ChatRow
+                  chat={chat}
+                  clientSettings={client.mediaSettings}
+                  key={chat._id}
+                />
+              ))}
             </div>
           </CardContent>
         </Card>

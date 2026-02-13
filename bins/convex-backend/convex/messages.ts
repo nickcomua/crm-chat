@@ -12,6 +12,31 @@ import { mediaKind } from "./schema";
 
 const MAX_CHAT_IDS = 100;
 
+type MediaSettingsKey =
+	| "savePhotos"
+	| "saveVideos"
+	| "saveAudio"
+	| "saveVoice"
+	| "saveStickers"
+	| "saveDocuments"
+	| "saveAnimations"
+	| "saveVideoNotes";
+
+const MEDIA_KIND_TO_SETTING: Record<string, MediaSettingsKey> = {
+	Photo: "savePhotos",
+	Video: "saveVideos",
+	VideoNote: "saveVideoNotes",
+	Audio: "saveAudio",
+	Voice: "saveVoice",
+	Sticker: "saveStickers",
+	Animation: "saveAnimations",
+	Document: "saveDocuments",
+};
+
+function mediaKindToSettingKey(kind: string): MediaSettingsKey | undefined {
+	return MEDIA_KIND_TO_SETTING[kind];
+}
+
 /** Get the last message for each of the given chats (for chat-list previews). */
 export const getLastPerChat = query({
 	args: { chatIds: v.array(v.string()) },
@@ -118,7 +143,8 @@ export const upsert = mutation({
 			await ctx.db.insert("messages", args);
 		}
 
-		// Auto-create pending media record if this message has media
+		// Auto-create media record if this message has media.
+		// Respects per-chat media settings (falling back to client-level settings).
 		const { mediaId: mid, mediaKind: mk } = args;
 		if (mid && mk) {
 			const existingMedia = await ctx.db
@@ -127,13 +153,31 @@ export const upsert = mutation({
 				.unique();
 
 			if (!existingMedia) {
+				const chat = await ctx.db
+					.query("chats")
+					.withIndex("by_chatId", (q) => q.eq("chatId", args.chatId))
+					.unique();
+				const client = await ctx.db.get(args.clientId);
+
+				const settingKey = mediaKindToSettingKey(mk);
+				let shouldSave = true;
+				if (settingKey) {
+					const chatVal = chat?.mediaSettings?.[settingKey];
+					const clientVal = client?.mediaSettings?.[settingKey];
+					if (chatVal !== undefined) {
+						shouldSave = chatVal;
+					} else if (clientVal !== undefined) {
+						shouldSave = clientVal;
+					}
+				}
+
 				await ctx.db.insert("media", {
 					externalId: mid,
 					userId: args.userId,
 					clientId: args.clientId,
 					chatId: args.chatId,
 					messageId: args.messageId,
-					status: "pending" as const,
+					status: shouldSave ? ("pending" as const) : ("skipped" as const),
 					kind: mk,
 				});
 			}
