@@ -1,3 +1,4 @@
+import { useMutation } from "convex/react";
 import {
   Download,
   File,
@@ -8,22 +9,15 @@ import {
   Video,
 } from "lucide-react";
 import { useState } from "react";
+import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
+import { type MediaKind, mediaKindLabel } from "./media-types";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
-
-export type MediaKind =
-  | "Photo"
-  | "Video"
-  | "VideoNote"
-  | "Audio"
-  | "Voice"
-  | "Sticker"
-  | "Animation"
-  | "Document";
 
 type MediaStatus = "pending" | "downloading" | "stored" | "failed" | "skipped";
 
 export interface MediaInfo {
+  externalId: string;
   messageId: string;
   kind: MediaKind;
   status: MediaStatus;
@@ -99,7 +93,6 @@ function PendingMedia({
   kind: MediaKind;
   isOutgoing: boolean;
 }): React.ReactNode {
-  const Icon = getKindIcon(kind);
   return (
     <div className="flex items-center gap-2 py-1">
       <Loader2
@@ -108,11 +101,12 @@ function PendingMedia({
           isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
         )}
       />
-      <Icon
+      <KindIcon
         className={cn(
           "h-4 w-4",
           isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
         )}
+        kind={kind}
       />
       <span
         className={cn(
@@ -133,7 +127,6 @@ function DownloadingMedia({
   media: MediaInfo;
   isOutgoing: boolean;
 }): React.ReactNode {
-  const Icon = getKindIcon(media.kind);
   const downloaded = media.bytesDownloaded ?? 0;
   const total = media.fileSize;
   const percentage =
@@ -149,11 +142,12 @@ function DownloadingMedia({
           isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
         )}
       />
-      <Icon
+      <KindIcon
         className={cn(
           "h-4 w-4",
           isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
         )}
+        kind={media.kind}
       />
       <div className="flex min-w-20 flex-1 flex-col gap-1">
         <div
@@ -204,14 +198,14 @@ function FailedMedia({
   kind: MediaKind;
   isOutgoing: boolean;
 }): React.ReactNode {
-  const Icon = getKindIcon(kind);
   return (
     <div className="flex items-center gap-2 py-1">
-      <Icon
+      <KindIcon
         className={cn(
           "h-4 w-4",
           isOutgoing ? "text-primary-foreground/40" : "text-muted-foreground/40"
         )}
+        kind={kind}
       />
       <span
         className={cn(
@@ -225,45 +219,71 @@ function FailedMedia({
   );
 }
 
-function getKindIcon(
-  kind: MediaKind
-): React.ComponentType<{ className?: string }> {
-  switch (kind) {
-    case "Photo":
-      return ImageIcon;
-    case "Video":
-    case "VideoNote":
-    case "Animation":
-      return Video;
-    case "Audio":
-    case "Voice":
-      return Music;
-    case "Sticker":
-      return Sticker;
-    default:
-      return File;
-  }
+function SkippedMedia({
+  media,
+  isOutgoing,
+}: {
+  media: MediaInfo;
+  isOutgoing: boolean;
+}): React.ReactNode {
+  const requestDownload = useMutation(api.media.requestDownload);
+  return (
+    <button
+      className={cn(
+        "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+        isOutgoing
+          ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
+          : "bg-muted/60 hover:bg-muted"
+      )}
+      onClick={() => requestDownload({ externalId: media.externalId })}
+      type="button"
+    >
+      <Download
+        className={cn(
+          "h-4 w-4 shrink-0",
+          isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
+        )}
+      />
+      <KindIcon
+        className={cn(
+          "h-4 w-4",
+          isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
+        )}
+        kind={media.kind}
+      />
+      <span
+        className={cn(
+          "text-[12px]",
+          isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
+        )}
+      >
+        Download {mediaKindLabel(media.kind).toLowerCase()}
+      </span>
+    </button>
+  );
 }
 
-/** Label shown in chat list preview for a media-only message. */
-export function mediaKindLabel(kind: MediaKind): string {
+function KindIcon({
+  kind,
+  className,
+}: {
+  kind: MediaKind;
+  className?: string;
+}): React.ReactNode {
   switch (kind) {
     case "Photo":
-      return "Photo";
+      return <ImageIcon className={className} />;
     case "Video":
-      return "Video";
     case "VideoNote":
-      return "Video message";
-    case "Audio":
-      return "Audio";
-    case "Voice":
-      return "Voice message";
-    case "Sticker":
-      return "Sticker";
     case "Animation":
-      return "GIF";
+      return <Video className={className} />;
+    case "Audio":
+    case "Voice":
+      return <Music className={className} />;
+    case "Sticker":
+      return <Sticker className={className} />;
     default:
-      return "Document";
+      return <File className={className} />;
   }
 }
 
@@ -493,7 +513,11 @@ export function MediaRenderer({
     return <PendingMedia isOutgoing={isOutgoing} kind={media.kind} />;
   }
 
-  if (media.status === "failed" || media.status === "skipped" || !media.url) {
+  if (media.status === "skipped") {
+    return <SkippedMedia isOutgoing={isOutgoing} media={media} />;
+  }
+
+  if (media.status === "failed" || !media.url) {
     return <FailedMedia isOutgoing={isOutgoing} kind={media.kind} />;
   }
 

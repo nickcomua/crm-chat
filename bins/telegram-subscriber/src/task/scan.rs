@@ -11,10 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use convex_backend::{
-    ChatsListForRobotArgs, ChatsMarkFullScannedArgs, ChatsUpsertArgs, ChatsUpsertChatType,
-    MediaListPendingForClientArgs, MediaListPendingForClientReturnKind, MediaMarkFailedArgs,
-    MediaStartDownloadArgs, MediaStoreMediaArgs, MediaUpdateProgressArgs, MessagesMarkDeletedArgs,
-    MessagesUpsertArgs,
+    ChatsListForRobotArgs, ChatsMarkFullScannedArgs, ChatsUpdatePhotoArgs,
+    ChatsUpdateSyncProgressArgs, ChatsUpdateSyncProgressScanPhase, ChatsUpsertArgs,
+    ChatsUpsertChatType, MediaListPendingForClientArgs, MediaListPendingForClientReturnKind,
+    MediaMarkFailedArgs, MediaStartDownloadArgs, MediaStoreMediaArgs, MediaUpdateProgressArgs,
+    MessagesMarkDeletedArgs, MessagesUpsertArgs,
 };
 use futures::StreamExt;
 use messanger_interface::media::MediaSummary;
@@ -82,6 +83,12 @@ pub async fn scan_client(
     }
     sync_dialogs(ctx, client, &tg_client).await?;
 
+    // Phase 1b: Sync profile photos
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    sync_profile_photos(ctx, client, &tg_client).await?;
+
     // Phase 2: Full message scan for scan-enabled chats
     if cancel.is_cancelled() {
         return Ok(());
@@ -92,9 +99,17 @@ pub async fn scan_client(
     if cancel.is_cancelled() {
         return Ok(());
     }
+    // Set scan phase to downloading_media on all scan-enabled chats
+    set_scan_phase_for_client(
+        ctx,
+        client,
+        ChatsUpdateSyncProgressScanPhase::DownloadingMedia,
+    )
+    .await;
     download_pending_media(ctx, client, &tg_client).await?;
 
     // Phase 4: Listen for real-time updates (runs until cancelled)
+    set_scan_phase_for_client(ctx, client, ChatsUpdateSyncProgressScanPhase::Listening).await;
     listen_updates(ctx, client, &tg_client, cancel).await?;
 
     Ok(())
@@ -158,6 +173,155 @@ async fn sync_dialogs(
     Ok(())
 }
 
+/// Download and upload profile photos for chats whose photo has changed or is missing.
+///
+/// Uses Telegram's `photo_id` for change detection — only re-downloads when
+/// the ID differs from what Convex already has.
+#[instrument(skip(ctx, tg_client), fields(client_id = %client.id))]
+async fn sync_profile_photos(
+    ctx: &TaskExecutionContext,
+    client: &Client,
+    tg_client: &TelegramClient,
+) -> Result<(), TaskError> {
+    let chats = ctx
+        .client
+        .clone()
+        .query_chats_list_for_robot(ChatsListForRobotArgs {
+            clientId: client.id.clone(),
+        })
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to query chats: {e}")))?;
+
+    if chats.is_empty() {
+        return Ok(());
+    }
+
+    info!(total = chats.len(), "Checking profile photos");
+
+    let mut synced = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+
+    for chat in &chats {
+        let chat_external_id = chat
+            .chat_id
+            .strip_prefix(&format!("{}:", client.id))
+            .unwrap_or(&chat.chat_id);
+
+        // Step 1: Get the current Telegram photo_id
+        let tg_photo_id = match tg_client.get_chat_photo_id(chat_external_id).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                skipped += 1;
+                continue; // No photo set on this chat
+            }
+            Err(e) => {
+                debug!(chat_id = %chat.chat_id, error = %e, "Failed to get photo ID, skipping");
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Step 2: Compare with stored photo_external_id — skip if unchanged
+        if chat
+            .photo_external_id
+            .as_deref()
+            .is_some_and(|stored| stored == tg_photo_id)
+        {
+            skipped += 1;
+            continue;
+        }
+
+        // Step 3: Download the photo bytes
+        let photo_bytes = match tg_client.download_chat_photo(chat_external_id).await {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                skipped += 1;
+                continue;
+            }
+            Err(e) => {
+                warn!(chat_id = %chat.chat_id, error = %e, "Failed to download profile photo");
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Step 4: Upload to Convex and update the chat record
+        match upload_photo_to_convex(ctx, &chat.chat_id, &tg_photo_id, &photo_bytes).await {
+            Ok(()) => {
+                synced += 1;
+                debug!(chat_id = %chat.chat_id, "Profile photo synced");
+            }
+            Err(e) => {
+                warn!(chat_id = %chat.chat_id, error = %e, "Failed to upload profile photo");
+                failed += 1;
+            }
+        }
+    }
+
+    if synced > 0 || failed > 0 {
+        info!(synced, skipped, failed, "Profile photo sync complete");
+    }
+    Ok(())
+}
+
+/// Upload photo bytes to Convex storage and update the chat record.
+async fn upload_photo_to_convex(
+    ctx: &TaskExecutionContext,
+    chat_id: &str,
+    photo_external_id: &str,
+    photo_bytes: &[u8],
+) -> Result<(), TaskError> {
+    // Get a presigned upload URL
+    let upload_url = ctx
+        .client
+        .clone()
+        .media_generate_upload_url()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to generate upload URL: {e}")))?;
+
+    // Upload the photo
+    let http_client = reqwest::Client::new();
+    let response = http_client
+        .post(&upload_url)
+        .header("Content-Type", "image/jpeg")
+        .body(photo_bytes.to_vec())
+        .send()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to upload photo: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(TaskError::MutationFailed(format!(
+            "Photo upload failed (HTTP {status}): {body}"
+        )));
+    }
+
+    let upload_result: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to parse upload response: {e}")))?;
+
+    let storage_id = upload_result["storageId"].as_str().ok_or_else(|| {
+        TaskError::MutationFailed("Missing storageId in upload response".to_string())
+    })?;
+
+    // Update the chat record
+    check_result(
+        ctx.client
+            .clone()
+            .chats_update_photo(ChatsUpdatePhotoArgs {
+                chatId: chat_id.to_string(),
+                storageId: storage_id.to_string(),
+                photoExternalId: photo_external_id.to_string(),
+            })
+            .await,
+    )?;
+
+    Ok(())
+}
+
 /// Full message scan for scan-enabled chats that haven't been fully scanned yet.
 #[instrument(skip(ctx, tg_client), fields(client_id = %client.id))]
 async fn full_scan_messages(
@@ -196,6 +360,23 @@ async fn full_scan_messages(
             .unwrap_or(&chat.chat_id);
 
         info!(chat_id = %chat.chat_id, chat_external_id, "Scanning messages");
+
+        // Get total message count and report scan start
+        let total_messages = tg_client
+            .get_messages_count(&chat_external_id.to_string())
+            .await
+            .unwrap_or(0);
+
+        let _ = ctx
+            .client
+            .clone()
+            .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                chatId: chat.chat_id.clone(),
+                totalMessages: Some(total_messages as f64),
+                syncedMessages: Some(0.0),
+                scanPhase: Some(ChatsUpdateSyncProgressScanPhase::ScanningMessages),
+            })
+            .await;
 
         let mut msg_stream = match tg_client.iter_messages(&chat_external_id.to_string()).await {
             Ok(s) => s,
@@ -238,12 +419,29 @@ async fn full_scan_messages(
                         deleted: false,
                         ts,
                         mediaId: msg.media_external_id,
-                        mediaKind: msg.media_summary.as_ref().map(|s| to_upsert_media_kind(s.kind)),
+                        mediaKind: msg
+                            .media_summary
+                            .as_ref()
+                            .map(|s| to_upsert_media_kind(s.kind)),
                     })
                     .await,
             )?;
 
             msg_count += 1;
+
+            // Report progress every 100 messages
+            if msg_count.is_multiple_of(100) {
+                let _ = ctx
+                    .client
+                    .clone()
+                    .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                        chatId: chat.chat_id.clone(),
+                        totalMessages: None,
+                        syncedMessages: Some(msg_count as f64),
+                        scanPhase: None,
+                    })
+                    .await;
+            }
         }
 
         // Update lastMessageTs on the chat
@@ -264,7 +462,7 @@ async fn full_scan_messages(
             )?;
         }
 
-        // Mark as fully scanned
+        // Mark as fully scanned and finalize progress
         check_result(
             ctx.client
                 .clone()
@@ -273,6 +471,17 @@ async fn full_scan_messages(
                 })
                 .await,
         )?;
+
+        let _ = ctx
+            .client
+            .clone()
+            .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                chatId: chat.chat_id.clone(),
+                totalMessages: None,
+                syncedMessages: Some(msg_count as f64),
+                scanPhase: None,
+            })
+            .await;
 
         info!(chat_id = %chat.chat_id, msg_count, "Chat fully scanned");
     }
@@ -321,7 +530,7 @@ async fn listen_updates(
                 return Ok(());
             }
 
-            // Periodically refresh the set of scan-enabled chats
+            // Periodically refresh scan-enabled chats and drain pending media
             _ = refresh_interval.tick() => {
                 // Skip if a backfill is already running
                 if backfill_handle.as_ref().is_some_and(|h| !h.is_finished()) {
@@ -329,28 +538,36 @@ async fn listen_updates(
                     continue;
                 }
 
-                match load_scan_enabled_chats(ctx, client).await {
+                let chats_changed = match load_scan_enabled_chats(ctx, client).await {
                     Ok(new_set) => {
-                        if new_set != scan_enabled_chats {
+                        let changed = new_set != scan_enabled_chats;
+                        if changed {
                             info!(count = new_set.len(), "Refreshed scan-enabled chats");
                             scan_enabled_chats = new_set;
-
-                            // Spawn backfill as a separate task to avoid blocking updates
-                            let bf_ctx = ctx.clone();
-                            let bf_client = client.clone();
-                            let bf_tg = tg_client.clone();
-                            backfill_handle = Some(tokio::spawn(async move {
-                                if let Err(e) = full_scan_messages(&bf_ctx, &bf_client, &bf_tg).await {
-                                    warn!(error = %e, "Failed to backfill newly-enabled chats");
-                                }
-                                if let Err(e) = download_pending_media(&bf_ctx, &bf_client, &bf_tg).await {
-                                    warn!(error = %e, "Failed to download pending media after backfill");
-                                }
-                            }));
                         }
+                        changed
                     }
-                    Err(e) => warn!(error = %e, "Failed to refresh scan-enabled chats"),
-                }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to refresh scan-enabled chats");
+                        false
+                    }
+                };
+
+                // Always spawn a background task to drain pending media.
+                // If chats changed, also run full_scan_messages first.
+                let bf_ctx = ctx.clone();
+                let bf_client = client.clone();
+                let bf_tg = tg_client.clone();
+                backfill_handle = Some(tokio::spawn(async move {
+                    if chats_changed
+                        && let Err(e) = full_scan_messages(&bf_ctx, &bf_client, &bf_tg).await
+                    {
+                        warn!(error = %e, "Failed to backfill newly-enabled chats");
+                    }
+                    if let Err(e) = download_pending_media(&bf_ctx, &bf_client, &bf_tg).await {
+                        warn!(error = %e, "Failed to download pending media");
+                    }
+                }));
             }
 
             update = update_stream.next() => {
@@ -433,7 +650,10 @@ async fn process_update(
                         deleted: false,
                         ts,
                         mediaId: msg.media_external_id.clone(),
-                        mediaKind: msg.media_summary.as_ref().map(|s| to_upsert_media_kind(s.kind)),
+                        mediaKind: msg
+                            .media_summary
+                            .as_ref()
+                            .map(|s| to_upsert_media_kind(s.kind)),
                     })
                     .await,
             )?;
@@ -507,73 +727,103 @@ async fn process_update(
 // ============================================================================
 
 /// Download all pending media for a client from Telegram and upload to Convex storage.
+///
+/// Loops until the pending queue is fully drained (the Convex query returns
+/// batches of up to 200).  Up to `DOWNLOAD_CONCURRENCY` files are downloaded
+/// in parallel per batch (default 3).
+/// Grammers handles Telegram flood-wait errors automatically with backoff.
 #[instrument(skip(ctx, tg_client), fields(client_id = %client.id))]
 async fn download_pending_media(
     ctx: &TaskExecutionContext,
     client: &Client,
     tg_client: &Arc<TelegramClient>,
 ) -> Result<(), TaskError> {
-    let pending = ctx
-        .client
-        .clone()
-        .query_media_list_pending_for_client(MediaListPendingForClientArgs {
-            clientId: client.id.clone(),
-        })
-        .await
-        .map_err(|e| TaskError::MutationFailed(format!("Failed to query pending media: {e}")))?;
+    let concurrency: usize = std::env::var("DOWNLOAD_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
 
-    if pending.is_empty() {
-        info!("No pending media to download");
-        return Ok(());
-    }
+    let mut total_success = 0usize;
+    let mut total_failed = 0usize;
 
-    info!(count = pending.len(), "Downloading pending media");
+    loop {
+        let pending = ctx
+            .client
+            .clone()
+            .query_media_list_pending_for_client(MediaListPendingForClientArgs {
+                clientId: client.id.clone(),
+            })
+            .await
+            .map_err(|e| {
+                TaskError::MutationFailed(format!("Failed to query pending media: {e}"))
+            })?;
 
-    let mut success = 0u32;
-    let mut failed = 0u32;
-
-    for record in &pending {
-        // Parse externalId format: "media:{chat_id}:{msg_id}"
-        let (chat_ext_id, msg_id) = match parse_media_external_id(&record.external_id) {
-            Some(parsed) => parsed,
-            None => {
-                warn!(external_id = %record.external_id, "Invalid media external ID format");
-                mark_media_failed(ctx, &record.external_id, "Invalid external ID format").await;
-                failed += 1;
-                continue;
-            }
-        };
-
-        // Download from Telegram and upload to Convex
-        let content_type = default_mime_for_pending_kind(&record.kind);
-        match download_and_upload(
-            ctx,
-            tg_client,
-            &chat_ext_id,
-            msg_id,
-            &record.external_id,
-            content_type,
-            None, // mime_type — will be inferred from content_type
-            None, // file_name
-            None, // width
-            None, // height
-            None, // duration
-        )
-        .await
-        {
-            Ok(()) => success += 1,
-            Err(e) => {
-                warn!(external_id = %record.external_id, error = %e, "Failed to upload media");
-                mark_media_failed(ctx, &record.external_id, &e.to_string()).await;
-                failed += 1;
-            }
+        if pending.is_empty() {
+            break;
         }
 
-        // Rate-limit to avoid hitting Telegram download limits
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        info!(
+            count = pending.len(),
+            concurrency, "Downloading pending media batch"
+        );
+
+        let results: Vec<bool> = futures::stream::iter(pending.into_iter().map(|record| {
+            let ctx = ctx.clone();
+            let tg_client = tg_client.clone();
+            async move {
+                let (chat_ext_id, msg_id) = match parse_media_external_id(&record.external_id) {
+                    Some(parsed) => parsed,
+                    None => {
+                        warn!(external_id = %record.external_id, "Invalid media external ID format");
+                        mark_media_failed(&ctx, &record.external_id, "Invalid external ID format")
+                            .await;
+                        return false;
+                    }
+                };
+
+                let content_type = default_mime_for_pending_kind(&record.kind);
+                match download_and_upload(
+                    &ctx,
+                    &tg_client,
+                    &chat_ext_id,
+                    msg_id,
+                    &record.external_id,
+                    content_type,
+                    None, // mime_type
+                    None, // file_name
+                    None, // width
+                    None, // height
+                    None, // duration
+                    record.file_size.map(|s| s as usize),
+                )
+                .await
+                {
+                    Ok(()) => true,
+                    Err(e) => {
+                        warn!(external_id = %record.external_id, error = %e, "Failed to upload media");
+                        mark_media_failed(&ctx, &record.external_id, &e.to_string()).await;
+                        false
+                    }
+                }
+            }
+        }))
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+        let success = results.iter().filter(|&&ok| ok).count();
+        let failed = results.len() - success;
+        total_success += success;
+        total_failed += failed;
+
+        info!(success, failed, "Batch complete");
     }
 
-    info!(success, failed, "Pending media download complete");
+    if total_success > 0 || total_failed > 0 {
+        info!(total_success, total_failed, "All pending media processed");
+    } else {
+        info!("No pending media to download");
+    }
     Ok(())
 }
 
@@ -607,16 +857,17 @@ async fn download_and_upload_media(
         summary.width.map(|w| w as f64),
         summary.height.map(|h| h as f64),
         summary.duration,
+        summary.file_size,
     )
     .await
 }
 
 /// Stream-download from Telegram and pipe directly to Convex storage upload.
 ///
-/// Uses an `mpsc` channel to bridge the download iterator (which holds the
-/// Telegram client lock) with reqwest's streaming body — the file never
-/// sits fully in memory.  Progress is reported to Convex every ~2s via a
-/// spawned reporter task backed by an `AtomicUsize` byte counter.
+/// `stream_message_media` returns immediately with the file size (from Telegram
+/// metadata) and a chunk receiver — the download runs in a spawned task.  The
+/// receiver is piped into reqwest's streaming body so the file never sits fully
+/// in memory.  Progress is reported to Convex every ~2 s.
 #[allow(clippy::too_many_arguments)]
 async fn download_and_upload(
     ctx: &TaskExecutionContext,
@@ -630,6 +881,7 @@ async fn download_and_upload(
     width: Option<f64>,
     height: Option<f64>,
     duration: Option<f64>,
+    known_file_size: Option<usize>,
 ) -> Result<(), TaskError> {
     // Step 0: Transition the media record to "downloading" status
     let _ = ctx
@@ -640,7 +892,7 @@ async fn download_and_upload(
         })
         .await;
 
-    // Step 1: Get a presigned upload URL from Convex (before locking Telegram client)
+    // Step 1: Get a presigned upload URL from Convex (before touching Telegram)
     let upload_url = ctx
         .client
         .clone()
@@ -648,49 +900,53 @@ async fn download_and_upload(
         .await
         .map_err(|e| TaskError::MutationFailed(format!("Failed to generate upload URL: {e}")))?;
 
-    // Step 2: Set up a channel to stream download chunks into the upload body,
-    // with an atomic byte counter for progress tracking
-    let bytes_counter = Arc::new(AtomicUsize::new(0));
-    let (chunk_tx, chunk_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
+    // Step 2: Start the streaming download — returns immediately with metadata
+    // and a chunk receiver. The download runs in a spawned task.
+    let media_stream = tg_client
+        .stream_message_media(chat_external_id, msg_id)
+        .await
+        .map_err(|e| TaskError::MutationFailed(format!("Failed to download from Telegram: {e}")))?
+        .ok_or_else(|| TaskError::MutationFailed("No media in Telegram message".to_string()))?;
 
+    // Use the authoritative file size from Telegram metadata, falling back to
+    // the known_file_size from the media summary / pending record.
+    let file_size = media_stream.file_size.or(known_file_size);
+
+    // Step 2b: Wrap the chunk receiver into a streaming body with a byte counter
+    let bytes_counter = Arc::new(AtomicUsize::new(0));
     let counter_for_stream = bytes_counter.clone();
-    let stream = tokio_stream::wrappers::ReceiverStream::new(chunk_rx).map(move |chunk| {
-        if let Ok(ref data) = chunk {
-            counter_for_stream.fetch_add(data.len(), Ordering::Relaxed);
-        }
-        chunk
-    });
+    let stream =
+        tokio_stream::wrappers::ReceiverStream::new(media_stream.chunks).map(move |chunk| {
+            if let Ok(ref data) = chunk {
+                counter_for_stream.fetch_add(data.len(), Ordering::Relaxed);
+            }
+            chunk
+        });
     let body = reqwest::Body::wrap_stream(stream);
 
-    // Step 2b: Spawn a progress reporter that reads the counter every ~2s
+    // Step 2c: Spawn a progress reporter that reads the byte counter every ~2 s
     let progress_ctx = ctx.clone();
     let progress_ext_id = external_id.to_string();
-    let progress_counter = bytes_counter.clone();
+    let progress_bytes = bytes_counter.clone();
     let progress_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
         interval.tick().await; // consume immediate first tick
         loop {
             interval.tick().await;
-            let current = progress_counter.load(Ordering::Relaxed);
+            let current = progress_bytes.load(Ordering::Relaxed);
             let _ = progress_ctx
                 .client
                 .clone()
                 .media_update_progress(MediaUpdateProgressArgs {
                     externalId: progress_ext_id.clone(),
                     bytesDownloaded: current as f64,
+                    fileSize: file_size.map(|s| s as f64),
                 })
                 .await;
         }
     });
 
-    // Step 3: Spawn the download task (holds Telegram client lock while streaming)
-    let tg = tg_client.clone();
-    let chat_ext = chat_external_id.to_string();
-    let download_handle = tokio::spawn(async move {
-        tg.stream_message_media(&chat_ext, msg_id, chunk_tx).await
-    });
-
-    // Step 4: Upload the streaming body to Convex storage with correct Content-Type
+    // Step 3: Upload the streaming body to Convex storage with correct Content-Type
     let http_client = reqwest::Client::new();
     let response = http_client
         .post(&upload_url)
@@ -703,8 +959,9 @@ async fn download_and_upload(
             TaskError::MutationFailed(format!("Failed to upload to Convex storage: {e}"))
         })?;
 
-    // Step 5: Wait for the download task to finish and get the total size
-    let total_bytes = download_handle
+    // Step 4: Wait for the download task to finish
+    let total_bytes = media_stream
+        .download_handle
         .await
         .map_err(|e| {
             progress_handle.abort();
@@ -713,10 +970,6 @@ async fn download_and_upload(
         .map_err(|e| {
             progress_handle.abort();
             TaskError::MutationFailed(format!("Failed to download from Telegram: {e}"))
-        })?
-        .ok_or_else(|| {
-            progress_handle.abort();
-            TaskError::MutationFailed("No media in Telegram message".to_string())
         })?;
 
     // Download complete — stop the progress reporter
@@ -735,11 +988,12 @@ async fn download_and_upload(
         .await
         .map_err(|e| TaskError::MutationFailed(format!("Failed to parse upload response: {e}")))?;
 
-    let storage_id = upload_result["storageId"]
-        .as_str()
-        .ok_or_else(|| TaskError::MutationFailed("Missing storageId in upload response".to_string()))?;
+    let storage_id = upload_result["storageId"].as_str().ok_or_else(|| {
+        TaskError::MutationFailed("Missing storageId in upload response".to_string())
+    })?;
 
-    // Step 6: Update the media record in Convex with the storageId + metadata
+    // Step 5: Update the media record in Convex with the storageId + metadata.
+    let final_size = file_size.unwrap_or(total_bytes);
     check_result(
         ctx.client
             .clone()
@@ -748,7 +1002,7 @@ async fn download_and_upload(
                 storageId: storage_id.to_string(),
                 mimeType: mime_type.map(String::from),
                 fileName: file_name.map(String::from),
-                fileSize: Some(total_bytes as f64),
+                fileSize: Some(final_size as f64),
                 width,
                 height,
                 duration,
@@ -756,7 +1010,14 @@ async fn download_and_upload(
             .await,
     )?;
 
-    info!(external_id, storage_id, total_bytes, content_type, "Media streamed to Convex storage");
+    info!(
+        external_id,
+        storage_id,
+        total_bytes,
+        ?file_size,
+        content_type,
+        "Media streamed to Convex storage"
+    );
     Ok(())
 }
 
@@ -817,6 +1078,41 @@ fn parse_media_external_id(external_id: &str) -> Option<(String, i32)> {
     let chat_ext_id = parts[1].to_string();
     let msg_id: i32 = parts[2].parse().ok()?;
     Some((chat_ext_id, msg_id))
+}
+
+/// Set the scan phase on all scan-enabled chats for a client.
+async fn set_scan_phase_for_client(
+    ctx: &TaskExecutionContext,
+    client: &Client,
+    phase: ChatsUpdateSyncProgressScanPhase,
+) {
+    let chats = match ctx
+        .client
+        .clone()
+        .query_chats_list_for_robot(ChatsListForRobotArgs {
+            clientId: client.id.clone(),
+        })
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "Failed to query chats for phase update");
+            return;
+        }
+    };
+
+    for chat in chats.iter().filter(|c| c.scan_enabled.unwrap_or(false)) {
+        let _ = ctx
+            .client
+            .clone()
+            .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                chatId: chat.chat_id.clone(),
+                totalMessages: None,
+                syncedMessages: None,
+                scanPhase: Some(phase),
+            })
+            .await;
+    }
 }
 
 /// Map a Telegram chat type string to a Convex ChatType enum.

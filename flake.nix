@@ -182,7 +182,8 @@
 
       in {
         checks = {
-          inherit telegram-subscriber crm-chat-web;
+          inherit telegram-subscriber;
+          # crm-chat-web build requires convex-backend generated types outside sandbox
           inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint;
           crm-chat-clippy = craneLib.cargoClippy (
             commonArgs

@@ -23,12 +23,7 @@
           src = pkgs.lib.cleanSource ./.;
 
           # Nix will tell you the correct hash to put here after the first build attempt.
-          npmDepsHash = "sha256-vJoIiN2Rm4lkDCeFVKYuIgvZ8YFpnOlowR2yUMpHBDk=";
-
-          # Avoid npm/vite trying to write to read-only paths
-          # makeCacheWritable = true;
-
-          # Vite often needs a native esbuild. This points it to the Nix version.
+          npmDepsHash = "sha256-h4gFo0Kvm2Jv4uJh+BlpPHQCil9zQqjpDRbRCn/7sds=";
 
           # We override the install phase because Vite outputs to 'dist/'
           installPhase = ''
@@ -140,19 +135,18 @@
             version = "0.0.0";
             src = pkgs.lib.cleanSource ./.;
 
-            npmDepsHash = "sha256-vJoIiN2Rm4lkDCeFVKYuIgvZ8YFpnOlowR2yUMpHBDk=";
+            npmDepsHash = "sha256-h4gFo0Kvm2Jv4uJh+BlpPHQCil9zQqjpDRbRCn/7sds=";
             makeCacheWritable = true;
 
             nativeBuildInputs = [
               pkgs.biome
             ];
 
-            # Override build phase to run lint instead.
-            # Copy to /tmp to avoid the /build/ working directory path,
-            # which matches ultracite's biome "!!**/build" ignore pattern.
-            # A symlink doesn't work because biome resolves to the real path.
+            # Run eslint + biome only (skip tsc --noEmit because generated
+            # Convex types from convex-backend/ aren't available in the sandbox).
             buildPhase = ''
-              npm run lint
+              npx eslint .
+              npx biome check
             '';
 
             # Override install phase to create empty output

@@ -1079,31 +1079,37 @@ async fn test_stream_message_media_all_kinds() {
 
         // Download each kind
         for (kind, (_ext_id, msg_id)) in &per_kind {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(32);
-
             let result = client
-                .stream_message_media(&saved_messages_chat_id, *msg_id, tx)
+                .stream_message_media(&saved_messages_chat_id, *msg_id)
                 .await;
 
             match result {
-                Ok(Some(total_bytes)) => {
-                    // Drain the channel
+                Ok(Some(mut media_stream)) => {
+                    // Drain the chunk receiver
                     let mut received = 0usize;
-                    while let Some(chunk) = rx.recv().await {
+                    while let Some(chunk) = media_stream.chunks.recv().await {
                         received += chunk.expect("chunk error").len();
                     }
+                    let bytes_downloaded = media_stream
+                        .download_handle
+                        .await
+                        .expect("download task panicked")
+                        .expect("download failed");
                     println!(
-                        "  {:?}: downloaded {} bytes (reported {})",
-                        kind, received, total_bytes
+                        "  {:?}: downloaded {} bytes (reported {}, file_size {:?})",
+                        kind, received, bytes_downloaded, media_stream.file_size
                     );
                     assert!(
-                        total_bytes > 0,
+                        bytes_downloaded > 0,
                         "Expected non-empty download for {:?}",
                         kind
                     );
                 }
                 Ok(None) => {
-                    println!("  {:?}: no media found (message may have been deleted)", kind);
+                    println!(
+                        "  {:?}: no media found (message may have been deleted)",
+                        kind
+                    );
                 }
                 Err(e) => {
                     panic!("Failed to stream {:?} media: {}", kind, e);
@@ -1124,10 +1130,7 @@ async fn test_stream_message_media_all_kinds() {
 async fn find_saved_messages(client: &TelegramClient) -> String {
     let native_client = client.get_native_client().await;
     let client_lock = native_client.lock().await;
-    let me = client_lock
-        .get_me()
-        .await
-        .expect("Failed to get user info");
+    let me = client_lock.get_me().await.expect("Failed to get user info");
     let user_id = me.raw.id().to_string();
     drop(client_lock);
 
