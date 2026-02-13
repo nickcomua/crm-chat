@@ -8,11 +8,13 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use convex_backend::{
     ChatsListForRobotArgs, ChatsMarkFullScannedArgs, ChatsUpsertArgs, ChatsUpsertChatType,
     MediaListPendingForClientArgs, MediaListPendingForClientReturnKind, MediaMarkFailedArgs,
-    MediaStoreMediaArgs, MessagesMarkDeletedArgs, MessagesUpsertArgs,
+    MediaStartDownloadArgs, MediaStoreMediaArgs, MediaUpdateProgressArgs, MessagesMarkDeletedArgs,
+    MessagesUpsertArgs,
 };
 use futures::StreamExt;
 use messanger_interface::media::MediaSummary;
@@ -439,31 +441,30 @@ async fn process_update(
             // Real-time media download: spawn as a separate task so we don't block
             // the update loop while waiting for the Telegram client Mutex (which may
             // be held by a long-running backfill scan).
-            if matches!(update, Update::NewMessage(_)) {
-                if let Some(ref summary) = msg.media_summary {
-                    if let Some(ref media_ext_id) = msg.media_external_id {
-                        let dl_ctx = ctx.clone();
-                        let dl_tg = tg_client.clone();
-                        let dl_chat_ext = msg.chat_external_id.clone();
-                        let dl_msg_ext = msg.external_id.clone();
-                        let dl_media_ext = media_ext_id.clone();
-                        let dl_summary = summary.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = download_and_upload_media(
-                                &dl_ctx,
-                                &dl_tg,
-                                &dl_chat_ext,
-                                &dl_msg_ext,
-                                &dl_media_ext,
-                                &dl_summary,
-                            )
-                            .await
-                            {
-                                warn!(media_id = %dl_media_ext, error = %e, "Failed to download media for real-time message");
-                            }
-                        });
+            if matches!(update, Update::NewMessage(_))
+                && let Some(ref summary) = msg.media_summary
+                && let Some(ref media_ext_id) = msg.media_external_id
+            {
+                let dl_ctx = ctx.clone();
+                let dl_tg = tg_client.clone();
+                let dl_chat_ext = msg.chat_external_id.clone();
+                let dl_msg_ext = msg.external_id.clone();
+                let dl_media_ext = media_ext_id.clone();
+                let dl_summary = summary.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = download_and_upload_media(
+                        &dl_ctx,
+                        &dl_tg,
+                        &dl_chat_ext,
+                        &dl_msg_ext,
+                        &dl_media_ext,
+                        &dl_summary,
+                    )
+                    .await
+                    {
+                        warn!(media_id = %dl_media_ext, error = %e, "Failed to download media for real-time message");
                     }
-                }
+                });
             }
         }
 
@@ -614,7 +615,8 @@ async fn download_and_upload_media(
 ///
 /// Uses an `mpsc` channel to bridge the download iterator (which holds the
 /// Telegram client lock) with reqwest's streaming body — the file never
-/// sits fully in memory.
+/// sits fully in memory.  Progress is reported to Convex every ~2s via a
+/// spawned reporter task backed by an `AtomicUsize` byte counter.
 #[allow(clippy::too_many_arguments)]
 async fn download_and_upload(
     ctx: &TaskExecutionContext,
@@ -629,6 +631,15 @@ async fn download_and_upload(
     height: Option<f64>,
     duration: Option<f64>,
 ) -> Result<(), TaskError> {
+    // Step 0: Transition the media record to "downloading" status
+    let _ = ctx
+        .client
+        .clone()
+        .media_start_download(MediaStartDownloadArgs {
+            externalId: external_id.to_string(),
+        })
+        .await;
+
     // Step 1: Get a presigned upload URL from Convex (before locking Telegram client)
     let upload_url = ctx
         .client
@@ -637,10 +648,40 @@ async fn download_and_upload(
         .await
         .map_err(|e| TaskError::MutationFailed(format!("Failed to generate upload URL: {e}")))?;
 
-    // Step 2: Set up a channel to stream download chunks into the upload body
+    // Step 2: Set up a channel to stream download chunks into the upload body,
+    // with an atomic byte counter for progress tracking
+    let bytes_counter = Arc::new(AtomicUsize::new(0));
     let (chunk_tx, chunk_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(4);
-    let stream = tokio_stream::wrappers::ReceiverStream::new(chunk_rx);
+
+    let counter_for_stream = bytes_counter.clone();
+    let stream = tokio_stream::wrappers::ReceiverStream::new(chunk_rx).map(move |chunk| {
+        if let Ok(ref data) = chunk {
+            counter_for_stream.fetch_add(data.len(), Ordering::Relaxed);
+        }
+        chunk
+    });
     let body = reqwest::Body::wrap_stream(stream);
+
+    // Step 2b: Spawn a progress reporter that reads the counter every ~2s
+    let progress_ctx = ctx.clone();
+    let progress_ext_id = external_id.to_string();
+    let progress_counter = bytes_counter.clone();
+    let progress_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+        interval.tick().await; // consume immediate first tick
+        loop {
+            interval.tick().await;
+            let current = progress_counter.load(Ordering::Relaxed);
+            let _ = progress_ctx
+                .client
+                .clone()
+                .media_update_progress(MediaUpdateProgressArgs {
+                    externalId: progress_ext_id.clone(),
+                    bytesDownloaded: current as f64,
+                })
+                .await;
+        }
+    });
 
     // Step 3: Spawn the download task (holds Telegram client lock while streaming)
     let tg = tg_client.clone();
@@ -657,14 +698,29 @@ async fn download_and_upload(
         .body(body)
         .send()
         .await
-        .map_err(|e| TaskError::MutationFailed(format!("Failed to upload to Convex storage: {e}")))?;
+        .map_err(|e| {
+            progress_handle.abort();
+            TaskError::MutationFailed(format!("Failed to upload to Convex storage: {e}"))
+        })?;
 
     // Step 5: Wait for the download task to finish and get the total size
     let total_bytes = download_handle
         .await
-        .map_err(|e| TaskError::MutationFailed(format!("Download task panicked: {e}")))?
-        .map_err(|e| TaskError::MutationFailed(format!("Failed to download from Telegram: {e}")))?
-        .ok_or_else(|| TaskError::MutationFailed("No media in Telegram message".to_string()))?;
+        .map_err(|e| {
+            progress_handle.abort();
+            TaskError::MutationFailed(format!("Download task panicked: {e}"))
+        })?
+        .map_err(|e| {
+            progress_handle.abort();
+            TaskError::MutationFailed(format!("Failed to download from Telegram: {e}"))
+        })?
+        .ok_or_else(|| {
+            progress_handle.abort();
+            TaskError::MutationFailed("No media in Telegram message".to_string())
+        })?;
+
+    // Download complete — stop the progress reporter
+    progress_handle.abort();
 
     if !response.status().is_success() {
         let status = response.status();

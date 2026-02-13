@@ -21,7 +21,7 @@ export type MediaKind =
   | "Animation"
   | "Document";
 
-type MediaStatus = "pending" | "stored" | "failed" | "skipped";
+type MediaStatus = "pending" | "downloading" | "stored" | "failed" | "skipped";
 
 export interface MediaInfo {
   messageId: string;
@@ -31,6 +31,7 @@ export interface MediaInfo {
   mimeType?: string;
   fileName?: string;
   fileSize?: number;
+  bytesDownloaded?: number;
   width?: number;
   height?: number;
   duration?: number;
@@ -121,6 +122,77 @@ function PendingMedia({
       >
         Loading {kind.toLowerCase()}…
       </span>
+    </div>
+  );
+}
+
+function DownloadingMedia({
+  media,
+  isOutgoing,
+}: {
+  media: MediaInfo;
+  isOutgoing: boolean;
+}): React.ReactNode {
+  const Icon = getKindIcon(media.kind);
+  const downloaded = media.bytesDownloaded ?? 0;
+  const total = media.fileSize;
+  const percentage =
+    total && total > 0
+      ? Math.min(100, Math.round((downloaded / total) * 100))
+      : undefined;
+
+  return (
+    <div className="flex items-center gap-2 py-1">
+      <Loader2
+        className={cn(
+          "h-4 w-4 animate-spin",
+          isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
+        )}
+      />
+      <Icon
+        className={cn(
+          "h-4 w-4",
+          isOutgoing ? "text-primary-foreground/60" : "text-muted-foreground/60"
+        )}
+      />
+      <div className="flex min-w-20 flex-1 flex-col gap-1">
+        <div
+          className={cn(
+            "h-1 overflow-hidden rounded-full",
+            isOutgoing ? "bg-primary-foreground/20" : "bg-muted"
+          )}
+        >
+          {percentage !== undefined ? (
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-300",
+                isOutgoing ? "bg-primary-foreground/60" : "bg-primary"
+              )}
+              style={{ width: `${percentage}%` }}
+            />
+          ) : (
+            <div
+              className={cn(
+                "h-full w-1/3 animate-pulse rounded-full",
+                isOutgoing ? "bg-primary-foreground/40" : "bg-primary/60"
+              )}
+            />
+          )}
+        </div>
+        <span
+          className={cn(
+            "text-[10px] tabular-nums",
+            isOutgoing
+              ? "text-primary-foreground/50"
+              : "text-muted-foreground/50"
+          )}
+        >
+          {percentage !== undefined
+            ? `${percentage}%`
+            : formatFileSize(downloaded)}
+          {total !== undefined && ` / ${formatFileSize(total)}`}
+        </span>
+      </div>
     </div>
   );
 }
@@ -413,6 +485,10 @@ export function MediaRenderer({
   media,
   isOutgoing,
 }: MediaRendererProps): React.ReactNode {
+  if (media.status === "downloading") {
+    return <DownloadingMedia isOutgoing={isOutgoing} media={media} />;
+  }
+
   if (media.status === "pending") {
     return <PendingMedia isOutgoing={isOutgoing} kind={media.kind} />;
   }

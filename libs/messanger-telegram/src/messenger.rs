@@ -85,7 +85,7 @@ fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSumma
                 MediaKind::Animation
             } else if doc
                 .mime_type()
-                .map_or(false, |m| m.starts_with("audio/"))
+                .is_some_and(|m| m.starts_with("audio/"))
             {
                 MediaKind::Audio
             } else {

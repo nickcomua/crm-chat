@@ -58,6 +58,7 @@ export const mediaKind = v.union(
 
 export const mediaStatus = v.union(
   v.literal("pending"),
+  v.literal("downloading"),
   v.literal("stored"),
   v.literal("failed"),
   v.literal("skipped"),
@@ -134,6 +135,7 @@ export const mediaDoc = v.object({
   mimeType: v.optional(v.string()),
   fileName: v.optional(v.string()),
   fileSize: v.optional(v.number()),
+  bytesDownloaded: v.optional(v.number()),
   width: v.optional(v.number()),
   height: v.optional(v.number()),
   duration: v.optional(v.number()),
@@ -263,6 +265,7 @@ export default defineSchema({
     mimeType: v.optional(v.string()),
     fileName: v.optional(v.string()),
     fileSize: v.optional(v.number()), // bytes
+    bytesDownloaded: v.optional(v.number()), // progress tracking
     width: v.optional(v.number()),
     height: v.optional(v.number()),
     duration: v.optional(v.number()), // seconds
@@ -271,7 +274,8 @@ export default defineSchema({
     .index("by_externalId", ["externalId"])
     .index("by_messageId", ["messageId"])
     .index("by_clientId_status", ["clientId", "status"])
-    .index("by_chatId", ["chatId"]),
+    .index("by_chatId", ["chatId"])
+    .index("by_userId_status", ["userId", "status"]),
 
   // ---- Phone Auth State Machine ----
 

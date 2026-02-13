@@ -31,7 +31,7 @@ services:
     environment:
       # - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:-http://127.0.0.1:${PORT:-3210}}
       - NEXT_PUBLIC_DEPLOYMENT_URL=https://backend.crm-chat.orb.local
-      - CONVEX_SELF_HOSTED_ADMIN_KEY=${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
+      - NEXT_PUBLIC_ADMIN_KEY=${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
     depends_on:
       backend:
         condition: service_healthy
