@@ -152,6 +152,65 @@ export const markSkipped = mutation({
   },
 });
 
+/** Transition a media record to "downloading" status. Called at download start. */
+export const startDownload = mutation({
+  args: { externalId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { externalId }) => {
+    const caller = await requireAuth(ctx);
+    if (!isRobotCaller(caller)) {
+      throw new Error("Unauthorized: only robots can start downloads");
+    }
+
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_externalId", (q) => q.eq("externalId", externalId))
+      .unique();
+
+    if (!existing) {
+      return null;
+    }
+
+    await ctx.db.patch(existing._id, {
+      status: "downloading" as const,
+      bytesDownloaded: 0,
+    });
+    return null;
+  },
+});
+
+/** Update download progress (bytes downloaded so far, and optionally total size). */
+export const updateProgress = mutation({
+  args: {
+    externalId: v.string(),
+    bytesDownloaded: v.number(),
+    fileSize: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { externalId, bytesDownloaded, fileSize }) => {
+    const caller = await requireAuth(ctx);
+    if (!isRobotCaller(caller)) {
+      throw new Error("Unauthorized: only robots can update progress");
+    }
+
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_externalId", (q) => q.eq("externalId", externalId))
+      .unique();
+
+    if (!existing || existing.status !== "downloading") {
+      return null;
+    }
+
+    const patch: Record<string, number> = { bytesDownloaded };
+    if (fileSize !== undefined && fileSize > 0) {
+      patch.fileSize = fileSize;
+    }
+    await ctx.db.patch(existing._id, patch);
+    return null;
+  },
+});
+
 /** Get media records for a batch of message IDs, including storage URLs. */
 export const getForMessages = query({
   args: { messageIds: v.array(v.string()) },
@@ -164,6 +223,7 @@ export const getForMessages = query({
       mimeType: v.optional(v.string()),
       fileName: v.optional(v.string()),
       fileSize: v.optional(v.number()),
+      bytesDownloaded: v.optional(v.number()),
       width: v.optional(v.number()),
       height: v.optional(v.number()),
       duration: v.optional(v.number()),
@@ -197,6 +257,7 @@ export const getForMessages = query({
         mimeType: media.mimeType,
         fileName: media.fileName,
         fileSize: media.fileSize,
+        bytesDownloaded: media.bytesDownloaded,
         width: media.width,
         height: media.height,
         duration: media.duration,
@@ -207,7 +268,8 @@ export const getForMessages = query({
   },
 });
 
-/** List pending media records for a client (for background download task). */
+/** List pending + downloading media records for a client (for background download task).
+ *  Includes "downloading" so interrupted downloads are retried on restart. */
 export const listPendingForClient = query({
   args: { clientId: v.id("clients") },
   returns: v.array(
@@ -224,18 +286,79 @@ export const listPendingForClient = query({
       throw new Error("Unauthorized: only robots can list pending media");
     }
 
+    // Prioritize interrupted downloads, then pending. Batch to stay under
+    // Convex's 8192 array-length return limit — the subscriber processes
+    // these sequentially, so it will fetch the next batch on the next call.
+    const downloading = await ctx.db
+      .query("media")
+      .withIndex("by_clientId_status", (q) =>
+        q.eq("clientId", clientId).eq("status", "downloading"),
+      )
+      .take(200);
+
     const pending = await ctx.db
       .query("media")
       .withIndex("by_clientId_status", (q) =>
         q.eq("clientId", clientId).eq("status", "pending"),
       )
-      .collect();
+      .take(200 - downloading.length);
 
-    return pending.map((m) => ({
+    return [...downloading, ...pending].map((m) => ({
       externalId: m.externalId,
       messageId: m.messageId,
       chatId: m.chatId,
       kind: m.kind,
     }));
+  },
+});
+
+/** List media records by status for the download manager UI. */
+export const listByStatus = query({
+  args: { statuses: v.array(mediaStatus) },
+  returns: v.array(
+    v.object({
+      externalId: v.string(),
+      kind: mediaKind,
+      status: mediaStatus,
+      bytesDownloaded: v.optional(v.number()),
+      fileSize: v.optional(v.number()),
+      fileName: v.optional(v.string()),
+      mimeType: v.optional(v.string()),
+      chatId: v.string(),
+      error: v.optional(v.string()),
+      createdAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, { statuses }) => {
+    const caller = await requireHuman(ctx);
+
+    const results = [];
+    for (const status of statuses) {
+      const limit = status === "stored" ? 20 : 100;
+      const records = await ctx.db
+        .query("media")
+        .withIndex("by_userId_status", (q) =>
+          q.eq("userId", caller.id).eq("status", status),
+        )
+        .order("desc")
+        .take(limit);
+
+      for (const m of records) {
+        results.push({
+          externalId: m.externalId,
+          kind: m.kind,
+          status: m.status,
+          bytesDownloaded: m.bytesDownloaded,
+          fileSize: m.fileSize,
+          fileName: m.fileName,
+          mimeType: m.mimeType,
+          chatId: m.chatId,
+          error: m.error,
+          createdAt: m._creationTime,
+        });
+      }
+    }
+
+    return results;
   },
 });
