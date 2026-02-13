@@ -75,6 +75,12 @@ export const mediaSettingsValidator = v.object({
   saveVideoNotes: v.optional(v.boolean()),
 });
 
+export const scanPhase = v.union(
+  v.literal("scanning_messages"),
+  v.literal("downloading_media"),
+  v.literal("listening"),
+);
+
 // =============================================================================
 // Document validators (for typed query returns)
 // =============================================================================
@@ -102,6 +108,34 @@ export const chatDoc = v.object({
   lastMessageTs: v.number(),
   scanEnabled: v.optional(v.boolean()),
   fullScanned: v.optional(v.boolean()),
+  mediaSettings: v.optional(mediaSettingsValidator),
+  totalMessages: v.optional(v.number()),
+  syncedMessages: v.optional(v.number()),
+  scanPhase: v.optional(scanPhase),
+  photoStorageId: v.optional(v.id("_storage")),
+  photoExternalId: v.optional(v.string()),
+});
+
+/** chatDoc fields + resolved photoUrl for the frontend chat list. */
+export const chatListItem = v.object({
+  _id: v.id("chats"),
+  _creationTime: v.number(),
+  chatId: v.string(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  chatType: chatType,
+  isPinned: v.boolean(),
+  pinnedName: v.optional(v.string()),
+  lastMessageTs: v.number(),
+  scanEnabled: v.optional(v.boolean()),
+  fullScanned: v.optional(v.boolean()),
+  mediaSettings: v.optional(mediaSettingsValidator),
+  totalMessages: v.optional(v.number()),
+  syncedMessages: v.optional(v.number()),
+  scanPhase: v.optional(scanPhase),
+  photoStorageId: v.optional(v.id("_storage")),
+  photoExternalId: v.optional(v.string()),
+  photoUrl: v.optional(v.string()),
 });
 
 export const messageDoc = v.object({
@@ -224,11 +258,19 @@ export default defineSchema({
     lastMessageTs: v.number(), // Unix ms
     scanEnabled: v.optional(v.boolean()), // user override for scanning (defaults to isPinned)
     fullScanned: v.optional(v.boolean()), // true after all messages synced once
+    mediaSettings: v.optional(mediaSettingsValidator), // per-chat media type download toggles
+    totalMessages: v.optional(v.number()), // total messages in chat (from Telegram API)
+    syncedMessages: v.optional(v.number()), // messages synced so far during scan
+    scanPhase: v.optional(scanPhase), // current sync lifecycle phase
+    photoStorageId: v.optional(v.id("_storage")), // profile photo in Convex storage
+    photoExternalId: v.optional(v.string()), // Telegram photo_id for change detection
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId", ["userId"])
     .index("by_clientId", ["clientId"])
-    .index("by_userId_lastMessageTs", ["userId", "lastMessageTs"]),
+    .index("by_userId_lastMessageTs", ["userId", "lastMessageTs"])
+    .index("by_userId_scanEnabled_lastMessageTs", ["userId", "scanEnabled", "lastMessageTs"])
+    .index("by_clientId_userId", ["clientId", "userId"]),
 
   // ---- Messages ----
 
@@ -266,6 +308,7 @@ export default defineSchema({
     fileName: v.optional(v.string()),
     fileSize: v.optional(v.number()), // bytes
     bytesDownloaded: v.optional(v.number()), // progress tracking
+    storedAt: v.optional(v.number()), // ms since epoch — set when download completes
     width: v.optional(v.number()),
     height: v.optional(v.number()),
     duration: v.optional(v.number()), // seconds
@@ -275,7 +318,9 @@ export default defineSchema({
     .index("by_messageId", ["messageId"])
     .index("by_clientId_status", ["clientId", "status"])
     .index("by_chatId", ["chatId"])
-    .index("by_userId_status", ["userId", "status"]),
+    .index("by_userId_status", ["userId", "status"])
+    .index("by_userId_storedAt", ["userId", "storedAt"])
+    .index("by_userId_status_storedAt", ["userId", "status", "storedAt"]),
 
   // ---- Phone Auth State Machine ----
 
@@ -298,7 +343,8 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_step", ["step"])
-    .index("by_assignedRobot", ["assignedRobot"]),
+    .index("by_assignedRobot", ["assignedRobot"])
+    .index("by_clientId", ["clientId"]),
 
   // ---- QR Auth State Machine ----
 

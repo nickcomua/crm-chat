@@ -1,5 +1,5 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { useQuery } from "convex-helpers/react/cache";
 import { MessageSquare } from "lucide-react";
 import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
@@ -8,8 +8,10 @@ import { MessageList } from "./message-list";
 
 export function ChatsPage(): React.ReactNode {
   const params = useParams({ strict: false });
+  const search = useSearch({ strict: false }) as { messageId?: string };
   const navigate = useNavigate();
   const selectedChatId = params.chatId ?? null;
+  const targetMessageId = search?.messageId;
 
   const clients = useQuery(api.clients.list);
   const chats = useQuery(api.chats.list);
@@ -52,7 +54,11 @@ export function ChatsPage(): React.ReactNode {
         )}
       >
         {selectedChatId ? (
-          <MessageList chatId={selectedChatId} onBack={handleBack} />
+          <MessageList
+            chatId={selectedChatId}
+            onBack={handleBack}
+            targetMessageId={targetMessageId}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">

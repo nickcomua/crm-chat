@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
 import { Loader2, Search, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import {

@@ -31,12 +31,12 @@ export const deleteClient = mutation({
     // Cancel any active phone auth sessions for this client
     const phoneAuths = await ctx.db
       .query("phoneAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
       .collect();
 
     const now = Date.now();
     for (const auth of phoneAuths) {
-      if (auth.clientId === clientId && !isPhoneAuthTerminal(auth.step)) {
+      if (!isPhoneAuthTerminal(auth.step)) {
         await ctx.db.patch(auth._id, {
           step: "Cancelled",
           updatedAt: now,
