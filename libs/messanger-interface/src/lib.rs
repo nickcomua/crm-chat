@@ -94,6 +94,12 @@ mod tests {
                 kind: MediaKind::Photo,
                 url: Some("https://example.com/photo.jpg".to_string()),
                 metadata: Some(serde_json::json!({"width": 1920, "height": 1080})),
+                mime_type: None,
+                file_name: None,
+                file_size: None,
+                width: Some(1920),
+                height: Some(1080),
+                duration: None,
             };
             client
                 .media
@@ -115,6 +121,7 @@ mod tests {
                 outgoing: false,
                 timestamp_ms: Some(1000),
                 media_external_id: Some(media1.external_id.clone()),
+                media_summary: Some(media1.clone()),
             };
 
             let mut messages = HashMap::new();
@@ -359,6 +366,7 @@ mod tests {
                 outgoing: false,
                 timestamp_ms: Some(1000),
                 media_external_id: None,
+                media_summary: None,
             },
             MessageSummary {
                 external_id: "msg:2".to_string(),
@@ -368,6 +376,7 @@ mod tests {
                 outgoing: true,
                 timestamp_ms: Some(2000),
                 media_external_id: None,
+                media_summary: None,
             },
         ];
 
@@ -492,6 +501,7 @@ mod tests {
             outgoing: false,
             timestamp_ms: Some(1000),
             media_external_id: None,
+            media_summary: None,
         });
 
         let json = serde_json::to_string(&update).unwrap();
@@ -531,6 +541,7 @@ mod tests {
             outgoing: false,
             timestamp_ms: Some(1000),
             media_external_id: Some("media:1".to_string()),
+            media_summary: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -546,6 +557,12 @@ mod tests {
             kind: MediaKind::Photo,
             url: Some("https://example.com/photo.jpg".to_string()),
             metadata: Some(serde_json::json!({"width": 1920, "height": 1080})),
+            mime_type: Some("image/jpeg".to_string()),
+            file_name: None,
+            file_size: Some(102400),
+            width: Some(1920),
+            height: Some(1080),
+            duration: None,
         };
 
         let json = serde_json::to_string(&media).unwrap();
@@ -559,8 +576,12 @@ mod tests {
         let kinds = vec![
             MediaKind::Photo,
             MediaKind::Video,
+            MediaKind::VideoNote,
             MediaKind::Audio,
-            MediaKind::MessageRef,
+            MediaKind::Voice,
+            MediaKind::Sticker,
+            MediaKind::Animation,
+            MediaKind::Document,
         ];
 
         for kind in kinds {

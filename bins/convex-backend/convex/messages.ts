@@ -8,8 +8,34 @@ import {
 	requireHuman,
 	requireOwner,
 } from "./helpers/auth";
+import { mediaKind } from "./schema";
 
 const MAX_CHAT_IDS = 100;
+
+type MediaSettingsKey =
+	| "savePhotos"
+	| "saveVideos"
+	| "saveAudio"
+	| "saveVoice"
+	| "saveStickers"
+	| "saveDocuments"
+	| "saveAnimations"
+	| "saveVideoNotes";
+
+const MEDIA_KIND_TO_SETTING: Record<string, MediaSettingsKey> = {
+	Photo: "savePhotos",
+	Video: "saveVideos",
+	VideoNote: "saveVideoNotes",
+	Audio: "saveAudio",
+	Voice: "saveVoice",
+	Sticker: "saveStickers",
+	Animation: "saveAnimations",
+	Document: "saveDocuments",
+};
+
+function mediaKindToSettingKey(kind: string): MediaSettingsKey | undefined {
+	return MEDIA_KIND_TO_SETTING[kind];
+}
 
 /** Get the last message for each of the given chats (for chat-list previews). */
 export const getLastPerChat = query({
@@ -19,6 +45,7 @@ export const getLastPerChat = query({
 			chatId: v.string(),
 			text: v.optional(v.string()),
 			mediaId: v.optional(v.string()),
+			mediaKind: v.optional(mediaKind),
 		}),
 	),
 	handler: async (ctx, { chatIds }) => {
@@ -42,7 +69,7 @@ export const getLastPerChat = query({
 					.order("desc")
 					.first();
 				if (!msg) return null;
-				return { chatId, text: msg.text, mediaId: msg.mediaId };
+				return { chatId, text: msg.text, mediaId: msg.mediaId, mediaKind: msg.mediaKind };
 			}),
 		);
 		return entries.filter((e): e is NonNullable<typeof e> => e !== null);
@@ -87,6 +114,7 @@ export const upsert = mutation({
 		deleted: v.boolean(),
 		ts: v.number(),
 		mediaId: v.optional(v.string()),
+		mediaKind: v.optional(mediaKind),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -109,9 +137,50 @@ export const upsert = mutation({
 				deleted: args.deleted,
 				ts: args.ts,
 				mediaId: args.mediaId,
+				mediaKind: args.mediaKind,
 			});
 		} else {
 			await ctx.db.insert("messages", args);
+		}
+
+		// Auto-create media record if this message has media.
+		// Respects per-chat media settings (falling back to client-level settings).
+		const { mediaId: mid, mediaKind: mk } = args;
+		if (mid && mk) {
+			const existingMedia = await ctx.db
+				.query("media")
+				.withIndex("by_externalId", (q) => q.eq("externalId", mid))
+				.unique();
+
+			if (!existingMedia) {
+				const chat = await ctx.db
+					.query("chats")
+					.withIndex("by_chatId", (q) => q.eq("chatId", args.chatId))
+					.unique();
+				const client = await ctx.db.get(args.clientId);
+
+				const settingKey = mediaKindToSettingKey(mk);
+				let shouldSave = true;
+				if (settingKey) {
+					const chatVal = chat?.mediaSettings?.[settingKey];
+					const clientVal = client?.mediaSettings?.[settingKey];
+					if (chatVal !== undefined) {
+						shouldSave = chatVal;
+					} else if (clientVal !== undefined) {
+						shouldSave = clientVal;
+					}
+				}
+
+				await ctx.db.insert("media", {
+					externalId: mid,
+					userId: args.userId,
+					clientId: args.clientId,
+					chatId: args.chatId,
+					messageId: args.messageId,
+					status: shouldSave ? ("pending" as const) : ("skipped" as const),
+					kind: mk,
+				});
+			}
 		}
 	},
 });
