@@ -13,6 +13,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthSettingsRouteImport } from './routes/_auth/settings'
+import { Route as AuthDownloadsRouteImport } from './routes/_auth/downloads'
 import { Route as AuthChatsRouteImport } from './routes/_auth/chats'
 import { Route as AuthClientClientIdRouteImport } from './routes/_auth/client.$clientId'
 import { Route as AuthChatsChatIdRouteImport } from './routes/_auth/chats.$chatId'
@@ -36,6 +37,11 @@ const AuthSettingsRoute = AuthSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthDownloadsRoute = AuthDownloadsRouteImport.update({
+  id: '/downloads',
+  path: '/downloads',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthChatsRoute = AuthChatsRouteImport.update({
   id: '/chats',
   path: '/chats',
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/chats': typeof AuthChatsRouteWithChildren
+  '/downloads': typeof AuthDownloadsRoute
   '/settings': typeof AuthSettingsRoute
   '/chats/$chatId': typeof AuthChatsChatIdRoute
   '/client/$clientId': typeof AuthClientClientIdRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/chats': typeof AuthChatsRouteWithChildren
+  '/downloads': typeof AuthDownloadsRoute
   '/settings': typeof AuthSettingsRoute
   '/chats/$chatId': typeof AuthChatsChatIdRoute
   '/client/$clientId': typeof AuthClientClientIdRoute
@@ -74,6 +82,7 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/_auth/chats': typeof AuthChatsRouteWithChildren
+  '/_auth/downloads': typeof AuthDownloadsRoute
   '/_auth/settings': typeof AuthSettingsRoute
   '/_auth/chats/$chatId': typeof AuthChatsChatIdRoute
   '/_auth/client/$clientId': typeof AuthClientClientIdRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/chats'
+    | '/downloads'
     | '/settings'
     | '/chats/$chatId'
     | '/client/$clientId'
@@ -92,6 +102,7 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/chats'
+    | '/downloads'
     | '/settings'
     | '/chats/$chatId'
     | '/client/$clientId'
@@ -101,6 +112,7 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/sign-in'
     | '/_auth/chats'
+    | '/_auth/downloads'
     | '/_auth/settings'
     | '/_auth/chats/$chatId'
     | '/_auth/client/$clientId'
@@ -142,6 +154,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthSettingsRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/downloads': {
+      id: '/_auth/downloads'
+      path: '/downloads'
+      fullPath: '/downloads'
+      preLoaderRoute: typeof AuthDownloadsRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/chats': {
       id: '/_auth/chats'
       path: '/chats'
@@ -180,12 +199,14 @@ const AuthChatsRouteWithChildren = AuthChatsRoute._addFileChildren(
 
 interface AuthRouteChildren {
   AuthChatsRoute: typeof AuthChatsRouteWithChildren
+  AuthDownloadsRoute: typeof AuthDownloadsRoute
   AuthSettingsRoute: typeof AuthSettingsRoute
   AuthClientClientIdRoute: typeof AuthClientClientIdRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
   AuthChatsRoute: AuthChatsRouteWithChildren,
+  AuthDownloadsRoute: AuthDownloadsRoute,
   AuthSettingsRoute: AuthSettingsRoute,
   AuthClientClientIdRoute: AuthClientClientIdRoute,
 }
