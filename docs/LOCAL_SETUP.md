@@ -9,7 +9,7 @@
 | **Clerk account** | User authentication (publishable key + secret) |
 | **Telegram API credentials** | `TG_ID` + `TG_HASH` from [my.telegram.org](https://my.telegram.org) |
 
-If you don't use Nix, you'll need: Rust (via rustup), Node.js/npm, bun, openssl-dev, sqlite-dev, pkg-config.
+If you don't use Nix, you'll need: Rust (via rustup), bun, openssl-dev, sqlite-dev, pkg-config.
 
 ---
 
@@ -93,7 +93,7 @@ Copy that key into both `.env` and `bins/convex-backend/.env.local` as `CONVEX_S
 This script:
 1. Generates an RSA 2048-bit keypair
 2. Writes `ROBOT_JWT_PRIVATE_KEY`, `ROBOT_ID`, `ROBOT_KID` to your `.env`
-3. Pushes the public JWKS to Convex via `npx convex env set`
+3. Pushes the public JWKS to Convex via `bunx convex env set`
 
 The robot auth allows the Rust worker (crm-worker) to authenticate with Convex independently of Clerk.
 
@@ -103,8 +103,8 @@ The robot auth allows the Rust worker (crm-worker) to authenticate with Convex i
 
 ```bash
 cd bins/convex-backend
-npm install
-npx convex dev    # dev mode with hot-reload
+bun install
+bunx convex dev    # dev mode with hot-reload
 ```
 
 This deploys your schema + queries + mutations to the self-hosted backend and generates typed bindings in `convex/_generated/`.
@@ -131,8 +131,8 @@ This builds all workspace members: `crm-worker`, `es-proxy`, and the messenger l
 
 ```bash
 cd bins/crm-chat-web
-npm install       # or: bun install
-npx vite dev
+bun install
+bunx vite dev
 ```
 
 The dev server starts at **http://localhost:5173**. It connects to Convex at the URL from `VITE_CONVEX_URL` (defaults to `http://127.0.0.1:3210`).
@@ -179,7 +179,7 @@ open http://localhost:5173
 
 # Run tests
 cargo test --workspace
-cd bins/crm-chat-web && npx ultracite check
+cd bins/crm-chat-web && bunx ultracite check
 ```
 
 ---
@@ -206,14 +206,14 @@ cargo fmt                                # format
 cargo nextest run                        # fast test runner
 
 # Frontend (from bins/crm-chat-web/)
-npx vite dev                             # dev server
-npx vite build                           # production build
-npx ultracite fix                        # auto-fix lint/format
-npx ultracite check                      # verify compliance
+bunx vite dev                             # dev server
+bunx vite build                           # production build
+bunx ultracite fix                        # auto-fix lint/format
+bunx ultracite check                      # verify compliance
 
 # Convex (from bins/convex-backend/)
-npx convex dev                           # dev with hot-reload
-npx convex deploy                        # deploy to self-hosted
+bunx convex dev                           # dev with hot-reload
+bunx convex deploy                        # deploy to self-hosted
 
 # Docker
 docker compose up -d                     # start all services

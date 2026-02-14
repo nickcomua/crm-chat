@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import { AlertCircle, AlertTriangle, Bell, Info, X } from "lucide-react";
-import { api, onResultError } from "@/lib/convex";
+import { api, type Id } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 
@@ -57,7 +57,7 @@ export function NotificationsPanel(): React.ReactNode {
         <div className="space-y-1.5">
           {notifications.map(
             (notification: {
-              _id: string;
+              _id: Id<"notifications">;
               severity: Severity;
               message: string;
             }) => (
@@ -78,11 +78,7 @@ export function NotificationsPanel(): React.ReactNode {
                 </div>
                 <Button
                   className="h-6 w-6 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                  onClick={() =>
-                    dismiss({ notificationId: notification._id }).then(
-                      onResultError
-                    )
-                  }
+                  onClick={() => dismiss({ notificationId: notification._id })}
                   size="icon"
                   variant="ghost"
                 >

@@ -10,20 +10,9 @@ export type {
   Id,
 } from "../../../convex-backend/convex/_generated/dataModel";
 
-// ---------------------------------------------------------------------------
-// Result helpers — mirrors the Convex backend Result<T> pattern
-// ---------------------------------------------------------------------------
-
-/** Discriminated union returned by backend mutations. Matches serde's `Result<T, E>`. */
-export type Result<T, E = string> = { Ok: T } | { Err: E };
-
-/**
- * Chain onto a mutation call to log errors without changing call-site ergonomics.
- *
- * Usage: `mutation({ args }).then(onResultError)`
- */
-export function onResultError(result: Result<unknown>): void {
-  if ("Err" in result) {
-    console.error("[mutation error]", result.Err);
+/** Handle Result<T, E> errors from mutations. Usage: `myMutation(args).then(onResultError)` */
+export function onResultError(result: unknown): void {
+  if (result && typeof result === "object" && "Err" in result) {
+    console.error("[mutation error]", (result as { Err: unknown }).Err);
   }
 }

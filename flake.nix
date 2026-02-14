@@ -29,7 +29,6 @@
     crm-chat-web-app = {
       url = "path:./bins/crm-chat-web";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
     };
 
   };

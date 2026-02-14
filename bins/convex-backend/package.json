@@ -1,7 +1,6 @@
 {
   "name": "crm-chat-convex-backend",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "convex dev",
     "deploy": "convex deploy",
