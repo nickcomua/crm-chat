@@ -9,9 +9,9 @@ description = "Generated Rust type bindings from Convex schema"
 anyhow = "1"
 convex = "0.10.2"
 futures-core = "0.3"
+hack = { version = "0.1", path = "../../libs/hack" }
 serde = { version = ">=1, <1.0.224", features = ["derive"] }
 serde_json = "1"
-hack = { version = "0.1", path = "../../libs/hack" }
 
 [dev-dependencies]
 testcontainers = "0.27"
@@ -21,6 +21,10 @@ rsa = "0.9"
 rand = "0.8"
 base64 = "0.22"
 futures = "0.3"
+convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
+# convex-typegen = { path = "../../../convex-typegen" }
+tempfile = "3"
 
 [build-dependencies]
-convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git", rev = "3b92723" }
+convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
+# convex-typegen = { path = "../../../convex-typegen" }

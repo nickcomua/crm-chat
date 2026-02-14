@@ -63,6 +63,9 @@ pub fn sanitize_owner_id(owner_id: &str) -> String {
 /// The identifier is sanitized to keep only digits and `+`:
 /// - Phone auth: `"+1234567890"` → `"+1234567890"`
 /// - QR/external ID: `"telegram:123456789"` → `"123456789"`
+///
+/// Also writes an `.owner` file with the original `owner_id` so
+/// session discovery can recover it from the sanitized directory name.
 pub fn get_session_path(identifier: &str, owner_id: &str) -> PathBuf {
     let sanitized: String = identifier
         .chars()
@@ -71,7 +74,57 @@ pub fn get_session_path(identifier: &str, owner_id: &str) -> PathBuf {
 
     let dir = get_session_dir().join(sanitize_owner_id(owner_id));
     std::fs::create_dir_all(&dir).ok();
+
+    // Persist the original owner_id for session discovery
+    let owner_file = dir.join(".owner");
+    if !owner_file.exists() {
+        std::fs::write(&owner_file, owner_id).ok();
+    }
+
     dir.join(format!("{sanitized}.session"))
+}
+
+/// Discover all session files on disk.
+///
+/// Returns `(owner_id, session_path)` pairs for each `.session` file found.
+/// The `owner_id` is recovered from the `.owner` file written by [`get_session_path`].
+pub fn discover_session_files() -> Vec<(String, PathBuf)> {
+    let session_dir = get_session_dir();
+    let mut results = Vec::new();
+
+    let entries = match std::fs::read_dir(&session_dir) {
+        Ok(entries) => entries,
+        Err(_) => return results,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Read the .owner file to recover the original userId
+        let owner_file = path.join(".owner");
+        let owner_id = match std::fs::read_to_string(&owner_file) {
+            Ok(id) => id.trim().to_string(),
+            Err(_) => continue, // skip directories without .owner
+        };
+
+        // Find all .session files in this owner directory
+        let session_entries = match std::fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for session_entry in session_entries.flatten() {
+            let session_path = session_entry.path();
+            if session_path.extension().is_some_and(|ext| ext == "session") {
+                results.push((owner_id.clone(), session_path));
+            }
+        }
+    }
+
+    results
 }
 
 /// Copy the QR auth session file to the scanner-expected path.

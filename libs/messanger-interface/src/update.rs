@@ -7,7 +7,7 @@ use crate::message::MessageSummary;
 use crate::types::ExternalId;
 
 /// Universal update event from the messenger platform.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Update {
     /// A new message was received.
     NewMessage(MessageSummary),
