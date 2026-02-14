@@ -7,7 +7,7 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 1. **Install Playwright browsers:**
    ```bash
    cd bins/crm-chat-web
-   npx playwright install chromium
+   bunx playwright install chromium
    ```
 
 2. **Set environment variables** (or add them to the repo-root `.env` file):
@@ -27,7 +27,7 @@ Tests use **testcontainers** to automatically spin up infrastructure:
 2. Tests run against the ephemeral backend (no manual Docker/deploy needed).
 3. `global-teardown.ts` kills the worker and stops the containers.
 
-The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Node.js.
+The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Bun.
 
 ## Running Tests
 
@@ -35,13 +35,13 @@ The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatical
 cd bins/crm-chat-web
 
 # Standard run (testcontainers handles all infra)
-npm test
+bun run test
 
 # Interactive UI mode
-npm run test:ui
+bun run test:ui
 
 # Headed mode (see the browser)
-npm run test:headed
+bun run test:headed
 ```
 
 ### Run against an external server (skip testcontainers)
@@ -49,7 +49,7 @@ npm run test:headed
 If you already have backend services running, set `TEST_BASE_URL` to skip the auto-started Vite dev server:
 
 ```bash
-TEST_BASE_URL=https://crm-chat.kaminazuma.com npm test
+TEST_BASE_URL=https://crm-chat.kaminazuma.com bun test
 ```
 
 Note: `global-setup.ts` still starts a Convex container unless you also set `E2E_CONVEX_URL` to point at your existing backend.

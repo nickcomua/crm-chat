@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ClientSettings } from "@/components/client-settings";
+import type { Id } from "@/lib/convex";
 
 export const Route = createFileRoute("/_auth/client/$clientId")({
   component: ClientSettingsPage,
@@ -11,7 +12,7 @@ function ClientSettingsPage(): React.ReactNode {
   return (
     <div className="h-full overflow-y-auto">
       <div className="container px-4 py-8">
-        <ClientSettings clientId={clientId} />
+        <ClientSettings clientId={clientId as Id<"clients">} />
       </div>
     </div>
   );

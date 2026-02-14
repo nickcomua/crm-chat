@@ -1,4 +1,5 @@
 import { useMutation } from "convex/react";
+import type { AnimationItem } from "lottie-web";
 import {
   Download,
   File,
@@ -8,7 +9,7 @@ import {
   Sticker,
   Video,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { type MediaKind, mediaKindLabel } from "./media-types";
@@ -396,6 +397,114 @@ function DocumentMedia({
   );
 }
 
+/** Renders a TGS animated sticker (gzipped Lottie JSON) via lottie-web. */
+function TgsSticker({
+  url,
+  width,
+  height,
+}: {
+  url: string;
+  width: number;
+  height: number;
+}): React.ReactNode {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const animRef = useRef<AnimationItem | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const res = await fetch(url);
+      if (cancelled) {
+        return;
+      }
+
+      const body = res.body;
+      if (!body) {
+        return;
+      }
+
+      // Decompress gzip using the browser's built-in DecompressionStream
+      const ds = new DecompressionStream("gzip");
+      const decompressed = body.pipeThrough(ds);
+      const text = await new Response(decompressed).text();
+      if (cancelled) {
+        return;
+      }
+
+      const animationData = JSON.parse(text);
+
+      const lottie = (await import("lottie-web/build/player/lottie_light"))
+        .default;
+
+      animRef.current = lottie.loadAnimation({
+        container,
+        animationData,
+        renderer: "svg",
+        loop: true,
+        autoplay: true,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      animRef.current?.destroy();
+      animRef.current = null;
+    };
+  }, [url]);
+
+  return (
+    <div
+      className="max-h-[180px] max-w-[180px]"
+      ref={containerRef}
+      style={{ width, height }}
+    />
+  );
+}
+
+function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
+  const mime = media.mimeType ?? defaultMimeType(media.kind);
+  const w = media.width ?? 180;
+  const h = media.height ?? 180;
+
+  if (mime === "video/webm") {
+    return (
+      <video
+        autoPlay
+        className="max-h-[180px] max-w-[180px]"
+        height={h}
+        loop
+        muted
+        playsInline
+        width={w}
+      >
+        <source src={media.url} type="video/webm" />
+        <track kind="captions" />
+      </video>
+    );
+  }
+
+  if (mime === "application/x-tgsticker") {
+    return <TgsSticker height={h} url={media.url ?? ""} width={w} />;
+  }
+
+  return (
+    <img
+      alt="Sticker"
+      className="max-h-[180px] max-w-[180px]"
+      height={h}
+      loading="lazy"
+      src={media.url}
+      width={w}
+    />
+  );
+}
+
 function StoredMedia({
   media,
   isOutgoing,
@@ -416,16 +525,7 @@ function StoredMedia({
       );
 
     case "Sticker":
-      return (
-        <img
-          alt="Sticker"
-          className="max-h-[180px] max-w-[180px]"
-          height={media.height ?? 180}
-          loading="lazy"
-          src={media.url}
-          width={media.width ?? 180}
-        />
-      );
+      return <StickerMedia media={media} />;
 
     case "Animation":
       return (

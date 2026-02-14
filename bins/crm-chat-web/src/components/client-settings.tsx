@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { api, onResultError } from "@/lib/convex";
+import { api, type Id, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -47,11 +47,11 @@ interface ChatDoc {
   mediaSettings?: MediaSettings;
   totalMessages?: number;
   syncedMessages?: number;
-  scanPhase?: "ScanningMessages" | "Listening";
+  scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
 }
 
 interface ClientDoc {
-  _id: string;
+  _id: Id<"clients">;
   telegramId: string;
   phoneNumber?: string;
   status: { type: string };
@@ -451,11 +451,9 @@ function ChatRow({
 export function ClientSettings({
   clientId,
 }: {
-  clientId: string;
+  clientId: Id<"clients">;
 }): React.ReactNode {
-  const chats = useQuery(api.chats.listByClient, { clientId }) as
-    | ChatDoc[]
-    | undefined;
+  const chats = useQuery(api.chats.listByClient, { clientId });
   const clients = useQuery(api.clients.list);
   const navigate = useNavigate();
   const triggerSync = useMutation(api.clients.triggerDialogSync);

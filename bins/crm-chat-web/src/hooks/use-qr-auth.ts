@@ -1,5 +1,5 @@
-import { useConvex, useMutation, useQuery } from "convex/react";
-import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { useState } from "react";
 import { api, type Doc, type Id } from "@/lib/convex";
 
 type QrAuthTask = Extract<Doc<"workerTasks">["task"], { type: "QrAuth" }>;
@@ -79,43 +79,9 @@ export function useQrAuth(): UseQrAuthReturn {
 
   const cancelQrAuth = (): void => {
     if (taskId && progress && !isTerminalStep(progress.step)) {
-      cancelMutation({ taskId }).then((r) => {
-        if ("Err" in r) {
-          console.error("[qrAuth.cancel]", r.Err);
-        }
-      });
+      cancelMutation({ taskId });
     }
   };
-
-  // Cancel the QR auth task on page refresh/close via sendBeacon.
-  // Presence cron is the safety net if this doesn't fire.
-  const convex = useConvex();
-  const taskIdRef = useRef(taskId);
-
-  useEffect(() => {
-    taskIdRef.current = taskId;
-  }, [taskId]);
-
-  useEffect(() => {
-    const handleBeforeUnload = (): void => {
-      const id = taskIdRef.current;
-      if (!id) {
-        return;
-      }
-      const blob = new Blob(
-        [
-          JSON.stringify({
-            path: "workerTasks:cancelTask",
-            args: { taskId: id },
-          }),
-        ],
-        { type: "application/json" }
-      );
-      navigator.sendBeacon(`${convex.url}/api/mutation`, blob);
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [convex.url]);
 
   return { progress, isDone, startQrAuth, cancelQrAuth };
 }

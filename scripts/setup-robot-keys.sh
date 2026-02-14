@@ -4,9 +4,9 @@
 # This script:
 #   1. Generates a fresh RSA 2048-bit keypair
 #   2. Updates .env with ROBOT_JWT_PRIVATE_KEY, ROBOT_ID, ROBOT_KID
-#   3. Pushes the JWKS (public key) to Convex via `npx convex env set`
+#   3. Pushes the JWKS (public key) to Convex via `bunx convex env set`
 #
-# Prerequisites: openssl, Node.js (for npx convex)
+# Prerequisites: openssl, bun (for bunx convex)
 #
 # Usage: ./scripts/setup-robot-keys.sh
 
@@ -67,7 +67,7 @@ echo "[setup] .env updated with ROBOT_ID, ROBOT_KID, ROBOT_JWT_PRIVATE_KEY"
 # ── 4. Push JWKS to Convex ────────────────────────────────────────
 echo "[setup] Setting ROBOT_JWKS in Convex..."
 cd "$CONVEX_DIR"
-npx convex env set ROBOT_JWKS "$JWKS_DATA_URI"
+bunx convex env set ROBOT_JWKS "$JWKS_DATA_URI"
 
 echo "[setup] Done! Robot keypair configured."
 echo "[setup]   ROBOT_ID=$ROBOT_ID"

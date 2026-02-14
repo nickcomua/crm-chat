@@ -27,5 +27,4 @@ test-results/
 playwright-report/
 
 # Trace logs
-bins/crm-worker/logs/
-.claude
+bins/telegram-subscriber/logs/
