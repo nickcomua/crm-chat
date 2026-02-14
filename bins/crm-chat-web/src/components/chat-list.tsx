@@ -12,13 +12,6 @@ interface Client {
   externalId: string;
 }
 
-interface Message {
-  chatId: string;
-  deleted?: boolean;
-  ts: number;
-  text?: string;
-}
-
 interface ChatListProps {
   selectedChatId: string | null;
   onSelectChat: (chatId: string) => void;
@@ -102,12 +95,20 @@ export function ChatList({
 }: ChatListProps): React.ReactNode {
   const chats = useQuery(api.chats.list);
   const clients = useQuery(api.clients.list) as Client[] | undefined;
-  const messages = useQuery(api.messages.list) as Message[] | undefined;
+  const chatIds = chats?.map((c: { chatId: string }) => c.chatId);
+  const lastMessages = useQuery(
+    api.messages.getLastPerChat,
+    chatIds ? { chatIds } : "skip"
+  ) as Array<{ chatId: string; text?: string; mediaId?: string }> | undefined;
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [showClientFilter, setShowClientFilter] = useState(false);
 
-  if (chats === undefined || clients === undefined || messages === undefined) {
+  if (
+    chats === undefined ||
+    clients === undefined ||
+    lastMessages === undefined
+  ) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
@@ -148,18 +149,14 @@ export function ChatList({
     });
   }
 
+  const lastMessagesMap = new Map(lastMessages.map((m) => [m.chatId, m]));
+
   const getLastMessage = (chatId: string): string | null => {
-    const chatMessages = messages.filter(
-      (m) => m.chatId === chatId && !m.deleted
-    );
-    if (chatMessages.length === 0) {
+    const entry = lastMessagesMap.get(chatId);
+    if (!entry) {
       return null;
     }
-
-    const lastMessage = chatMessages.reduce((prev, curr) =>
-      curr.ts > prev.ts ? curr : prev
-    );
-    return lastMessage.text ?? "[Media]";
+    return entry.text ?? (entry.mediaId ? "[Media]" : null);
   };
 
   if (chats.length === 0) {
