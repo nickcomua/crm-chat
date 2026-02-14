@@ -29,6 +29,7 @@
     crm-chat-web-app = {
       url = "path:./bins/crm-chat-web";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
     };
 
   };
@@ -167,13 +168,13 @@
             ];
           };
 
-        # Build telegram-subscriber binary
-        telegram-subscriber = craneLib.buildPackage (
+        # Build crm-worker binary
+        crm-worker = craneLib.buildPackage (
           individualCrateArgs
           // {
-            pname = "telegram-subscriber";
-            cargoExtraArgs = "-p telegram-subscriber";
-            src = fileSetForCrate ./bins/telegram-subscriber;
+            pname = "crm-worker";
+            cargoExtraArgs = "-p crm-worker";
+            src = fileSetForCrate ./bins/crm-worker;
           }
         );
         crm-chat-web = crm-chat-web-app.packages.${system}.crm-chat-web;
@@ -181,7 +182,7 @@
 
       in {
         checks = {
-          inherit telegram-subscriber;
+          inherit crm-worker;
           # crm-chat-web build requires convex-backend generated types outside sandbox
           inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint;
           crm-chat-clippy = craneLib.cargoClippy (
@@ -266,17 +267,18 @@
 
         };
         packages = {
-          inherit telegram-subscriber crm-chat-web crm-chat-web-img;
+          inherit crm-worker crm-chat-web crm-chat-web-img;
 
-          telegram-subscriber-img = pkgs.dockerTools.buildLayeredImage {
-            name = "nick395/telegram-subscriber";
+          crm-worker-img = pkgs.dockerTools.buildLayeredImage {
+            name = "nick395/crm-worker";
             tag = "latest";
-            contents = [telegram-subscriber pkgs.cacert];
+            contents = [crm-worker pkgs.cacert];
 
             config = {
-              Cmd = ["/bin/telegram-subscriber"];
+              Cmd = ["/bin/crm-worker"];
             };
           };
+
         };
 
         devShells.default = craneLib.devShell {

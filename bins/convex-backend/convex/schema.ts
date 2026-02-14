@@ -57,11 +57,11 @@ export const mediaKind = v.union(
 );
 
 export const mediaStatus = v.union(
-  v.literal("pending"),
-  v.literal("downloading"),
-  v.literal("stored"),
-  v.literal("failed"),
-  v.literal("skipped"),
+  v.literal("Pending"),
+  v.literal("Downloading"),
+  v.literal("Stored"),
+  v.literal("Failed"),
+  v.literal("Skipped"),
 );
 
 export const mediaSettingsValidator = v.object({
@@ -76,9 +76,9 @@ export const mediaSettingsValidator = v.object({
 });
 
 export const scanPhase = v.union(
-  v.literal("scanning_messages"),
-  v.literal("downloading_media"),
-  v.literal("listening"),
+  v.literal("ScanningMessages"),
+  v.literal("DownloadingMedia"),
+  v.literal("Listening"),
 );
 
 // =============================================================================
@@ -90,8 +90,8 @@ export const clientDoc = v.object({
   _creationTime: v.number(),
   userId: v.string(),
   kind: clientKind,
-  externalId: v.string(),
-  activeChats: v.array(v.string()),
+  telegramId: v.string(),
+  scanningChatIds: v.array(v.string()),
   status: clientStatus,
   mediaSettings: v.optional(mediaSettingsValidator),
 });
@@ -105,7 +105,7 @@ export const chatDoc = v.object({
   chatType: chatType,
   isPinned: v.boolean(),
   pinnedName: v.optional(v.string()),
-  lastMessageTs: v.number(),
+  lastMessageTimestamp: v.number(),
   scanEnabled: v.optional(v.boolean()),
   fullScanned: v.optional(v.boolean()),
   mediaSettings: v.optional(mediaSettingsValidator),
@@ -126,7 +126,7 @@ export const chatListItem = v.object({
   chatType: chatType,
   isPinned: v.boolean(),
   pinnedName: v.optional(v.string()),
-  lastMessageTs: v.number(),
+  lastMessageTimestamp: v.number(),
   scanEnabled: v.optional(v.boolean()),
   fullScanned: v.optional(v.boolean()),
   mediaSettings: v.optional(mediaSettingsValidator),
@@ -148,17 +148,17 @@ export const messageDoc = v.object({
   chatId: v.string(),
   senderId: v.string(),
   text: v.optional(v.string()),
-  out: v.boolean(),
+  outgoing: v.boolean(),
   deleted: v.boolean(),
-  ts: v.number(),
-  mediaId: v.optional(v.string()),
+  timestamp: v.number(),
+  mediaExternalId: v.optional(v.string()),
   mediaKind: v.optional(mediaKind),
 });
 
 export const mediaDoc = v.object({
   _id: v.id("media"),
   _creationTime: v.number(),
-  externalId: v.string(),
+  telegramFileId: v.string(),
   userId: v.string(),
   clientId: v.id("clients"),
   chatId: v.string(),
@@ -170,6 +170,7 @@ export const mediaDoc = v.object({
   fileName: v.optional(v.string()),
   fileSize: v.optional(v.number()),
   bytesDownloaded: v.optional(v.number()),
+  downloadedAt: v.optional(v.number()),
   width: v.optional(v.number()),
   height: v.optional(v.number()),
   duration: v.optional(v.number()),
@@ -189,7 +190,7 @@ export const phoneAuthDoc = v.object({
   password: v.optional(v.string()),
   passwordHint: v.optional(v.string()),
   error: v.optional(v.string()),
-  assignedRobot: v.optional(v.string()),
+  claimedByWorkerId: v.optional(v.string()),
   updatedAt: v.number(),
 });
 
@@ -215,7 +216,7 @@ export const qrAuthDoc = v.object({
   qrExpires: v.optional(v.number()),
   telegramUserId: v.optional(v.int64()),
   error: v.optional(v.string()),
-  assignedRobot: v.optional(v.string()),
+  claimedByWorkerId: v.optional(v.string()),
   updatedAt: v.number(),
 });
 
@@ -238,13 +239,13 @@ export default defineSchema({
   clients: defineTable({
     userId: v.string(), // FK to humans.userId
     kind: clientKind,
-    externalId: v.string(), // phone auth: phone number; QR auth: "telegram:{user_id}"
-    activeChats: v.array(v.string()),
+    telegramId: v.string(), // phone auth: phone number; QR auth: "telegram:{user_id}"
+    scanningChatIds: v.array(v.string()),
     status: clientStatus,
     mediaSettings: v.optional(mediaSettingsValidator),
   })
     .index("by_userId", ["userId"])
-    .index("by_userId_externalId", ["userId", "externalId"]),
+    .index("by_userId_telegramId", ["userId", "telegramId"]),
 
   // ---- Chats ----
 
@@ -255,7 +256,7 @@ export default defineSchema({
     chatType: chatType,
     isPinned: v.boolean(),
     pinnedName: v.optional(v.string()),
-    lastMessageTs: v.number(), // Unix ms
+    lastMessageTimestamp: v.number(), // Unix ms
     scanEnabled: v.optional(v.boolean()), // user override for scanning (defaults to isPinned)
     fullScanned: v.optional(v.boolean()), // true after all messages synced once
     mediaSettings: v.optional(mediaSettingsValidator), // per-chat media type download toggles
@@ -268,8 +269,8 @@ export default defineSchema({
     .index("by_chatId", ["chatId"])
     .index("by_userId", ["userId"])
     .index("by_clientId", ["clientId"])
-    .index("by_userId_lastMessageTs", ["userId", "lastMessageTs"])
-    .index("by_userId_scanEnabled_lastMessageTs", ["userId", "scanEnabled", "lastMessageTs"])
+    .index("by_userId_lastMessageTimestamp", ["userId", "lastMessageTimestamp"])
+    .index("by_userId_scanEnabled_lastMessageTimestamp", ["userId", "scanEnabled", "lastMessageTimestamp"])
     .index("by_clientId_userId", ["clientId", "userId"]),
 
   // ---- Messages ----
@@ -282,21 +283,21 @@ export default defineSchema({
     chatId: v.string(), // FK to chats.chatId
     senderId: v.string(), // Telegram user ID who sent the message
     text: v.optional(v.string()),
-    out: v.boolean(), // true if sent by client owner
+    outgoing: v.boolean(), // true if sent by client owner
     deleted: v.boolean(),
-    ts: v.number(), // Unix ms
-    mediaId: v.optional(v.string()),
+    timestamp: v.number(), // Unix ms
+    mediaExternalId: v.optional(v.string()),
     mediaKind: v.optional(mediaKind),
   })
     .index("by_messageId", ["messageId"])
     .index("by_externalId", ["externalId"])
     .index("by_userId", ["userId"])
-    .index("by_chatId_ts", ["chatId", "ts"]),
+    .index("by_chatId_timestamp", ["chatId", "timestamp"]),
 
   // ---- Media ----
 
   media: defineTable({
-    externalId: v.string(), // matches messages.mediaId
+    telegramFileId: v.string(), // matches messages.mediaExternalId
     userId: v.string(),
     clientId: v.id("clients"),
     chatId: v.string(),
@@ -308,19 +309,19 @@ export default defineSchema({
     fileName: v.optional(v.string()),
     fileSize: v.optional(v.number()), // bytes
     bytesDownloaded: v.optional(v.number()), // progress tracking
-    storedAt: v.optional(v.number()), // ms since epoch — set when download completes
+    downloadedAt: v.optional(v.number()), // ms since epoch — set when download completes
     width: v.optional(v.number()),
     height: v.optional(v.number()),
     duration: v.optional(v.number()), // seconds
     error: v.optional(v.string()),
   })
-    .index("by_externalId", ["externalId"])
+    .index("by_telegramFileId", ["telegramFileId"])
     .index("by_messageId", ["messageId"])
     .index("by_clientId_status", ["clientId", "status"])
     .index("by_chatId", ["chatId"])
     .index("by_userId_status", ["userId", "status"])
-    .index("by_userId_storedAt", ["userId", "storedAt"])
-    .index("by_userId_status_storedAt", ["userId", "status", "storedAt"]),
+    .index("by_userId_downloadedAt", ["userId", "downloadedAt"])
+    .index("by_userId_status_downloadedAt", ["userId", "status", "downloadedAt"]),
 
   // ---- Phone Auth State Machine ----
 
@@ -329,7 +330,7 @@ export default defineSchema({
     clientId: v.id("clients"), // FK to clients
     phone: v.string(),
     step: phoneAuthStep,
-    // Auth secrets — stored server-side, read by robot, never sent to frontend
+    // Auth secrets — stored server-side, read by worker, never sent to frontend
     phoneCodeHash: v.optional(v.string()),
     loginCode: v.optional(v.string()),
     passwordToken: v.optional(v.string()),
@@ -337,13 +338,13 @@ export default defineSchema({
     passwordHint: v.optional(v.string()),
     // Error info
     error: v.optional(v.string()),
-    // Robot assignment (set once, stays for entire flow)
-    assignedRobot: v.optional(v.string()), // robotId
+    // Worker assignment (set once, stays for entire flow)
+    claimedByWorkerId: v.optional(v.string()),
     updatedAt: v.number(), // Unix ms
   })
     .index("by_userId", ["userId"])
     .index("by_step", ["step"])
-    .index("by_assignedRobot", ["assignedRobot"])
+    .index("by_claimedByWorkerId", ["claimedByWorkerId"])
     .index("by_clientId", ["clientId"]),
 
   // ---- QR Auth State Machine ----
@@ -355,12 +356,12 @@ export default defineSchema({
     qrExpires: v.optional(v.number()), // seconds until QR expires
     telegramUserId: v.optional(v.int64()),
     error: v.optional(v.string()),
-    assignedRobot: v.optional(v.string()), // robotId
+    claimedByWorkerId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_step", ["step"])
-    .index("by_assignedRobot", ["assignedRobot"]),
+    .index("by_claimedByWorkerId", ["claimedByWorkerId"]),
 
   // ---- Notifications ----
 

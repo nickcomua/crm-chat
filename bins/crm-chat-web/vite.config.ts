@@ -22,9 +22,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(import.meta.dirname, "./src"),
+      "@": path.resolve(__dirname, "./src"),
     },
-    // Ensure imports from file: deps (convex-backend) resolve from this project
-    dedupe: ["convex"],
   },
 });

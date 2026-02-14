@@ -4,12 +4,13 @@ import { mutation, query } from "./_generated/server";
 import { qrAuthDoc } from "./schema";
 import {
   isQrAuthTerminal,
-  requireAssignedRobot,
+  requireAssignedWorker,
   requireHuman,
   requireOwner,
-  requireRobot,
+  requireWorker,
   sendError,
 } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
 
 // =============================================================================
 // Queries
@@ -47,29 +48,29 @@ export const active = query({
   },
 });
 
-/** Unclaimed QR auths (step=Pending, no assigned robot). For robot polling. */
-export const pendingForRobot = query({
+/** Unclaimed QR auths (step=Pending, no claimed worker). For worker polling. */
+export const pendingForWorker = query({
   args: {},
   returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const pending = await ctx.db
       .query("qrAuths")
       .withIndex("by_step", (q) => q.eq("step", "Pending"))
       .collect();
-    return pending.filter((a) => !a.assignedRobot);
+    return pending.filter((a) => !a.claimedByWorkerId);
   },
 });
 
-/** QR auths assigned to the calling robot. */
-export const assignedToRobot = query({
+/** QR auths assigned to the calling worker. */
+export const assignedToWorker = query({
   args: {},
   returns: v.array(qrAuthDoc),
   handler: async (ctx) => {
-    const caller = await requireRobot(ctx);
+    const caller = await requireWorker(ctx);
     const assigned = await ctx.db
       .query("qrAuths")
-      .withIndex("by_assignedRobot", (q) => q.eq("assignedRobot", caller.id))
+      .withIndex("by_claimedByWorkerId", (q) => q.eq("claimedByWorkerId", caller.id))
       .collect();
     return assigned.filter((a) => !isQrAuthTerminal(a.step));
   },
@@ -82,7 +83,7 @@ export const assignedToRobot = query({
 /** Start QR code authentication. No client is created yet. */
 export const start = mutation({
   args: {},
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
     await ctx.db.insert("qrAuths", {
@@ -90,74 +91,77 @@ export const start = mutation({
       step: "Pending",
       updatedAt: Date.now(),
     });
+    return ok(null);
   },
 });
 
 /** User cancels the QR auth flow. */
 export const cancel = mutation({
   args: { authId: v.id("qrAuths") },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { authId }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
+    if (!auth) return err("QrAuth not found");
     requireOwner(caller.id, auth.userId);
 
     if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot cancel: auth is already in a terminal state");
+      return err("Cannot cancel: auth is already in a terminal state");
     }
 
     await ctx.db.patch(authId, {
       step: "Cancelled",
       updatedAt: Date.now(),
     });
+    return ok(null);
   },
 });
 
 // =============================================================================
-// Robot Mutations
+// Worker Mutations
 // =============================================================================
 
-/** Robot claims a QR auth session. */
-export const robotClaim = mutation({
+/** Worker claims a QR auth session. */
+export const workerClaim = mutation({
   args: { authId: v.id("qrAuths") },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { authId }) => {
-    const caller = await requireRobot(ctx);
+    const caller = await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
+    if (!auth) return err("QrAuth not found");
 
     if (auth.step !== "Pending") {
-      throw new Error(`Invalid step: expected Pending, got ${auth.step}`);
+      return err(`Invalid step: expected Pending, got ${auth.step}`);
     }
-    if (auth.assignedRobot) {
-      throw new Error("QrAuth is already claimed by a robot");
+    if (auth.claimedByWorkerId) {
+      return err("QrAuth is already claimed by a worker");
     }
 
     await ctx.db.patch(authId, {
-      assignedRobot: caller.id,
+      claimedByWorkerId: caller.id,
       step: "Generating",
       updatedAt: Date.now(),
     });
+    return ok(null);
   },
 });
 
-/** Robot provides a new QR token for the user to scan. */
-export const robotUpdateQrToken = mutation({
+/** Worker provides a new QR token for the user to scan. */
+export const workerUpdateQrToken = mutation({
   args: {
     authId: v.id("qrAuths"),
     url: v.string(),
     expires: v.number(),
   },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { authId, url, expires }) => {
-    const caller = await requireRobot(ctx);
+    const caller = await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
-    requireAssignedRobot(caller.id, auth.assignedRobot);
+    if (!auth) return err("QrAuth not found");
+    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
 
     if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot update: auth is in a terminal state");
+      return err("Cannot update: auth is in a terminal state");
     }
 
     await ctx.db.patch(authId, {
@@ -166,11 +170,12 @@ export const robotUpdateQrToken = mutation({
       step: "Token",
       updatedAt: Date.now(),
     });
+    return ok(null);
   },
 });
 
-/** Robot reports the final result of QR authentication. */
-export const robotCompleteQrAuth = mutation({
+/** Worker reports the final result of QR authentication. */
+export const workerCompleteQrAuth = mutation({
   args: {
     authId: v.id("qrAuths"),
     result: v.union(
@@ -179,28 +184,28 @@ export const robotCompleteQrAuth = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
-  returns: v.null(),
-  handler: async (ctx, { authId, result }) => {
-    const caller = await requireRobot(ctx);
+  returns: result(v.null()),
+  handler: async (ctx, { authId, result: qrResult }) => {
+    const caller = await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
-    requireAssignedRobot(caller.id, auth.assignedRobot);
+    if (!auth) return err("QrAuth not found");
+    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
 
     if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot complete: auth is already in a terminal state");
+      return err("Cannot complete: auth is already in a terminal state");
     }
 
     const now = Date.now();
 
-    if (result.type === "Authorized" || result.type === "AlreadyAuthorized") {
-      const externalId = `telegram:${result.userId}`;
-      const step = result.type;
+    if (qrResult.type === "Authorized" || qrResult.type === "AlreadyAuthorized") {
+      const telegramId = `telegram:${qrResult.userId}`;
+      const step = qrResult.type;
 
       // Find or create the client
       const existing = await ctx.db
         .query("clients")
-        .withIndex("by_userId_externalId", (q) =>
-          q.eq("userId", auth.userId).eq("externalId", externalId),
+        .withIndex("by_userId_telegramId", (q) =>
+          q.eq("userId", auth.userId).eq("telegramId", telegramId),
         )
         .unique();
 
@@ -212,25 +217,26 @@ export const robotCompleteQrAuth = mutation({
         await ctx.db.insert("clients", {
           userId: auth.userId,
           kind: "Telegram",
-          externalId,
-          activeChats: [],
+          telegramId,
+          scanningChatIds: [],
           status: { type: "Connected" },
         });
       }
 
       await ctx.db.patch(authId, {
-        telegramUserId: result.userId,
+        telegramUserId: qrResult.userId,
         step,
         updatedAt: now,
       });
     } else {
       // Failed
-      await sendError(ctx, auth.userId, `QR code login failed: ${result.error}`);
+      await sendError(ctx, auth.userId, `QR code login failed: ${qrResult.error}`);
       await ctx.db.patch(authId, {
         step: "Failed",
-        error: result.error,
+        error: qrResult.error,
         updatedAt: now,
       });
     }
+    return ok(null);
   },
 });

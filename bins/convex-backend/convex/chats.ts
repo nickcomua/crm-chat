@@ -2,7 +2,8 @@ import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { chatDoc, chatListItem, chatType, mediaSettingsValidator, scanPhase } from "./schema";
-import { isRobotCaller, requireAuth, requireHuman, requireOwner, requireRobot } from "./helpers/auth";
+import { isWorkerCaller, requireAuth, requireHuman, requireOwner, requireWorker } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
 
 /** List scan-enabled chats for the current user, sorted by last message time (newest first). */
 export const list = query({
@@ -12,7 +13,7 @@ export const list = query({
     const caller = await requireHuman(ctx);
     const chats = await ctx.db
       .query("chats")
-      .withIndex("by_userId_scanEnabled_lastMessageTs", (q) =>
+      .withIndex("by_userId_scanEnabled_lastMessageTimestamp", (q) =>
         q.eq("userId", caller.id).eq("scanEnabled", true),
       )
       .order("desc")
@@ -31,7 +32,7 @@ export const list = query({
   },
 });
 
-/** Upsert a chat. Callable by owner or robot. */
+/** Upsert a chat. Callable by owner or worker. */
 export const upsert = mutation({
   args: {
     chatId: v.string(),
@@ -40,15 +41,15 @@ export const upsert = mutation({
     chatType,
     isPinned: v.boolean(),
     pinnedName: v.optional(v.string()),
-    lastMessageTs: v.number(),
+    lastMessageTimestamp: v.number(),
   },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, args) => {
     const caller = await requireAuth(ctx);
 
-    // Authorization: owner or robot
-    const isRobot = isRobotCaller(caller);
-    if (!isRobot) {
+    // Authorization: owner or worker
+    const isWorker = isWorkerCaller(caller);
+    if (!isWorker) {
       requireOwner(caller.id, args.userId);
     }
 
@@ -63,7 +64,7 @@ export const upsert = mutation({
         chatType: args.chatType,
         isPinned: args.isPinned,
         pinnedName: args.pinnedName,
-        lastMessageTs: args.lastMessageTs,
+        lastMessageTimestamp: args.lastMessageTimestamp,
       });
     } else {
       // Default scanEnabled to isPinned on first sync
@@ -72,13 +73,14 @@ export const upsert = mutation({
         scanEnabled: args.isPinned,
       });
     }
+    return ok(null);
   },
 });
 
 /** Delete a chat by its chatId. */
 export const deleteChat = mutation({
   args: { chatId: v.string() },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId }) => {
     const caller = await requireAuth(ctx);
 
@@ -88,13 +90,14 @@ export const deleteChat = mutation({
       .unique();
 
     if (existing) {
-      // Only owner or robot can delete
-      const isRobot = isRobotCaller(caller);
-      if (!isRobot) {
+      // Only owner or worker can delete
+      const isWorker = isWorkerCaller(caller);
+      if (!isWorker) {
         requireOwner(caller.id, existing.userId);
       }
       await ctx.db.delete(existing._id);
     }
+    return ok(null);
   },
 });
 
@@ -116,16 +119,17 @@ export const listByClient = query({
 /** Update a chat's custom display name. Human-only. */
 export const updatePinnedName = mutation({
   args: { chatId: v.string(), pinnedName: v.optional(v.string()) },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId, pinnedName }) => {
     const caller = await requireHuman(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     requireOwner(caller.id, chat.userId);
     await ctx.db.patch(chat._id, { pinnedName });
+    return ok(null);
   },
 });
 
@@ -134,14 +138,14 @@ export const updatePinnedName = mutation({
  *  Turning ON triggers a fresh rescan since fullScanned is already false. */
 export const updateScanEnabled = mutation({
   args: { chatId: v.string(), scanEnabled: v.boolean() },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId, scanEnabled }) => {
     const caller = await requireHuman(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     requireOwner(caller.id, chat.userId);
     if (!scanEnabled) {
       await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
@@ -149,21 +153,23 @@ export const updateScanEnabled = mutation({
     } else {
       await ctx.db.patch(chat._id, { scanEnabled });
     }
+    return ok(null);
   },
 });
 
-/** Mark a chat as fully scanned (all messages synced once). Robot-only. */
+/** Mark a chat as fully scanned (all messages synced once). Worker-only. */
 export const markFullScanned = mutation({
   args: { chatId: v.string() },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId }) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     await ctx.db.patch(chat._id, { fullScanned: true });
+    return ok(null);
   },
 });
 
@@ -188,7 +194,7 @@ export const purgeChatData = internalMutation({
     // Delete messages in batch
     const messages = await ctx.db
       .query("messages")
-      .withIndex("by_chatId_ts", (q) => q.eq("chatId", chatId))
+      .withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
       .take(PURGE_BATCH_SIZE);
     for (const msg of messages) {
       await ctx.db.delete(msg._id);
@@ -219,12 +225,12 @@ export const purgeChatData = internalMutation({
   },
 });
 
-/** List chats for a client. Robot-only (for scanning logic). */
-export const listForRobot = query({
+/** List chats for a client. Worker-only (for scanning logic). */
+export const listForWorker = query({
   args: { clientId: v.id("clients") },
   returns: v.array(chatDoc),
   handler: async (ctx, { clientId }) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     return await ctx.db
       .query("chats")
       .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
@@ -235,20 +241,21 @@ export const listForRobot = query({
 /** Update per-chat media download settings. Human-only. */
 export const updateMediaSettings = mutation({
   args: { chatId: v.string(), mediaSettings: mediaSettingsValidator },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId, mediaSettings }) => {
     const caller = await requireHuman(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     requireOwner(caller.id, chat.userId);
     await ctx.db.patch(chat._id, { mediaSettings });
+    return ok(null);
   },
 });
 
-/** Update sync progress for a chat. Robot-only. */
+/** Update sync progress for a chat. Worker-only. */
 export const updateSyncProgress = mutation({
   args: {
     chatId: v.string(),
@@ -256,14 +263,14 @@ export const updateSyncProgress = mutation({
     syncedMessages: v.optional(v.number()),
     scanPhase: v.optional(scanPhase),
   },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId, ...updates }) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
 
     const patch: Record<string, unknown> = {};
     if (updates.totalMessages !== undefined) patch.totalMessages = updates.totalMessages;
@@ -271,50 +278,53 @@ export const updateSyncProgress = mutation({
     if (updates.scanPhase !== undefined) patch.scanPhase = updates.scanPhase;
 
     await ctx.db.patch(chat._id, patch);
+    return ok(null);
   },
 });
 
 /** Re-scan all messages for a chat without purging data. Human-only.
- *  Resets fullScanned so the robot picks it up on the next refresh cycle. */
+ *  Resets fullScanned so the worker picks it up on the next refresh cycle. */
 export const rescan = mutation({
   args: { chatId: v.string() },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId }) => {
     const caller = await requireHuman(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     requireOwner(caller.id, chat.userId);
-    if (!chat.scanEnabled) throw new Error("Chat scanning is not enabled");
+    if (!chat.scanEnabled) return err("Chat scanning is not enabled");
     await ctx.db.patch(chat._id, {
       fullScanned: false,
       syncedMessages: undefined,
       totalMessages: undefined,
       scanPhase: undefined,
     });
+    return ok(null);
   },
 });
 
-/** Update a chat's profile photo. Robot-only. */
+/** Update a chat's profile photo. Worker-only. */
 export const updatePhoto = mutation({
   args: {
     chatId: v.string(),
     storageId: v.id("_storage"),
     photoExternalId: v.string(),
   },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { chatId, storageId, photoExternalId }) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const chat = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .unique();
-    if (!chat) throw new Error("Chat not found");
+    if (!chat) return err("Chat not found");
     if (chat.photoStorageId) {
       await ctx.storage.delete(chat.photoStorageId);
     }
     await ctx.db.patch(chat._id, { photoStorageId: storageId, photoExternalId });
+    return ok(null);
   },
 });

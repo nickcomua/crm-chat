@@ -24,7 +24,7 @@ interface ChatDoc {
 interface ClientDoc {
   _id: string;
   kind: string;
-  externalId: string;
+  telegramId: string;
 }
 
 type SearchScopeType =
@@ -359,7 +359,7 @@ export function SearchDialog({
                 }
                 type="button"
               >
-                {client.kind} ({client.externalId.slice(0, 8)}...)
+                {client.kind} ({client.telegramId.slice(0, 8)}...)
               </button>
             ))}
           </div>
