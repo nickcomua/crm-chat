@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
+import type { Id } from "crm-chat-convex-backend/dataModel";
 import {
   ArrowLeft,
   Check,
@@ -445,11 +446,9 @@ function ChatRow({
 export function ClientSettings({
   clientId,
 }: {
-  clientId: string;
+  clientId: Id<"clients">;
 }): React.ReactNode {
-  const chats = useQuery(api.chats.listByClient, { clientId }) as
-    | ChatDoc[]
-    | undefined;
+  const chats = useQuery(api.chats.listByClient, { clientId });
   const clients = useQuery(api.clients.list);
   const navigate = useNavigate();
 

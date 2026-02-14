@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import type { Id } from "crm-chat-convex-backend/dataModel";
 import { api } from "@/lib/convex";
 
 type QrAuthStep =
@@ -63,7 +64,7 @@ export function useQrAuth(): UseQrAuthReturn {
 
   const cancelQrAuth = (): void => {
     if (auth && !isTerminalStep(auth.step)) {
-      cancelQrAuthMutation({ authId: auth._id });
+      cancelQrAuthMutation({ authId: auth._id as Id<"qrAuths"> });
     }
   };
 

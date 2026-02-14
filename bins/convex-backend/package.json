@@ -1,6 +1,10 @@
 {
   "name": "crm-chat-convex-backend",
   "private": true,
+  "exports": {
+    "./api": "./convex/_generated/api.js",
+    "./dataModel": "./convex/_generated/dataModel.js"
+  },
   "scripts": {
     "dev": "convex dev",
     "deploy": "convex deploy"
