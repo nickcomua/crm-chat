@@ -1,6 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import type { Id } from "crm-chat-convex-backend/dataModel";
 import {
   ArrowLeft,
   Check,
@@ -14,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/lib/convex";
+import { api, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -42,18 +41,18 @@ interface ChatDoc {
   chatType: string;
   isPinned: boolean;
   pinnedName?: string;
-  lastMessageTs: number;
+  lastMessageTimestamp: number;
   scanEnabled?: boolean;
   fullScanned?: boolean;
   mediaSettings?: MediaSettings;
   totalMessages?: number;
   syncedMessages?: number;
-  scanPhase?: "scanning_messages" | "downloading_media" | "listening";
+  scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
 }
 
 interface ClientDoc {
   _id: string;
-  externalId: string;
+  telegramId: string;
   mediaSettings?: MediaSettings;
 }
 
@@ -77,19 +76,19 @@ const MEDIA_SETTINGS_ITEMS: { key: keyof MediaSettings; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function getScanStatus(chat: ChatDoc): { label: string; className: string } {
-  if (chat.scanPhase === "listening") {
+  if (chat.scanPhase === "Listening") {
     return {
       label: "Listening",
       className: "bg-emerald-500/15 text-emerald-700",
     };
   }
-  if (chat.scanPhase === "downloading_media") {
+  if (chat.scanPhase === "DownloadingMedia") {
     return {
       label: "Downloading media...",
       className: "bg-blue-500/15 text-blue-700",
     };
   }
-  if (chat.scanPhase === "scanning_messages") {
+  if (chat.scanPhase === "ScanningMessages") {
     return {
       label: "Scanning messages...",
       className: "bg-amber-500/15 text-amber-700",
@@ -148,7 +147,9 @@ function EditableName({
 
   const handleSave = (): void => {
     const trimmed = value.trim();
-    updatePinnedName({ chatId, pinnedName: trimmed || undefined });
+    updatePinnedName({ chatId, pinnedName: trimmed || undefined }).then(
+      onResultError
+    );
     setEditing(false);
   };
 
@@ -264,7 +265,7 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
 
   return (
     <div className="mt-2 space-y-1.5">
-      {chat.scanPhase === "scanning_messages" && msgTotal > 0 && (
+      {chat.scanPhase === "ScanningMessages" && msgTotal > 0 && (
         <ProgressBar
           label={`${msgSynced} / ${msgTotal} messages`}
           percent={msgPercent}
@@ -276,7 +277,7 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
           percent={mediaPercent}
         />
       )}
-      {chat.scanPhase === "listening" && (
+      {chat.scanPhase === "Listening" && (
         <div className="flex items-center gap-1.5">
           <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
           <span className="text-[11px] text-muted-foreground">
@@ -302,7 +303,7 @@ function MediaSettingsPanel({
     updateMediaSettings({
       chatId: chat.chatId,
       mediaSettings: { ...current, [key]: checked },
-    });
+    }).then(onResultError);
   };
 
   return (
@@ -390,7 +391,9 @@ function ChatRow({
             {chat.scanEnabled && chat.fullScanned && (
               <button
                 className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                onClick={() => rescan({ chatId: chat.chatId })}
+                onClick={() =>
+                  rescan({ chatId: chat.chatId }).then(onResultError)
+                }
                 title="Re-scan all messages"
                 type="button"
               >
@@ -421,7 +424,10 @@ function ChatRow({
             aria-label={`Toggle scanning for ${displayName}`}
             checked={chat.scanEnabled ?? false}
             onCheckedChange={(checked) =>
-              updateScanEnabled({ chatId: chat.chatId, scanEnabled: checked })
+              updateScanEnabled({
+                chatId: chat.chatId,
+                scanEnabled: checked,
+              }).then(onResultError)
             }
           />
         </div>
@@ -446,9 +452,11 @@ function ChatRow({
 export function ClientSettings({
   clientId,
 }: {
-  clientId: Id<"clients">;
+  clientId: string;
 }): React.ReactNode {
-  const chats = useQuery(api.chats.listByClient, { clientId });
+  const chats = useQuery(api.chats.listByClient, { clientId }) as
+    | ChatDoc[]
+    | undefined;
   const clients = useQuery(api.clients.list);
   const navigate = useNavigate();
 
@@ -479,7 +487,7 @@ export function ClientSettings({
     if (!a.isPinned && b.isPinned) {
       return 1;
     }
-    return b.lastMessageTs - a.lastMessageTs;
+    return b.lastMessageTimestamp - a.lastMessageTimestamp;
   });
 
   return (
@@ -495,7 +503,7 @@ export function ClientSettings({
         </Button>
         <div>
           <h2 className="font-bold text-2xl tracking-tight">
-            {client.externalId || `Client ${client._id.slice(0, 8)}`}
+            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </h2>
           <p className="text-muted-foreground text-sm">
             {chats.length} chat{chats.length !== 1 ? "s" : ""} &middot;{" "}

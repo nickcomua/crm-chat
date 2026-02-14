@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { notificationDoc } from "./schema";
 import { requireHuman, requireOwner } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
 
 /** List undismissed notifications for the current user. */
 export const list = query({
@@ -21,19 +22,20 @@ export const list = query({
 /** Dismiss a notification. Only the owner can dismiss. */
 export const dismiss = mutation({
   args: { notificationId: v.id("notifications") },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { notificationId }) => {
     const caller = await requireHuman(ctx);
     const notif = await ctx.db.get(notificationId);
     if (!notif) {
-      throw new Error("Notification not found");
+      return err("Notification not found");
     }
     requireOwner(caller.id, notif.userId);
 
     if (notif.dismissed) {
-      throw new Error("Notification is already dismissed");
+      return err("Notification is already dismissed");
     }
 
     await ctx.db.patch(notificationId, { dismissed: true });
+    return ok(null);
   },
 });

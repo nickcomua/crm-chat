@@ -10,11 +10,14 @@ const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(TESTS_DIR, "..");
 const ROOT = path.resolve(WEB_DIR, "../..");
 const CONVEX_DIR = path.join(ROOT, "bins/convex-backend");
-const SUBSCRIBER_BIN = path.join(ROOT, "target/debug/telegram-subscriber");
+const WORKER_BIN = path.join(ROOT, "target/debug/crm-worker");
 
 // Fixed ports — must match playwright.config.ts
 const CONVEX_HOST_PORT = 13_210;
 const SITE_HOST_PORT = 13_211;
+const RESTATE_INGRESS_PORT = 18_080;
+const RESTATE_ADMIN_PORT = 19_070;
+const WORKER_SERVICE_PORT = 19_080;
 
 /** Auto-detect Docker socket for OrbStack/Docker Desktop/standard Docker. */
 function ensureDockerHost(): void {
@@ -39,7 +42,8 @@ function ensureDockerHost(): void {
 declare global {
   var __E2E: {
     container: StartedTestContainer;
-    subscriber?: ChildProcess;
+    restateContainer: StartedTestContainer;
+    worker?: ChildProcess;
   };
 }
 
@@ -67,9 +71,9 @@ function loadEnvFile(): void {
   }
 }
 
-/** Run `bunx convex <args>` against the test backend. */
+/** Run `npx convex <args>` against the test backend. */
 function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
-  const result = spawnSync("bunx", ["convex", ...args], {
+  const result = spawnSync("npx", ["convex", ...args], {
     cwd: CONVEX_DIR,
     env: {
       ...process.env,
@@ -81,9 +85,44 @@ function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
   });
   if (result.status !== 0) {
     throw new Error(
-      `bunx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`
+      `npx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`
     );
   }
+}
+
+/** Register crm-worker with Restate admin API. */
+async function registerWorkerWithRestate(): Promise<void> {
+  const adminUrl = `http://localhost:${RESTATE_ADMIN_PORT}`;
+  const workerUrl = `http://host.docker.internal:${WORKER_SERVICE_PORT}`;
+
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      const res = await fetch(`${adminUrl}/deployments`);
+      if (res.ok) {
+        break;
+      }
+    } catch {
+      // not ready yet
+    }
+    if (attempt === 29) {
+      throw new Error("Restate admin API not ready after 30s");
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  const res = await fetch(`${adminUrl}/deployments`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ uri: workerUrl }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Failed to register worker with Restate (${res.status}): ${body}`
+    );
+  }
+  console.log("[e2e] Registered crm-worker with Restate");
 }
 
 export default async function globalSetup(): Promise<void> {
@@ -147,6 +186,26 @@ export default async function globalSetup(): Promise<void> {
     await new Promise((r) => setTimeout(r, 1000));
   }
 
+  // ── 1b. Start Restate container ───────────────────────────────────
+  console.log("[e2e] Starting Restate container...");
+
+  const restateContainer = await new GenericContainer(
+    "docker.io/restatedev/restate:1.3"
+  )
+    .withExposedPorts(
+      { container: 8080, host: RESTATE_INGRESS_PORT },
+      { container: 9070, host: RESTATE_ADMIN_PORT }
+    )
+    .withEnvironment({
+      RESTATE_OBSERVABILITY__LOG__FORMAT: "json",
+    })
+    .withStartupTimeout(60_000)
+    .start();
+
+  console.log(
+    `[e2e] Restate container started (ingress: ${RESTATE_INGRESS_PORT}, admin: ${RESTATE_ADMIN_PORT})`
+  );
+
   // ── 2. Generate admin key inside the container ────────────────────
   console.log("[e2e] Generating admin key...");
   const execResult = await container.exec(["./generate_admin_key.sh"]);
@@ -194,13 +253,13 @@ export default async function globalSetup(): Promise<void> {
 
   // ── 4. Deploy Convex functions ────────────────────────────────────
   console.log("[e2e] Installing Convex dependencies...");
-  const bunResult = spawnSync("bun", ["install"], {
+  const npmResult = spawnSync("npm", ["install"], {
     cwd: CONVEX_DIR,
     stdio: "pipe",
     encoding: "utf-8",
   });
-  if (bunResult.status !== 0) {
-    throw new Error(`bun install failed:\n${bunResult.stderr}`);
+  if (npmResult.status !== 0) {
+    throw new Error(`npm install failed:\n${npmResult.stderr}`);
   }
 
   console.log("[e2e] Setting Convex env vars...");
@@ -220,31 +279,31 @@ export default async function globalSetup(): Promise<void> {
   convexCmd(["deploy"], convexUrl, adminKey);
   console.log("[e2e] Deploy complete");
 
-  // ── 5. Build and start telegram-subscriber ────────────────────────
-  console.log("[e2e] Building telegram-subscriber...");
+  // ── 5. Build and start crm-worker ─────────────────────────────────
+  console.log("[e2e] Building crm-worker...");
   const buildResult = spawnSync(
     "cargo",
-    ["build", "-p", "telegram-subscriber", "--quiet"],
+    ["build", "-p", "crm-worker", "--quiet"],
     { cwd: ROOT, stdio: "pipe", encoding: "utf-8" }
   );
   if (buildResult.status !== 0) {
     throw new Error(`cargo build failed:\n${buildResult.stderr}`);
   }
 
-  // ── 5b. Create session directory for the subscriber ─────────────
+  // ── 5b. Create session directory for the worker ───────────────────
   const sessionDir = path.join(os.tmpdir(), `crm-e2e-sessions-${Date.now()}`);
   mkdirSync(sessionDir, { recursive: true });
   process.env.E2E_SESSION_DIR = sessionDir;
 
-  console.log("[e2e] Starting telegram-subscriber...");
-  const subscriberLogPath = path.join(
+  console.log("[e2e] Starting crm-worker...");
+  const workerLogPath = path.join(
     os.tmpdir(),
-    `crm-e2e-subscriber-${Date.now()}.log`
+    `crm-e2e-worker-${Date.now()}.log`
   );
-  process.env.E2E_SUBSCRIBER_LOG = subscriberLogPath;
-  console.log(`[e2e] Subscriber logs: ${subscriberLogPath}`);
-  const subscriberLogFd = openSync(subscriberLogPath, "w");
-  const subscriber = spawn(SUBSCRIBER_BIN, [], {
+  process.env.E2E_WORKER_LOG = workerLogPath;
+  console.log(`[e2e] Worker logs: ${workerLogPath}`);
+  const workerLogFd = openSync(workerLogPath, "w");
+  const worker = spawn(WORKER_BIN, [], {
     env: {
       PATH: process.env.PATH,
       CONVEX_URL: convexUrl,
@@ -254,20 +313,23 @@ export default async function globalSetup(): Promise<void> {
       TG_ID: process.env.TG_ID,
       TG_HASH: process.env.TG_HASH,
       TG_SESSION_DIR: sessionDir,
+      RESTATE_SERVICE_PORT: String(WORKER_SERVICE_PORT),
+      RESTATE_INGRESS_URL: `http://localhost:${RESTATE_INGRESS_PORT}`,
       SCAN_REFRESH_SECS: "5",
-      RUST_LOG: "debug,telegram_subscriber=debug",
+      RUST_LOG: "debug,crm_worker=debug",
     },
-    stdio: ["ignore", subscriberLogFd, subscriberLogFd],
+    stdio: ["ignore", workerLogFd, workerLogFd],
   });
 
-  // Give subscriber time to connect
+  // Give worker time to start its HTTP server
   await new Promise((r) => setTimeout(r, 3000));
-  if (subscriber.exitCode !== null) {
-    throw new Error(
-      `telegram-subscriber exited prematurely (code ${subscriber.exitCode})`
-    );
+  if (worker.exitCode !== null) {
+    throw new Error(`crm-worker exited prematurely (code ${worker.exitCode})`);
   }
-  console.log(`[e2e] telegram-subscriber running (PID ${subscriber.pid})`);
+  console.log(`[e2e] crm-worker running (PID ${worker.pid})`);
+
+  // ── 5c. Register crm-worker with Restate ──────────────────────────
+  await registerWorkerWithRestate();
 
   // ── 6. Set environment for test workers ───────────────────────────
   // VITE_CONVEX_URL is handled by playwright.config.ts webServer.env
@@ -275,5 +337,5 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_ROBOT_PRIVATE_KEY = privateKeyPem;
 
   // Store references for teardown
-  globalThis.__E2E = { container, subscriber };
+  globalThis.__E2E = { container, restateContainer, worker };
 }

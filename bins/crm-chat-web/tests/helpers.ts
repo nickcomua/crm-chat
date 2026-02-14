@@ -7,6 +7,18 @@ import { getDynamicEnv, staticEnv } from "./env";
 const CHATS_URL_PATTERN = /\/#\/chats/;
 
 /**
+ * Unwrap a Convex `result()` return value.
+ * Convex mutations using the `result()` helper return `{ok: true, value: T}` or `{ok: false, error: string}`.
+ */
+export function unwrapResult<T>(res: unknown): T {
+  const r = res as { ok: boolean; value?: T; error?: string };
+  if (!r.ok) {
+    throw new Error(`Mutation failed: ${r.error}`);
+  }
+  return r.value as T;
+}
+
+/**
  * Mint an RS256 JWT for robot authentication against the test Convex backend.
  */
 export function mintRobotJwt(): string {
@@ -79,16 +91,18 @@ export async function getConvexUserId(page: Page): Promise<string> {
  */
 export async function seedTestClient(
   userId: string,
-  externalId: string
+  telegramId: string
 ): Promise<string> {
   const client = getRobotClient();
 
   // Register the client as Connected
-  const clientId = await client.mutation(api.clients.robotRegisterConnected, {
-    userId,
-    externalId,
-    kind: "Telegram",
-  });
+  const clientId = unwrapResult<string>(
+    await client.mutation(api.clients.workerRegisterConnected, {
+      userId,
+      telegramId,
+      kind: "Telegram",
+    })
+  );
 
   // Create some test chats
   await client.mutation(api.chats.upsert, {
@@ -98,7 +112,7 @@ export async function seedTestClient(
     chatType: "Dialog",
     isPinned: true,
     pinnedName: "Alice",
-    lastMessageTs: Date.now(),
+    lastMessageTimestamp: Date.now(),
   });
 
   await client.mutation(api.chats.upsert, {
@@ -108,7 +122,7 @@ export async function seedTestClient(
     chatType: "Group",
     isPinned: false,
     pinnedName: "Team Chat",
-    lastMessageTs: Date.now() - 3_600_000,
+    lastMessageTimestamp: Date.now() - 3_600_000,
   });
 
   await client.mutation(api.chats.upsert, {
@@ -118,10 +132,10 @@ export async function seedTestClient(
     chatType: "Dialog",
     isPinned: true,
     pinnedName: "Bob",
-    lastMessageTs: Date.now() - 7_200_000,
+    lastMessageTimestamp: Date.now() - 7_200_000,
   });
 
-  return clientId as string;
+  return clientId;
 }
 
 /**

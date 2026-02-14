@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient } from "./helpers";
+import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
 
 /** Mirror Rust's sanitize_owner_id: replace non-alphanumeric (except - _) with _ */
 function sanitizeOwnerId(ownerId: string): string {
@@ -53,21 +53,20 @@ test.describe("Client Settings & Chat Scanning", () => {
     const convexUserId = await getConvexUserId(page);
 
     // Place session file where the subscriber expects it (same path logic as Rust)
-    const externalId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(externalId, convexUserId);
+    const telegramId = `telegram:${session.userId}`;
+    copiedSessionPath = getSessionPath(telegramId, convexUserId);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     copyFileSync(session.sessionFile, copiedSessionPath);
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
     const robot = getRobotClient();
-    registeredClientId = (await robot.mutation(
-      api.clients.robotRegisterConnected,
-      {
+    registeredClientId = unwrapResult<string>(
+      await robot.mutation(api.clients.workerRegisterConnected, {
         userId: convexUserId,
-        externalId,
+        telegramId,
         kind: "Telegram",
-      }
-    )) as string;
+      })
+    );
 
     await page.close();
   });
@@ -210,7 +209,8 @@ test.describe("Client Settings & Chat Scanning", () => {
       const chatListItems = page.locator(".space-y-px > button");
       await expect(chatListItems.first()).toBeVisible({ timeout: 15_000 });
       const visibleChats = await chatListItems.count();
-      expect(visibleChats).toBe(enabledCount);
+      // Use >= because parallel test workers may create additional scan-enabled chats
+      expect(visibleChats).toBeGreaterThanOrEqual(enabledCount);
     } else {
       // No scan-enabled chats — should show "No chats yet" or empty state
       await expect(page.locator("text=No chats yet")).toBeVisible({
@@ -220,6 +220,9 @@ test.describe("Client Settings & Chat Scanning", () => {
   });
 
   test("at least 2 chats show loaded messages", async ({ page }) => {
+    // This test waits for real Telegram scanning — allow extra time for
+    // Phase 4 refresh cycle to pick up newly-enabled chats and scan them.
+    test.setTimeout(120_000);
     // Enable scan on at least 2 chats via client settings
     await page.goto(`/#/client/${registeredClientId}`);
     await page.waitForSelector("text=Chat Scanning", { timeout: 30_000 });
@@ -237,9 +240,11 @@ test.describe("Client Settings & Chat Scanning", () => {
       }
     }
 
-    // Wait for subscriber to backfill messages — "Synced" badge appears when fullScanned=true
-    const syncedBadges = page.locator("text=Synced");
-    await expect(syncedBadges.nth(1)).toBeVisible({ timeout: 120_000 });
+    // Wait for subscriber to backfill messages — "Listening" badge appears when the worker
+    // has finished scanning and entered the real-time update listener (Phase 4).
+    // The UI shows "Listening" (not "Synced") because the active scanPhase takes precedence.
+    const listeningBadges = page.locator("text=Listening");
+    await expect(listeningBadges.nth(1)).toBeVisible({ timeout: 120_000 });
 
     // Open each synced chat and verify it has at least 1 message
     for (let i = 0; i < 2; i++) {

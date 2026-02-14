@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { api, getConvexUserId, getRobotClient } from "./helpers";
+import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 
@@ -28,11 +28,13 @@ test.describe("Scroll to Message", () => {
     const robot = getRobotClient();
 
     // Create test client.
-    clientId = (await robot.mutation(api.clients.robotRegisterConnected, {
-      userId,
-      externalId: `telegram:scroll-test-${Date.now()}`,
-      kind: "Telegram",
-    })) as string;
+    clientId = unwrapResult<string>(
+      await robot.mutation(api.clients.workerRegisterConnected, {
+        userId,
+        telegramId: `telegram:scroll-test-${Date.now()}`,
+        kind: "Telegram",
+      })
+    );
 
     // Create test chat.
     chatId = `${clientId}:scroll-chat`;
@@ -43,7 +45,7 @@ test.describe("Scroll to Message", () => {
       chatType: "Dialog",
       isPinned: true,
       pinnedName: "Scroll Test Chat",
-      lastMessageTs: Date.now(),
+      lastMessageTimestamp: Date.now(),
     });
 
     // Create 70 messages (PAGE_SIZE is 50, so messages 1–20 require a second page).
@@ -59,9 +61,9 @@ test.describe("Scroll to Message", () => {
         chatId,
         senderId: "sender-1",
         text: `Test message number ${i}`,
-        out: i % 2 === 0,
+        outgoing: i % 2 === 0,
         deleted: false,
-        ts: baseTs + i * 5000,
+        timestamp: baseTs + i * 5000,
       });
     }
 

@@ -7,7 +7,7 @@ const ROBOT_ISSUER = "https://crm-chat-robot.local";
 
 /** Identity info extracted from ctx.auth */
 export type CallerIdentity = {
-  /** Unique identifier (tokenIdentifier for Clerk, subject for robot JWT) */
+  /** Unique identifier (tokenIdentifier for Clerk, subject for worker JWT) */
   id: string;
   issuer: string;
   name?: string;
@@ -28,25 +28,25 @@ export async function requireAuth(ctx: QueryCtx | MutationCtx): Promise<CallerId
   };
 }
 
-/** Check if a caller is a robot (custom JWT). */
-export function isRobotCaller(caller: CallerIdentity): boolean {
+/** Check if a caller is a worker (custom JWT). */
+export function isWorkerCaller(caller: CallerIdentity): boolean {
   return caller.issuer === ROBOT_ISSUER;
 }
 
 /** Require the caller to be a human (Clerk-authenticated). */
 export async function requireHuman(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
-  if (isRobotCaller(caller)) {
+  if (isWorkerCaller(caller)) {
     throw new Error("Unauthorized: this action is for human users only");
   }
   return caller;
 }
 
-/** Require the caller to be a robot (custom JWT). */
-export async function requireRobot(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
+/** Require the caller to be a worker (custom JWT). */
+export async function requireWorker(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
-  if (!isRobotCaller(caller)) {
-    throw new Error("Unauthorized: only robots can perform this action");
+  if (!isWorkerCaller(caller)) {
+    throw new Error("Unauthorized: only workers can perform this action");
   }
   return caller;
 }
@@ -58,10 +58,10 @@ export function requireOwner(callerId: string, resourceUserId: string): void {
   }
 }
 
-/** Require the caller to be the assigned robot for an auth session. */
-export function requireAssignedRobot(callerId: string, assignedRobot: string | undefined): void {
-  if (!assignedRobot || assignedRobot !== callerId) {
-    throw new Error("Unauthorized: not assigned to this robot");
+/** Require the caller to be the assigned worker for an auth session. */
+export function requireAssignedWorker(callerId: string, claimedByWorkerId: string | undefined): void {
+  if (!claimedByWorkerId || claimedByWorkerId !== callerId) {
+    throw new Error("Unauthorized: not assigned to this worker");
   }
 }
 

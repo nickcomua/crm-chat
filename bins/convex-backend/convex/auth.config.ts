@@ -6,9 +6,10 @@ const authConfig = {
       applicationID: "convex",
     },
     {
-      // Self-signed RS256 JWT for robot services (telegram-subscriber)
-      // issuer must match the `iss` claim in the robot JWT exactly
+      // Self-signed RS256 JWT for worker services (crm-worker)
+      // issuer must match the `iss` claim in the worker JWT exactly
       // jwks is a data URI containing the RS256 public key (set via env var)
+      // TODO: migrate to Clerk M2M JWTs when Clerk ships JWT-format M2M tokens
       type: "customJwt" as const,
       issuer: "https://crm-chat-robot.local",
       jwks: process.env.ROBOT_JWKS ?? "",

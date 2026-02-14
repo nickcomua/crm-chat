@@ -32,9 +32,9 @@ export default defineConfig({
   webServer: process.env.TEST_BASE_URL
     ? undefined
     : {
-        command: `bunx vite build && bunx vite preview --port ${TEST_PORT}`,
+        command: `npx vite build && npx vite preview --port ${TEST_PORT}`,
         url: `http://localhost:${TEST_PORT}`,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: false,
         env: {
           VITE_CONVEX_URL: `http://localhost:${CONVEX_PORT}`,
         },
