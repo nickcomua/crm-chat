@@ -152,10 +152,6 @@ docker compose up es-proxy
 The proxy provides an OpenAPI specification at `/openapi.json`. You can use this to generate TypeScript types:
 
 ```bash
-# Using openapi-typescript
-npx openapi-typescript http://localhost:3001/openapi.json -o src/lib/es-proxy.d.ts
-
-# Or with bunx
 bunx openapi-typescript http://localhost:3001/openapi.json -o src/lib/es-proxy.d.ts
 ```
 

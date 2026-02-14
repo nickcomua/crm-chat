@@ -2,7 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, QrCode, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, onResultError } from "@/lib/convex";
+import { api, type Id, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { QrAuth } from "./client/qr-auth";
 import { Button } from "./ui/button";
@@ -27,9 +27,10 @@ interface ClientStatus {
 }
 
 interface ClientDoc {
-  _id: string;
+  _id: Id<"clients">;
   kind: string;
   telegramId: string;
+  externalId?: string;
   scanningChatIds: string[];
   status: ClientStatus;
 }

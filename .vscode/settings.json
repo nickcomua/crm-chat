@@ -1,12 +1,8 @@
 {
-	"nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
-	"rust-analyzer.testExplorer": true,
-	"rust-analyzer.check.command": "clippy",
-	"rust-analyzer.diagnostics.experimental.enable": true,
-	"editor.formatOnSave": true,
-	"files.autoSave": "afterDelay",
-	"editor.codeActionsOnSave": {
-		"source.organizeImports.biome": "explicit",
-		"source.fixAll.biome": "explicit"
-	}
+    "nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
+    "rust-analyzer.testExplorer": true,
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.diagnostics.experimental.enable": true,
+    "editor.formatOnSave": true,
+    "files.autoSave": "afterDelay"
 }
