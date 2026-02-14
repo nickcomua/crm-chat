@@ -1,9 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import type { Doc } from "crm-chat-convex-backend/dataModel";
 import { Plus, QrCode, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/lib/convex";
+import { api, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { QrAuth } from "./client/qr-auth";
 import { Button } from "./ui/button";
@@ -22,7 +21,18 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 
-type ClientDoc = Doc<"clients">;
+interface ClientStatus {
+  type: "Authenticating" | "Connected" | "Error";
+  message?: string;
+}
+
+interface ClientDoc {
+  _id: string;
+  kind: string;
+  telegramId: string;
+  scanningChatIds: string[];
+  status: ClientStatus;
+}
 
 function isClientConnected(client: ClientDoc): boolean {
   return client.status.type === "Connected";
@@ -107,7 +117,9 @@ export function TelegramClientsManager(): React.ReactNode {
             <ClientCard
               client={client}
               key={client._id}
-              onDelete={() => deleteClient({ clientId: client._id })}
+              onDelete={() =>
+                deleteClient({ clientId: client._id }).then(onResultError)
+              }
             />
           ))}
         </div>
@@ -123,7 +135,9 @@ export function TelegramClientsManager(): React.ReactNode {
               <ClientCard
                 client={client}
                 key={client._id}
-                onDelete={() => deleteClient({ clientId: client._id })}
+                onDelete={() =>
+                  deleteClient({ clientId: client._id }).then(onResultError)
+                }
               />
             ))}
           </div>
@@ -181,11 +195,11 @@ function ClientCard({
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
         <div className="space-y-1">
           <CardTitle className="font-medium text-sm">
-            {client.externalId || `Client ${client._id.slice(0, 8)}`}
+            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </CardTitle>
           <CardDescription className="text-xs">
-            {client.activeChats.length} active chat
-            {client.activeChats.length !== 1 ? "s" : ""}
+            {client.scanningChatIds.length} active chat
+            {client.scanningChatIds.length !== 1 ? "s" : ""}
           </CardDescription>
         </div>
         <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

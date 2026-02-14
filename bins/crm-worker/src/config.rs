@@ -1,25 +1,65 @@
-//! Configuration for Telegram subscriber service.
+//! Configuration for crm-worker service.
 
 use anyhow::Result;
 use std::env;
 use std::path::PathBuf;
 
-/// Telegram API credentials
+/// Telegram API credentials and worker configuration.
 #[derive(Clone)]
-pub struct TelegramConfig {
+pub struct WorkerConfig {
     pub api_id: i32,
     pub api_hash: String,
+    pub convex_url: String,
+    pub robot_id: String,
+    pub robot_kid: String,
+    pub private_key: String,
+    pub restate_port: u16,
+    /// Restate admin API URL for registering deployments (default: http://localhost:9070).
+    pub restate_admin_url: String,
+    /// Restate ingress URL where the bridge sends requests (default: http://localhost:8080).
+    pub restate_ingress_url: String,
+    /// URL the Restate runtime uses to reach this service endpoint.
+    /// Must be reachable from within Docker (default: http://host.docker.internal:{restate_port}).
+    pub restate_service_url: String,
 }
 
-impl TelegramConfig {
-    /// Load Telegram API credentials from environment variables.
+impl WorkerConfig {
+    /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self> {
         let api_id: i32 = env::var("TG_ID")
             .expect("TG_ID environment variable not set")
             .parse()
             .expect("TG_ID must be a valid integer");
         let api_hash = env::var("TG_HASH").expect("TG_HASH environment variable not set");
-        Ok(Self { api_id, api_hash })
+        let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
+        let robot_id = env::var("ROBOT_ID").expect("ROBOT_ID must be set");
+        let robot_kid = env::var("ROBOT_KID").expect("ROBOT_KID must be set");
+        let private_key = env::var("ROBOT_JWT_PRIVATE_KEY")
+            .expect("ROBOT_JWT_PRIVATE_KEY must be set")
+            .replace("\\n", "\n");
+        let restate_port: u16 = env::var("RESTATE_SERVICE_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9080);
+        let restate_admin_url = env::var("RESTATE_ADMIN_URL")
+            .unwrap_or_else(|_| "http://localhost:9070".to_string());
+        let restate_ingress_url = env::var("RESTATE_INGRESS_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let restate_service_url = env::var("RESTATE_SERVICE_URL")
+            .unwrap_or_else(|_| format!("http://host.docker.internal:{restate_port}"));
+
+        Ok(Self {
+            api_id,
+            api_hash,
+            convex_url,
+            robot_id,
+            robot_kid,
+            private_key,
+            restate_port,
+            restate_admin_url,
+            restate_ingress_url,
+            restate_service_url,
+        })
     }
 }
 
@@ -42,9 +82,6 @@ pub fn get_session_dir() -> PathBuf {
 }
 
 /// Sanitize an owner ID (Clerk userId) for use as a directory name.
-///
-/// Replaces non-alphanumeric characters (except `-` and `_`) with `_`.
-/// E.g. `https://example.clerk.dev|user_abc123` → `https___example_clerk_dev_user_abc123`
 pub fn sanitize_owner_id(owner_id: &str) -> String {
     owner_id
         .chars()
@@ -59,13 +96,6 @@ pub fn sanitize_owner_id(owner_id: &str) -> String {
 }
 
 /// Get the session file path for a given identifier and owner.
-///
-/// The identifier is sanitized to keep only digits and `+`:
-/// - Phone auth: `"+1234567890"` → `"+1234567890"`
-/// - QR/external ID: `"telegram:123456789"` → `"123456789"`
-///
-/// Also writes an `.owner` file with the original `owner_id` so
-/// session discovery can recover it from the sanitized directory name.
 pub fn get_session_path(identifier: &str, owner_id: &str) -> PathBuf {
     let sanitized: String = identifier
         .chars()
@@ -84,10 +114,18 @@ pub fn get_session_path(identifier: &str, owner_id: &str) -> PathBuf {
     dir.join(format!("{sanitized}.session"))
 }
 
+/// Copy the QR auth session file to the scanner-expected path.
+pub fn copy_session_for_scanning(auth_identifier: &str, owner_id: &str, telegram_user_id: i64) {
+    let auth_path = get_session_path(auth_identifier, owner_id);
+    let scan_path = get_session_path(&format!("telegram:{telegram_user_id}"), owner_id);
+    if auth_path != scan_path && auth_path.exists() {
+        std::fs::copy(&auth_path, &scan_path).ok();
+    }
+}
+
 /// Discover all session files on disk.
 ///
 /// Returns `(owner_id, session_path)` pairs for each `.session` file found.
-/// The `owner_id` is recovered from the `.owner` file written by [`get_session_path`].
 pub fn discover_session_files() -> Vec<(String, PathBuf)> {
     let session_dir = get_session_dir();
     let mut results = Vec::new();
@@ -103,14 +141,12 @@ pub fn discover_session_files() -> Vec<(String, PathBuf)> {
             continue;
         }
 
-        // Read the .owner file to recover the original userId
         let owner_file = path.join(".owner");
         let owner_id = match std::fs::read_to_string(&owner_file) {
             Ok(id) => id.trim().to_string(),
-            Err(_) => continue, // skip directories without .owner
+            Err(_) => continue,
         };
 
-        // Find all .session files in this owner directory
         let session_entries = match std::fs::read_dir(&path) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -125,17 +161,4 @@ pub fn discover_session_files() -> Vec<(String, PathBuf)> {
     }
 
     results
-}
-
-/// Copy the QR auth session file to the scanner-expected path.
-///
-/// For QR auth, the session file is created under the auth document ID.
-/// The scanner looks for it under the Telegram external ID (`telegram:{user_id}`).
-/// This copies the file so the scanner can find it.
-pub fn copy_session_for_scanning(auth_identifier: &str, owner_id: &str, telegram_user_id: i64) {
-    let auth_path = get_session_path(auth_identifier, owner_id);
-    let scan_path = get_session_path(&format!("telegram:{telegram_user_id}"), owner_id);
-    if auth_path != scan_path && auth_path.exists() {
-        std::fs::copy(&auth_path, &scan_path).ok();
-    }
 }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use convex_typegen::{Configuration, generate};
 
 fn main() {
@@ -23,10 +25,17 @@ fn main() {
         })
         .collect();
 
+    // No helper stubs needed for the current project — the Bun plugin already
+    // redirects _generated/* and convex/* imports, and helpers/auth.ts +
+    // helpers/result.ts work naturally since their runtime imports are all
+    // covered by the mock modules.
+    let helper_stubs = HashMap::new();
+
     let config = Configuration {
         schema_path: std::path::PathBuf::from("convex/schema.ts"),
         out_file: format!("{}/convex_types.rs", std::env::var("OUT_DIR").unwrap()),
         function_paths,
+        helper_stubs,
     };
 
     match generate(config) {

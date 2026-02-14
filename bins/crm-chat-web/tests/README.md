@@ -7,7 +7,7 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 1. **Install Playwright browsers:**
    ```bash
    cd bins/crm-chat-web
-   bunx playwright install chromium
+   npx playwright install chromium
    ```
 
 2. **Set environment variables** (or add them to the repo-root `.env` file):
@@ -23,11 +23,11 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 
 Tests use **testcontainers** to automatically spin up infrastructure:
 
-1. `global-setup.ts` starts a Convex Docker container, generates robot RSA keys, deploys Convex functions, and launches `telegram-subscriber` as a child process.
+1. `global-setup.ts` starts Convex and Restate Docker containers, generates robot RSA keys, deploys Convex functions, launches `crm-worker`, and registers it with Restate.
 2. Tests run against the ephemeral backend (no manual Docker/deploy needed).
-3. `global-teardown.ts` kills the subscriber and stops the container.
+3. `global-teardown.ts` kills the worker and stops the containers.
 
-The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Bun.
+The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Node.js.
 
 ## Running Tests
 
@@ -35,13 +35,13 @@ The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatical
 cd bins/crm-chat-web
 
 # Standard run (testcontainers handles all infra)
-bun run test
+npm test
 
 # Interactive UI mode
-bun run test:ui
+npm run test:ui
 
 # Headed mode (see the browser)
-bun run test:headed
+npm run test:headed
 ```
 
 ### Run against an external server (skip testcontainers)
@@ -49,7 +49,7 @@ bun run test:headed
 If you already have backend services running, set `TEST_BASE_URL` to skip the auto-started Vite dev server:
 
 ```bash
-TEST_BASE_URL=https://crm-chat.kaminazuma.com bun test
+TEST_BASE_URL=https://crm-chat.kaminazuma.com npm test
 ```
 
 Note: `global-setup.ts` still starts a Convex container unless you also set `E2E_CONVEX_URL` to point at your existing backend.
@@ -58,8 +58,8 @@ Note: `global-setup.ts` still starts a Convex container unless you also set `E2E
 
 | File | Description |
 |------|-------------|
-| `global-setup.ts` | Testcontainers global setup (Convex container, robot keys, deploy, subscriber) |
-| `global-teardown.ts` | Cleanup (kill subscriber, stop container) |
+| `global-setup.ts` | Testcontainers global setup (Convex + Restate containers, robot keys, deploy, crm-worker) |
+| `global-teardown.ts` | Cleanup (kill worker, stop containers) |
 | `helpers.ts` | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
 | `qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
 | `scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |

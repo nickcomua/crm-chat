@@ -1,12 +1,8 @@
-import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import {
-  isPhoneAuthTerminal,
-  requireHuman,
-  requireOwner,
-  requireRobot,
-} from "./helpers/auth";
+import { v } from "convex/values";
 import { clientDoc, clientKind } from "./schema";
+import { requireHuman, requireOwner, requireWorker, isPhoneAuthTerminal } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -24,12 +20,12 @@ export const list = query({
 /** Delete a client and cancel associated auth sessions. */
 export const deleteClient = mutation({
   args: { clientId: v.id("clients") },
-  returns: v.null(),
+  returns: result(v.null()),
   handler: async (ctx, { clientId }) => {
     const caller = await requireHuman(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
-      throw new Error("Client not found");
+      return err("Client not found");
     }
     requireOwner(caller.id, client.userId);
 
@@ -50,44 +46,46 @@ export const deleteClient = mutation({
     }
 
     await ctx.db.delete(clientId);
+    return ok(null);
   },
 });
 
-/** List all connected clients. Robot-only (for scanning). */
-export const connectedForRobot = query({
+/** List all connected clients. Worker-only (for scanning). */
+export const connectedForWorker = query({
   args: {},
   returns: v.array(clientDoc),
   handler: async (ctx) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const all = await ctx.db.query("clients").collect();
     return all.filter((c) => c.status.type === "Connected");
   },
 });
 
-/** Register a pre-authenticated client as Connected. Robot-only. */
-export const robotRegisterConnected = mutation({
+/** Register a pre-authenticated client as Connected. Worker-only. */
+export const workerRegisterConnected = mutation({
   args: {
     userId: v.string(),
-    externalId: v.string(),
+    telegramId: v.string(),
     kind: clientKind,
   },
-  returns: v.id("clients"),
+  returns: result(v.id("clients")),
   handler: async (ctx, args) => {
-    await requireRobot(ctx);
+    await requireWorker(ctx);
     const existing = await ctx.db
       .query("clients")
-      .withIndex("by_userId_externalId", (q) =>
-        q.eq("userId", args.userId).eq("externalId", args.externalId)
+      .withIndex("by_userId_telegramId", (q) =>
+        q.eq("userId", args.userId).eq("telegramId", args.telegramId),
       )
       .unique();
     if (existing) {
       await ctx.db.patch(existing._id, { status: { type: "Connected" } });
-      return existing._id;
+      return ok(existing._id);
     }
-    return await ctx.db.insert("clients", {
+    const id = await ctx.db.insert("clients", {
       ...args,
-      activeChats: [],
+      scanningChatIds: [],
       status: { type: "Connected" },
     });
+    return ok(id);
   },
 });

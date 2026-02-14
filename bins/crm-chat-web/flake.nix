@@ -1,251 +1,171 @@
 {
-  description = "CRM Chat Web - Bun + Vite + React development environment";
+  description = "CRM Chat Web - Node.js + Vite + React development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    systems.url = "github:nix-systems/default";
-
-    bun2nix.url = "github:nix-community/bun2nix";
-    bun2nix.inputs.nixpkgs.follows = "nixpkgs";
-    bun2nix.inputs.systems.follows = "systems";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  nixConfig = {
-    extra-substituters = [
-      "https://cache.nixos.org"
-      "https://nix-community.cachix.org"
-    ];
-    extra-trusted-public-keys = [
-      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-    ];
-  };
-
-  outputs =
-    inputs:
-    let
-      eachSystem = inputs.nixpkgs.lib.genAttrs (import inputs.systems);
-
-      pkgsFor = eachSystem (
-        system:
-        import inputs.nixpkgs {
+  outputs = { self, nixpkgs, flake-utils }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
-          overlays = [ inputs.bun2nix.overlays.default ];
-        }
-      );
-    in
-    {
-      packages = eachSystem (system:
-        let
-          pkgs = pkgsFor.${system};
+        };
+        # Build crm-chat-web static files
+        # Note: Environment variables are now injected at runtime, not build time
+        # Build crm-chat-web static files using buildNpmPackage
+        # This handles dependency fetching (via npmDepsHash) and avoids network/sandbox issues.
+        crm-chat-web = pkgs.buildNpmPackage {
+          pname = "crm-chat-web";
+          version = "0.0.0";
+          src = pkgs.lib.cleanSource ./.;
 
-          # Combined source: crm-chat-web + convex-backend side by side
-          # so that file:../convex-backend resolves during bun install
-          combinedSrc = pkgs.runCommand "crm-chat-web-combined-src" {} ''
-            mkdir -p $out/crm-chat-web $out/convex-backend
-            cp -r ${pkgs.lib.cleanSource ./.}/. $out/crm-chat-web/
-            cp -r ${pkgs.lib.cleanSource ../convex-backend}/. $out/convex-backend/
+          # Nix will tell you the correct hash to put here after the first build attempt.
+          npmDepsHash = "sha256-h4gFo0Kvm2Jv4uJh+BlpPHQCil9zQqjpDRbRCn/7sds=";
+
+          # We override the install phase because Vite outputs to 'dist/'
+          installPhase = ''
+            mkdir -p $out
+            cp -r dist/* $out/
           '';
+        };
 
-          # Build crm-chat-web static files using bun2nix
-          # Environment variables are injected at runtime, not build time
-          crm-chat-web = pkgs.stdenv.mkDerivation {
-            pname = "crm-chat-web";
-            version = "0.0.0";
-            src = combinedSrc;
 
-            nativeBuildInputs = [
-              pkgs.bun2nix.hook
-            ];
+        # Entrypoint script that injects runtime env vars and starts nginx
+        entrypoint = pkgs.writeShellScript "entrypoint.sh" ''
+          #!/bin/sh
+          set -e
 
-            bunDeps = pkgs.bun2nix.fetchBunDeps {
-              bunNix = ./bun.nix;
-            };
+          # Create necessary temporary directories for nginx
+          mkdir -p /tmp/client_body /tmp/proxy /tmp/fastcgi /tmp/uwsgi /tmp/scgi
 
-            bunRoot = "crm-chat-web";
+          # Copy static files to a writable location
+          mkdir -p /tmp/www
+          cp -r /var/www/* /tmp/www/
 
-            # Use hoisted linker so node_modules/.bin works correctly
-            bunInstallFlags =
-              if pkgs.stdenv.hostPlatform.isDarwin
-              then [ "--linker=hoisted" "--backend=copyfile" ]
-              else [ "--linker=hoisted" ];
-
-            # Run vite build only; tsc type-checking is handled by the lint check
-            buildPhase = ''
-              cd crm-chat-web
-              node_modules/.bin/vite build
-            '';
-
-            installPhase = ''
-              mkdir -p $out
-              cp -r dist/. $out/
-            '';
+          # Generate env-config.js with runtime environment variables
+          # Use printf for proper escaping
+          cat > /tmp/www/env-config.js <<EOF
+          window.import = window.import || {};
+          window.import.meta = window.import.meta || {};
+          window.import.meta.env = {
+            VITE_CLERK_PUBLISHABLE_KEY: "''${VITE_CLERK_PUBLISHABLE_KEY:-}",
+            VITE_CONVEX_URL: "''${VITE_CONVEX_URL:-}",
+            VITE_SENTRY_DSN: "''${VITE_SENTRY_DSN:-}",
+            VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT:-production}"
           };
+          console.log('Runtime env loaded:', window.import.meta.env);
+          EOF
 
-          # Entrypoint script that injects runtime env vars and starts nginx
-          entrypoint = pkgs.writeShellScript "entrypoint.sh" ''
-            #!/bin/sh
-            set -e
+          # Start nginx with error log to stderr (prevents /var/log/nginx/error.log warning)
+          exec ${pkgs.nginx}/bin/nginx -c /etc/nginx/nginx.conf -e /dev/stderr -g "daemon off;"
+        '';
 
-            # Create necessary temporary directories for nginx
-            mkdir -p /tmp/client_body /tmp/proxy /tmp/fastcgi /tmp/uwsgi /tmp/scgi
-
-            # Copy static files to a writable location
-            mkdir -p /tmp/www
-            cp -r /var/www/* /tmp/www/
-
-            # Generate env-config.js with runtime environment variables
-            cat > /tmp/www/env-config.js <<EOF
-            window.import = window.import || {};
-            window.import.meta = window.import.meta || {};
-            window.import.meta.env = {
-              VITE_CLERK_PUBLISHABLE_KEY: "''${VITE_CLERK_PUBLISHABLE_KEY:-}",
-              VITE_CONVEX_URL: "''${VITE_CONVEX_URL:-}",
-              VITE_SENTRY_DSN: "''${VITE_SENTRY_DSN:-}",
-              VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT:-production}"
-            };
-            EOF
-
-            # Start nginx with error log to stderr
-            exec ${pkgs.nginx}/bin/nginx -c /etc/nginx/nginx.conf -e /dev/stderr -g "daemon off;"
-          '';
-
-          # nginx config for serving crm-chat-web
-          nginxConfContent = ''
-            user nobody nobody;
-            worker_processes 1;
-            error_log /dev/stderr;
-            pid /tmp/nginx.pid;
-            events { worker_connections 1024; }
-            http {
-              include ${pkgs.nginx}/conf/mime.types;
-              default_type application/octet-stream;
-              access_log /dev/stdout;
-              sendfile on;
-              keepalive_timeout 65;
-              client_body_temp_path /tmp/client_body;
-              proxy_temp_path /tmp/proxy;
-              fastcgi_temp_path /tmp/fastcgi;
-              uwsgi_temp_path /tmp/uwsgi;
-              scgi_temp_path /tmp/scgi;
-              server {
-                listen 80;
-                root /tmp/www;
-                index index.html;
-                location / {
-                  try_files $uri $uri/ /index.html;
-                }
+        # nginx config for serving crm-chat-web
+        nginxConfContent = ''
+          user nobody nobody;
+          worker_processes 1;
+          error_log /dev/stderr;
+          pid /tmp/nginx.pid;
+          events { worker_connections 1024; }
+          http {
+            include ${pkgs.nginx}/conf/mime.types;
+            default_type application/octet-stream;
+            access_log /dev/stdout;
+            sendfile on;
+            keepalive_timeout 65;
+            client_body_temp_path /tmp/client_body;
+            proxy_temp_path /tmp/proxy;
+            fastcgi_temp_path /tmp/fastcgi;
+            uwsgi_temp_path /tmp/uwsgi;
+            scgi_temp_path /tmp/scgi;
+            server {
+              listen 80;
+              root /tmp/www;
+              index index.html;
+              location / {
+                try_files $uri $uri/ /index.html;
               }
             }
-          '';
+          }
+        '';
 
-          # Docker image with nginx and runtime env var support
-          crm-chat-web-img = pkgs.dockerTools.buildLayeredImage {
-            name = "nick395/crm-chat-web";
-            tag = "latest";
-            contents = [
-              pkgs.nginx
-              pkgs.fakeNss
-              pkgs.coreutils
-              pkgs.bash
-              (pkgs.writeTextDir "etc/nginx/nginx.conf" nginxConfContent)
-              (pkgs.runCommand "www" {} ''
-                mkdir -p $out/var/www
-                cp -r ${crm-chat-web}/* $out/var/www/
-              '')
-            ];
+        # Docker image with nginx and runtime env var support
+        crm-chat-web-img = pkgs.dockerTools.buildLayeredImage {
+          name = "nick395/crm-chat-web";
+          tag = "latest";
+          contents = [
+            pkgs.nginx
+            pkgs.fakeNss
+            pkgs.coreutils
+            pkgs.bash
+            (pkgs.writeTextDir "etc/nginx/nginx.conf" nginxConfContent)
+            (pkgs.runCommand "www" {} ''
+              mkdir -p $out/var/www
+              cp -r ${crm-chat-web}/* $out/var/www/
+            '')
+          ];
 
-            config = {
-              Cmd = [ "${entrypoint}" ];
-              ExposedPorts = {
-                "80/tcp" = {};
-              };
-              Env = [
-                "VITE_CLERK_PUBLISHABLE_KEY="
-                "VITE_CONVEX_URL="
-                "VITE_SENTRY_DSN="
-                "VITE_SENTRY_ENVIRONMENT=production"
-              ];
-              WorkingDir = "/tmp/www";
+          config = {
+            Cmd = [ "${entrypoint}" ];
+            ExposedPorts = {
+              "80/tcp" = {};
             };
+            Env = [
+              "VITE_CLERK_PUBLISHABLE_KEY="
+              "VITE_CONVEX_URL="
+              "VITE_SENTRY_DSN="
+              "VITE_SENTRY_ENVIRONMENT=production"
+            ];
+            WorkingDir = "/tmp/www";
           };
-        in
-        {
+        };
+      in
+      {
+        packages = {
           default = crm-chat-web;
           inherit crm-chat-web crm-chat-web-img;
-        }
-      );
+        };
 
-      checks = eachSystem (system:
-        let
-          pkgs = pkgsFor.${system};
-          combinedSrc = pkgs.runCommand "crm-chat-web-combined-src" {} ''
-            mkdir -p $out/crm-chat-web $out/convex-backend
-            cp -r ${pkgs.lib.cleanSource ./.}/. $out/crm-chat-web/
-            cp -r ${pkgs.lib.cleanSource ../convex-backend}/. $out/convex-backend/
-          '';
-        in
-        {
-          crm-chat-web-lint = pkgs.stdenv.mkDerivation {
+        checks = {
+          crm-chat-web-lint = pkgs.buildNpmPackage {
             pname = "crm-chat-web-lint";
             version = "0.0.0";
-            src = combinedSrc;
+            src = pkgs.lib.cleanSource ./.;
+
+            npmDepsHash = "sha256-h4gFo0Kvm2Jv4uJh+BlpPHQCil9zQqjpDRbRCn/7sds=";
+            makeCacheWritable = true;
 
             nativeBuildInputs = [
-              pkgs.bun2nix.hook
               pkgs.biome
             ];
 
-            bunDeps = pkgs.bun2nix.fetchBunDeps {
-              bunNix = ./bun.nix;
-            };
-
-            bunRoot = "crm-chat-web";
-            dontUseBunBuild = true;
-
-            bunInstallFlags =
-              if pkgs.stdenv.hostPlatform.isDarwin
-              then [ "--linker=hoisted" "--backend=copyfile" ]
-              else [ "--linker=hoisted" ];
-
-            # Use biome from nixpkgs (not node_modules) to avoid ELF patching issues.
-            # Symlink node_modules into convex-backend so tsc can resolve
-            # "convex/server" etc. from the backend source files.
-            # Patch ultracite: its !!**/build exclusion matches the nix sandbox
-            # /build/ root on Linux, causing biome to ignore all files. Remove
-            # those patterns and create .git so VCS integration can find a root.
+            # Run eslint + biome only (skip tsc --noEmit because generated
+            # Convex types from convex-backend/ aren't available in the sandbox).
             buildPhase = ''
-              cd crm-chat-web
-              ln -s "$(pwd)/node_modules" ../convex-backend/node_modules
-              sed -i '/\/build/d' node_modules/ultracite/config/biome/core/biome.jsonc
-              mkdir -p .git
-              node_modules/.bin/eslint .
-              biome check
-              node_modules/.bin/tsc -b
+              npx eslint .
+              npx biome check
             '';
 
+            # Override install phase to create empty output
             installPhase = ''
               touch $out
             '';
 
             doCheck = false;
           };
-        }
-      );
+        };
 
-      devShells = eachSystem (system:
-        let
-          pkgs = pkgsFor.${system};
-        in
-        {
-          default = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              bun
-              bun2nix
-            ];
-          };
-        }
-      );
-    };
+        devShells.default = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            nodejs
+          ];
+
+          shellHook = ''
+          '';
+        };
+      }
+    );
 }

@@ -1,15 +1,8 @@
 {
-	"nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
-	"rust-analyzer.testExplorer": true,
-	"rust-analyzer.check.command": "clippy",
-	"rust-analyzer.diagnostics.experimental.enable": true,
-	"editor.formatOnSave": true,
-	"editor.defaultFormatter": "biomejs.biome",
-	"files.autoSave": "afterDelay",
-	"editor.codeActionsOnSave": {
-		"source.organizeImports.biome": "explicit",
-		"source.fixAll.biome": "explicit"
-	},
-  "biome.requireConfiguration": true,
-  "biome.configurationPath": "./bins/crm-chat-web/biome.jsonc"
+    "nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
+    "rust-analyzer.testExplorer": true,
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.diagnostics.experimental.enable": true,
+    "editor.formatOnSave": true,
+    "files.autoSave": "afterDelay"
 }

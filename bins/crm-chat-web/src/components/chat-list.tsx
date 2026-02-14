@@ -10,7 +10,7 @@ import { Input } from "./ui/input";
 interface Client {
   _id: string;
   kind: string;
-  externalId: string;
+  telegramId: string;
 }
 
 interface ChatListProps {
@@ -48,9 +48,9 @@ function getChatDisplayName(chat: {
 
 function getClientDisplayName(client: {
   kind: string;
-  externalId: string;
+  telegramId: string;
 }): string {
-  return `${client.kind} (${client.externalId.slice(0, 8)}...)`;
+  return `${client.kind} (${client.telegramId.slice(0, 8)}...)`;
 }
 
 const WHITESPACE_RE = /\s+/;
@@ -74,14 +74,14 @@ function getAvatarGradient(name: string): string {
   return `linear-gradient(135deg, oklch(0.68 0.16 ${hue}), oklch(0.55 0.18 ${hue2}))`;
 }
 
-function getExternalIdColorStyle(externalId: string): {
+function getTelegramIdColorStyle(telegramId: string): {
   background: string;
   color: string;
 } {
   let hash = 0;
-  for (let i = 0; i < externalId.length; i++) {
+  for (let i = 0; i < telegramId.length; i++) {
     // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
-    hash = externalId.charCodeAt(i) + ((hash << 5) - hash);
+    hash = telegramId.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = Math.abs(hash) % 360;
   return {
@@ -104,7 +104,7 @@ export function ChatList({
     | Array<{
         chatId: string;
         text?: string;
-        mediaId?: string;
+        mediaExternalId?: string;
         mediaKind?: string;
       }>
     | undefined;
@@ -138,7 +138,7 @@ export function ChatList({
     if (!a.isPinned && b.isPinned) {
       return 1;
     }
-    return b.lastMessageTs - a.lastMessageTs;
+    return b.lastMessageTimestamp - a.lastMessageTimestamp;
   });
 
   let filteredChats = sortedChats;
@@ -170,7 +170,7 @@ export function ChatList({
     if (entry.mediaKind) {
       return mediaKindLabel(entry.mediaKind as MediaKind);
     }
-    if (entry.mediaId) {
+    if (entry.mediaExternalId) {
       return "[Media]";
     }
     return null;
@@ -307,7 +307,7 @@ export function ChatList({
                         width={36}
                       />
                     )}
-                    {chat.scanPhase === "listening" && (
+                    {chat.scanPhase === "Listening" && (
                       <div className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-sidebar bg-emerald-500" />
                     )}
                   </div>
@@ -326,7 +326,7 @@ export function ChatList({
                         )}
                       </div>
                       <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                        {formatTimestamp(chat.lastMessageTs)}
+                        {formatTimestamp(chat.lastMessageTimestamp)}
                       </span>
                     </div>
 
@@ -334,9 +334,9 @@ export function ChatList({
                       {client && (
                         <span
                           className="shrink-0 rounded px-1.5 py-px font-medium text-[10px]"
-                          style={getExternalIdColorStyle(client.externalId)}
+                          style={getTelegramIdColorStyle(client.telegramId)}
                         >
-                          {client.externalId}
+                          {client.telegramId}
                         </span>
                       )}
                       {lastMessage && (

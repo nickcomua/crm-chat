@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient } from "./helpers";
+import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
 
 /** Mirror Rust's sanitize_owner_id */
 function sanitizeOwnerId(ownerId: string): string {
@@ -51,16 +51,19 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
     const convexUserId = await getConvexUserId(page);
 
-    const externalId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(externalId, convexUserId);
+    const telegramId = `telegram:${session.userId}`;
+    copiedSessionPath = getSessionPath(telegramId, convexUserId);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     copyFileSync(session.sessionFile, copiedSessionPath);
 
     const robot = getRobotClient();
-    registeredClientId = (await robot.mutation(
-      api.clients.robotRegisterConnected,
-      { userId: convexUserId, externalId, kind: "Telegram" }
-    )) as string;
+    registeredClientId = unwrapResult<string>(
+      await robot.mutation(api.clients.workerRegisterConnected, {
+        userId: convexUserId,
+        telegramId,
+        kind: "Telegram",
+      })
+    );
 
     await page.close();
   });

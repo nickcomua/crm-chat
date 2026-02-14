@@ -1,14 +1,14 @@
-//! Robot JWT minting for Convex authentication.
+//! Worker JWT minting for Convex authentication.
 //!
-//! The robot service authenticates to Convex using a self-signed RS256 JWT.
-//! The private key is loaded from the `ROBOT_JWT_PRIVATE_KEY` environment variable.
+//! The worker service authenticates to Convex using a self-signed RS256 JWT.
+//! TODO: Migrate to Clerk M2M JWTs when Clerk ships JWT-format M2M tokens.
 
 use anyhow::Result;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 
 #[derive(Serialize)]
-struct RobotClaims {
+struct WorkerClaims {
     sub: String,
     iss: String,
     aud: String,
@@ -16,16 +16,16 @@ struct RobotClaims {
     exp: u64,
 }
 
-/// Mint a new JWT for the robot service.
+/// Mint a new JWT for the worker service.
 ///
-/// The token is valid for 1 hour and uses RS256 signing.
+/// The token is valid for 24 hours and uses RS256 signing.
 /// The `kid` must match the key ID in the JWKS configured in Convex auth.config.ts.
-pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str, kid: &str) -> Result<String> {
+pub fn mint_worker_jwt(private_key_pem: &str, robot_id: &str, kid: &str) -> Result<String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
 
-    let claims = RobotClaims {
+    let claims = WorkerClaims {
         sub: robot_id.to_string(),
         iss: "https://crm-chat-robot.local".to_string(),
         aud: "convex".to_string(),

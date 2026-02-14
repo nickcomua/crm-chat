@@ -9,15 +9,15 @@ import {
   Video,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/lib/convex";
+import { api, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { type MediaKind, mediaKindLabel } from "./media-types";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
 
-type MediaStatus = "pending" | "downloading" | "stored" | "failed" | "skipped";
+type MediaStatus = "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
 
 export interface MediaInfo {
-  externalId: string;
+  telegramFileId: string;
   messageId: string;
   kind: MediaKind;
   status: MediaStatus;
@@ -235,7 +235,11 @@ function SkippedMedia({
           ? "bg-primary-foreground/10 hover:bg-primary-foreground/20"
           : "bg-muted/60 hover:bg-muted"
       )}
-      onClick={() => requestDownload({ externalId: media.externalId })}
+      onClick={() =>
+        requestDownload({ telegramFileId: media.telegramFileId }).then(
+          onResultError
+        )
+      }
       type="button"
     >
       <Download
@@ -505,19 +509,19 @@ export function MediaRenderer({
   media,
   isOutgoing,
 }: MediaRendererProps): React.ReactNode {
-  if (media.status === "downloading") {
+  if (media.status === "Downloading") {
     return <DownloadingMedia isOutgoing={isOutgoing} media={media} />;
   }
 
-  if (media.status === "pending") {
+  if (media.status === "Pending") {
     return <PendingMedia isOutgoing={isOutgoing} kind={media.kind} />;
   }
 
-  if (media.status === "skipped") {
+  if (media.status === "Skipped") {
     return <SkippedMedia isOutgoing={isOutgoing} media={media} />;
   }
 
-  if (media.status === "failed" || !media.url) {
+  if (media.status === "Failed" || !media.url) {
     return <FailedMedia isOutgoing={isOutgoing} kind={media.kind} />;
   }
 

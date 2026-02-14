@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/convex";
+import { api, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import type { MediaKind } from "./media-types";
 
@@ -25,10 +25,10 @@ import type { MediaKind } from "./media-types";
 // ---------------------------------------------------------------------------
 
 interface MediaRecord {
-  externalId: string;
+  telegramFileId: string;
   messageId: string;
   kind: MediaKind;
-  status: "pending" | "downloading" | "stored" | "failed" | "skipped";
+  status: "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
   bytesDownloaded?: number;
   fileSize?: number;
   fileName?: string;
@@ -208,7 +208,11 @@ function CancelButton({ record }: { record: MediaRecord }): React.ReactNode {
   return (
     <button
       className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      onClick={() => cancelDownload({ externalId: record.externalId })}
+      onClick={() =>
+        cancelDownload({ telegramFileId: record.telegramFileId }).then(
+          onResultError
+        )
+      }
       type="button"
     >
       <X className="h-3 w-3" />
@@ -321,7 +325,11 @@ function FailedRow({ record }: { record: MediaRecord }): React.ReactNode {
         <GoToChatButton record={record} />
         <button
           className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={() => retryDownload({ externalId: record.externalId })}
+          onClick={() =>
+            retryDownload({ telegramFileId: record.telegramFileId }).then(
+              onResultError
+            )
+          }
           type="button"
         >
           <RefreshCw className="h-3 w-3" />
@@ -412,16 +420,16 @@ function Section({
 
 export function DownloadManager(): React.ReactNode {
   const activeMedia = useQuery(api.media.listByStatus, {
-    statuses: ["downloading", "pending"],
+    statuses: ["Downloading", "Pending"],
   });
   const failedMedia = useQuery(api.media.listByStatus, {
-    statuses: ["failed"],
+    statuses: ["Failed"],
   });
   const recentMedia = useQuery(api.media.listByStatus, {
-    statuses: ["stored"],
+    statuses: ["Stored"],
   });
   const counts = useQuery(api.media.countByStatus, {
-    statuses: ["pending", "failed"],
+    statuses: ["Pending", "Failed"],
   });
 
   const isLoading =
@@ -437,12 +445,12 @@ export function DownloadManager(): React.ReactNode {
     );
   }
 
-  const downloading = activeMedia.filter((m) => m.status === "downloading");
-  const queued = activeMedia.filter((m) => m.status === "pending");
+  const downloading = activeMedia.filter((m) => m.status === "Downloading");
+  const queued = activeMedia.filter((m) => m.status === "Pending");
   const pendingCount =
-    counts?.find((c) => c.status === "pending")?.count ?? queued.length;
+    counts?.find((c) => c.status === "Pending")?.count ?? queued.length;
   const failedCount =
-    counts?.find((c) => c.status === "failed")?.count ?? failedMedia.length;
+    counts?.find((c) => c.status === "Failed")?.count ?? failedMedia.length;
   const isEmpty =
     downloading.length === 0 &&
     pendingCount === 0 &&
@@ -474,7 +482,7 @@ export function DownloadManager(): React.ReactNode {
             title="Downloading"
           >
             {downloading.map((r) => (
-              <DownloadingRow key={r.externalId} record={r} />
+              <DownloadingRow key={r.telegramFileId} record={r} />
             ))}
           </Section>
 
@@ -484,7 +492,7 @@ export function DownloadManager(): React.ReactNode {
             title="Queued"
           >
             {queued.map((r) => (
-              <QueuedRow key={r.externalId} record={r} />
+              <QueuedRow key={r.telegramFileId} record={r} />
             ))}
           </Section>
 
@@ -495,7 +503,7 @@ export function DownloadManager(): React.ReactNode {
             variant="destructive"
           >
             {failedMedia.map((r) => (
-              <FailedRow key={r.externalId} record={r} />
+              <FailedRow key={r.telegramFileId} record={r} />
             ))}
           </Section>
 
@@ -505,7 +513,7 @@ export function DownloadManager(): React.ReactNode {
             title="Recent"
           >
             {recentMedia.map((r) => (
-              <RecentRow key={r.externalId} record={r} />
+              <RecentRow key={r.telegramFileId} record={r} />
             ))}
           </Section>
         </div>
