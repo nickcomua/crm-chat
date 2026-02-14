@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import type { Id } from "crm-chat-convex-backend/dataModel";
 import { ClientSettings } from "@/components/client-settings";
 
 export const Route = createFileRoute("/_auth/client/$clientId")({
@@ -11,7 +12,7 @@ function ClientSettingsPage(): React.ReactNode {
   return (
     <div className="h-full overflow-y-auto">
       <div className="container px-4 py-8">
-        <ClientSettings clientId={clientId} />
+        <ClientSettings clientId={clientId as Id<"clients">} />
       </div>
     </div>
   );

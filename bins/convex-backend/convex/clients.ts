@@ -1,7 +1,12 @@
-import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import {
+  isPhoneAuthTerminal,
+  requireHuman,
+  requireOwner,
+  requireRobot,
+} from "./helpers/auth";
 import { clientDoc, clientKind } from "./schema";
-import { requireHuman, requireOwner, requireRobot, isPhoneAuthTerminal } from "./helpers/auth";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -72,7 +77,7 @@ export const robotRegisterConnected = mutation({
     const existing = await ctx.db
       .query("clients")
       .withIndex("by_userId_externalId", (q) =>
-        q.eq("userId", args.userId).eq("externalId", args.externalId),
+        q.eq("userId", args.userId).eq("externalId", args.externalId)
       )
       .unique();
     if (existing) {
