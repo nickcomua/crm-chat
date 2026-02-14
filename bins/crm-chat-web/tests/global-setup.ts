@@ -67,9 +67,9 @@ function loadEnvFile(): void {
   }
 }
 
-/** Run `npx convex <args>` against the test backend. */
+/** Run `bunx convex <args>` against the test backend. */
 function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
-  const result = spawnSync("npx", ["convex", ...args], {
+  const result = spawnSync("bunx", ["convex", ...args], {
     cwd: CONVEX_DIR,
     env: {
       ...process.env,
@@ -81,7 +81,7 @@ function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
   });
   if (result.status !== 0) {
     throw new Error(
-      `npx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`
+      `bunx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`
     );
   }
 }
@@ -194,13 +194,13 @@ export default async function globalSetup(): Promise<void> {
 
   // ── 4. Deploy Convex functions ────────────────────────────────────
   console.log("[e2e] Installing Convex dependencies...");
-  const npmResult = spawnSync("npm", ["install"], {
+  const bunResult = spawnSync("bun", ["install"], {
     cwd: CONVEX_DIR,
     stdio: "pipe",
     encoding: "utf-8",
   });
-  if (npmResult.status !== 0) {
-    throw new Error(`npm install failed:\n${npmResult.stderr}`);
+  if (bunResult.status !== 0) {
+    throw new Error(`bun install failed:\n${bunResult.stderr}`);
   }
 
   console.log("[e2e] Setting Convex env vars...");

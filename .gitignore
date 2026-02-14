@@ -28,3 +28,4 @@ playwright-report/
 
 # Trace logs
 bins/telegram-subscriber/logs/
+.claude
