@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
+import type { Doc } from "crm-chat-convex-backend/dataModel";
 import { Plus, QrCode, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/convex";
@@ -21,18 +22,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 
-interface ClientStatus {
-  type: "Authenticating" | "Connected" | "Error";
-  message?: string;
-}
-
-interface ClientDoc {
-  _id: string;
-  kind: string;
-  externalId: string;
-  activeChats: string[];
-  status: ClientStatus;
-}
+type ClientDoc = Doc<"clients">;
 
 function isClientConnected(client: ClientDoc): boolean {
   return client.status.type === "Connected";
