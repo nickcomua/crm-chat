@@ -200,6 +200,7 @@ export function MessageList({
   }
 
   // Virtualizer for the message list.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: sortedMessages.length,
     getScrollElement: () => scrollRef.current,
