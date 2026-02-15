@@ -13,7 +13,10 @@ use std::time::Duration;
 
 use common::{assert_mutation_error, get_test_env, mint_robot_jwt};
 use convex::ConvexClient;
-use convex_backend::{ConvexApi, ConvexApiClient, PhoneAuthWorkerClaimArgs, QrAuthWorkerClaimArgs};
+use convex_backend::{
+    ConvexApi, ConvexApiClient, PhoneAuthWorkerClaimArgs, QrAuthWorkerClaimArgs,
+    WorkerTasksPendingForWorkerArgs,
+};
 use futures::StreamExt;
 
 /// Create a fresh ConvexApiClient authenticated as the test robot.
@@ -34,12 +37,13 @@ async fn connect_robot_client() -> ConvexApiClient {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_subscribe_phone_auth_pending_empty() {
+async fn test_subscribe_worker_tasks_pending_empty() {
     let client = connect_robot_client().await;
 
     let mut sub = client
-        .subscribe_phone_auth_pending_for_worker()
+        .subscribe_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
+            maxMediaWorkflows: None,
+        })
         .await
         .expect("Failed to subscribe");
 
@@ -51,41 +55,19 @@ async fn test_subscribe_phone_auth_pending_empty() {
 
     assert!(
         result.is_empty(),
-        "Expected no pending phone auths, got {}",
+        "Expected no pending tasks, got {}",
         result.len()
     );
 }
 
 #[tokio::test]
-
-async fn test_subscribe_qr_auth_pending_empty() {
-    let client = connect_robot_client().await;
-
-    let mut sub = client
-        .subscribe_qr_auth_pending_for_worker()
-        .await
-        .expect("Failed to subscribe");
-
-    let result = tokio::time::timeout(Duration::from_secs(10), sub.next())
-        .await
-        .expect("Timeout waiting for subscription")
-        .expect("Subscription stream ended")
-        .expect("Subscription yielded error");
-
-    assert!(
-        result.is_empty(),
-        "Expected no pending QR auths, got {}",
-        result.len()
-    );
-}
-
-#[tokio::test]
-
-async fn test_query_phone_auth_pending() {
+async fn test_query_worker_tasks_pending_empty() {
     let client = connect_robot_client().await;
 
     let result = client
-        .query_phone_auth_pending_for_worker()
+        .query_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
+            maxMediaWorkflows: Some(2.0),
+        })
         .await
         .expect("Query failed");
 

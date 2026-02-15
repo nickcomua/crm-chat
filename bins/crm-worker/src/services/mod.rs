@@ -5,7 +5,7 @@
 //! - `DialogSync`:       Syncs Telegram dialog list to Convex
 //! - `ProfilePhotoSync`: Downloads and uploads chat profile photos
 //! - `ChatScanner`:      Per-chat message scanning
-//! - `MediaDownloader`:  Batch download of pending media files
+//! - `MediaDownloader`:  Per-file media download
 //! - `UpdateListener`:   Real-time Telegram update stream
 //! - `PhoneAuthWorkflow`: Durable workflow for phone-based authentication
 //! - `QrAuthWorkflow`:    Durable workflow for QR-code-based authentication
@@ -19,6 +19,6 @@ pub mod qr_auth;
 pub mod task_orchestrator;
 pub mod update_listener;
 
-// All handler inputs use generated Convex table types directly — no custom
-// request structs. The orchestrator sends the same types it receives from
-// Convex subscriptions, eliminating mapping boilerplate.
+// Handler inputs use the generated `WorkerTasksTask` enum directly — the
+// orchestrator serializes the full task variant and each handler destructures
+// its expected variant, ignoring the extra "type" tag from serde.

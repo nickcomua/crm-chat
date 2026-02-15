@@ -25,20 +25,20 @@ export const pendingForWorker = query({
 		const limit = maxMediaWorkflows ?? 0;
 		if (limit <= 0) return pending;
 
-		// Count in-flight MediaDownloader/download tasks
+		// Count in-flight MediaDownloader tasks
 		const dispatched = await ctx.db
 			.query("workerTasks")
 			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
 			.collect();
 		const activeMedia = dispatched.filter(
-			(t) => t.service === "MediaDownloader" && t.handler === "download",
+			(t) => t.task.type === "MediaDownloader:download",
 		).length;
 
 		const slotsAvailable = Math.max(0, limit - activeMedia);
 		let mediaAllowed = slotsAvailable;
 
 		return pending.filter((task) => {
-			if (task.service === "MediaDownloader" && task.handler === "download") {
+			if (task.task.type === "MediaDownloader:download") {
 				if (mediaAllowed <= 0) return false;
 				mediaAllowed--;
 			}
@@ -76,10 +76,14 @@ export const enqueuePostSyncTasks = mutation({
 		await requireWorker(ctx);
 		const client = await ctx.db.get(clientId);
 		if (!client) return null;
-		const payload = JSON.stringify(client);
 
 		// ProfilePhotoSync
-		await enqueueTask(ctx, "ProfilePhotoSync", "sync", clientId, payload);
+		await enqueueTask(ctx, {
+			type: "ProfilePhotoSync:sync",
+			clientId: client._id,
+			userId: client.userId,
+			telegramId: client.telegramId,
+		});
 
 		// ChatScanner for each unscanned chat
 		const chats = await ctx.db
@@ -88,16 +92,41 @@ export const enqueuePostSyncTasks = mutation({
 			.collect();
 		for (const chat of chats) {
 			if (chat.scanEnabled && !chat.fullScanned) {
-				await enqueueTask(
-					ctx,
-					"ChatScanner",
-					"scan",
-					chat.chatId,
-					JSON.stringify(chat),
-				);
+				await enqueueTask(ctx, {
+					type: "ChatScanner:scan",
+					chatId: chat.chatId,
+					clientId: client._id,
+					userId: client.userId,
+				});
 			}
 		}
 		return null;
+	},
+});
+
+/**
+ * Reset all Dispatched tasks back to Pending. Worker-only.
+ *
+ * Called once at worker startup so that tasks stranded by a previous crash or
+ * restart cycle are re-dispatched. Restate's virtual-object keying guarantees
+ * idempotency — duplicate dispatches to the same key are harmless.
+ */
+export const resetDispatched = mutation({
+	args: {},
+	returns: v.number(),
+	handler: async (ctx) => {
+		await requireWorker(ctx);
+		const dispatched = await ctx.db
+			.query("workerTasks")
+			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
+			.collect();
+		for (const task of dispatched) {
+			await ctx.db.patch(task._id, {
+				status: "Pending",
+				dispatchedAt: undefined,
+			});
+		}
+		return dispatched.length;
 	},
 });
 

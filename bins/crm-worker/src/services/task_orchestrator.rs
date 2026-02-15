@@ -13,6 +13,7 @@ use std::time::Duration;
 use convex_backend::{
     ClientsWorkerRegisterConnectedArgs, ConvexApi, ConvexApiClient,
     WorkerTasksMarkDispatchedArgs, WorkerTasksPendingForWorkerArgs, WorkerTasksTable,
+    WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -95,6 +96,17 @@ pub async fn run_orchestrator(
     info!("TaskOrchestrator: discovering sessions");
     discover_and_register_sessions(convex, config).await;
 
+    // // Reset stale Dispatched tasks from a previous run so they get re-dispatched.
+    // // Restate deduplicates by virtual-object key, so double-dispatch is harmless.
+    // match convex.worker_tasks_reset_dispatched().await {
+    //     Ok(n) => {
+    //         if n > 0.0 {
+    //             info!(count = n, "Reset stale dispatched tasks to Pending");
+    //         }
+    //     }
+    //     Err(e) => warn!(error = %e, "Failed to reset dispatched tasks"),
+    // }
+
     let http = reqwest::Client::new();
 
     // Single subscription: all pending worker tasks (with media workflow limit)
@@ -141,37 +153,109 @@ pub async fn run_orchestrator(
             // ── Pending tasks → dispatch to Restate ─────────────────────
             Some(Ok(pending)) = tasks.next() => {
                 let pending: Vec<WorkerTasksTable> = pending;
-                for task in &pending {
+                for row in &pending {
                     // Mark dispatched first (idempotent — Restate handles dedup)
                     convex
                         .worker_tasks_mark_dispatched(WorkerTasksMarkDispatchedArgs {
-                            taskId: task.id.clone(),
+                            taskId: row.id.clone(),
                         })
                         .await
                         .ok();
 
-                    // POST to Restate
-                    if let Some(ref payload) = task.payload {
-                        restate_send_raw(
-                            &http, ingress_url, &task.service, &task.key, &task.handler, payload,
-                        )
-                        .await;
+                    let (service, key, handler, payload) = dispatch_info(&row.task);
+
+                    if let Some(json) = payload {
+                        restate_send_raw(&http, ingress_url, service, &key, handler, &json).await;
                     } else {
-                        restate_send_empty(
-                            &http, ingress_url, &task.service, &task.key, &task.handler,
-                        )
-                        .await;
+                        restate_send_empty(&http, ingress_url, service, &key, handler).await;
                     }
 
-                    info!(
-                        service = %task.service,
-                        handler = %task.handler,
-                        key = %task.key,
-                        "Task dispatched"
-                    );
+                    info!(service, handler, key, "Task dispatched");
                 }
             }
         }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Typed task → Restate dispatch routing
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Derive `(service, key, handler, payload)` from a typed task variant.
+///
+/// Returns: `(service_name, restate_key, handler_name, optional_json_payload)`.
+/// Payload is `None` for handlers that take no arguments (stop, cancel-without-doc, etc.).
+///
+/// For tasks with payloads, the typed `Task` variant is serialized directly.
+/// Since `Task` uses `#[serde(tag = "type")]`, the JSON includes a `"type"` key
+/// alongside the variant's data fields — Restate handlers simply ignore the extra key.
+fn dispatch_info(task: &Task) -> (&'static str, String, &'static str, Option<String>) {
+    match task {
+        // ── Auth flows ───────────────────────────────────────────────
+        Task::PhoneAuthRun { authId, doc } => {
+            ("PhoneAuthWorkflow", authId.clone(), "run", Some(doc.clone()))
+        }
+        Task::PhoneAuthSubmitCode { authId } => {
+            ("PhoneAuthWorkflow", authId.clone(), "submitCode", None)
+        }
+        Task::PhoneAuthSubmitPassword { authId } => {
+            ("PhoneAuthWorkflow", authId.clone(), "submitPassword", None)
+        }
+        Task::PhoneAuthCancel { authId } => {
+            ("PhoneAuthWorkflow", authId.clone(), "cancel", None)
+        }
+        Task::QrAuthRun { authId, doc } => {
+            ("QrAuthWorkflow", authId.clone(), "run", Some(doc.clone()))
+        }
+        Task::QrAuthCancel { authId } => {
+            ("QrAuthWorkflow", authId.clone(), "cancel", None)
+        }
+
+        // ── Client lifecycle ─────────────────────────────────────────
+        // Serialize the full Task variant — handlers pick their fields,
+        // ignoring the extra "type" key that serde adds.
+        task @ Task::DialogSyncSync { clientId, .. } => (
+            "DialogSync",
+            clientId.clone(),
+            "sync",
+            Some(serde_json::to_string(task).unwrap()),
+        ),
+        task @ Task::UpdateListenerListen { clientId, .. } => (
+            "UpdateListener",
+            clientId.clone(),
+            "listen",
+            Some(serde_json::to_string(task).unwrap()),
+        ),
+        Task::UpdateListenerStop { clientId } => {
+            ("UpdateListener", clientId.clone(), "stop", None)
+        }
+        task @ Task::ProfilePhotoSyncSync { clientId, .. } => (
+            "ProfilePhotoSync",
+            clientId.clone(),
+            "sync",
+            Some(serde_json::to_string(task).unwrap()),
+        ),
+        Task::ProfilePhotoSyncStop { clientId } => {
+            ("ProfilePhotoSync", clientId.clone(), "stop", None)
+        }
+
+        // ── Chat scanning ────────────────────────────────────────────
+        task @ Task::ChatScannerScan { chatId, .. } => (
+            "ChatScanner",
+            chatId.clone(),
+            "scan",
+            Some(serde_json::to_string(task).unwrap()),
+        ),
+
+        // ── Per-file media download ──────────────────────────────────
+        task @ Task::MediaDownloaderDownload {
+            telegramFileId, ..
+        } => (
+            "MediaDownloader",
+            telegramFileId.clone(),
+            "download",
+            Some(serde_json::to_string(task).unwrap()),
+        ),
     }
 }
 

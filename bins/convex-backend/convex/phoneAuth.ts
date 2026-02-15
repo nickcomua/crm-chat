@@ -105,7 +105,7 @@ export const start = mutation({
     // Enqueue worker task
     const auth = await ctx.db.get(authId);
     if (auth) {
-      await enqueueTask(ctx, "PhoneAuthWorkflow", "run", authId, JSON.stringify(auth));
+      await enqueueTask(ctx, { type: "PhoneAuth:run", authId, doc: JSON.stringify(auth) });
     }
 
     return ok(null);
@@ -135,10 +135,7 @@ export const submitCode = mutation({
     });
 
     // Enqueue worker task
-    const updated = await ctx.db.get(authId);
-    if (updated) {
-      await enqueueTask(ctx, "PhoneAuthWorkflow", "submit_code", authId, JSON.stringify(updated));
-    }
+    await enqueueTask(ctx, { type: "PhoneAuth:submitCode", authId });
 
     return ok(null);
   },
@@ -167,10 +164,7 @@ export const submitPassword = mutation({
     });
 
     // Enqueue worker task
-    const updated = await ctx.db.get(authId);
-    if (updated) {
-      await enqueueTask(ctx, "PhoneAuthWorkflow", "submit_password", authId, JSON.stringify(updated));
-    }
+    await enqueueTask(ctx, { type: "PhoneAuth:submitPassword", authId });
 
     return ok(null);
   },
@@ -198,8 +192,8 @@ export const cancel = mutation({
       updatedAt: Date.now(),
     });
 
-    // Enqueue worker task (no payload needed for cancel)
-    await enqueueTask(ctx, "PhoneAuthWorkflow", "cancel", authId);
+    // Enqueue worker task
+    await enqueueTask(ctx, { type: "PhoneAuth:cancel", authId });
 
     return ok(null);
   },

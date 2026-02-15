@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsUpdateSyncProgressScanPhase, ClientsTable, ConvexApi, ConvexApiClient,
-    MessagesMarkDeletedArgs, MessagesUpsertArgs,
+    ConvexApi, ConvexApiClient, MessagesMarkDeletedArgs, MessagesUpsertArgs,
+    WorkerTasksTask as Task,
 };
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -27,11 +27,11 @@ use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
 
 use super::chat_scanner::{ChatScanRequest, scan_chat_messages};
-use super::media_downloader::download_pending_media;
+use super::dialog_sync::ClientTaskFields;
 
 #[restate_sdk::object]
 pub trait UpdateListener {
-    async fn listen(req: Json<ClientsTable>) -> Result<(), HandlerError>;
+    async fn listen(req: Json<Task>) -> Result<(), HandlerError>;
     async fn stop() -> Result<(), HandlerError>;
 }
 
@@ -46,21 +46,35 @@ impl UpdateListener for UpdateListenerImpl {
     async fn listen(
         &self,
         ctx: ObjectContext<'_>,
-        req: Json<ClientsTable>,
+        req: Json<Task>,
     ) -> Result<(), HandlerError> {
         let token = CancellationToken::new();
         self.cancel_tokens.insert(ctx.key().to_string(), token.clone());
-        let req = req.into_inner();
+        let task = req.into_inner();
+        let Task::UpdateListenerListen {
+            clientId,
+            userId,
+            telegramId,
+        } = task
+        else {
+            return Err(anyhow::anyhow!("Expected UpdateListener:listen task").into());
+        };
 
-        info!(client_id = %req.id, "UpdateListener: starting");
+        let fields = ClientTaskFields {
+            client_id: clientId,
+            user_id: userId,
+            telegram_id: telegramId,
+        };
+
+        info!(client_id = %fields.client_id, "UpdateListener: starting");
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.telegram_id)
+            .get_or_create(&fields.user_id, &fields.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        let result = run_listener(&self.convex, &self.pool, &tg_client, &req, &token).await;
+        let result = run_listener(&self.convex, &self.pool, &tg_client, &fields, &token).await;
         self.cancel_tokens.remove(ctx.key());
         result.map_err(anyhow::Error::from)?;
         Ok(())
@@ -79,10 +93,10 @@ async fn run_listener(
     convex: &ConvexApiClient,
     pool: &Arc<ClientPool>,
     tg_client: &Arc<TelegramClient>,
-    req: &ClientsTable,
+    req: &ClientTaskFields,
     token: &CancellationToken,
 ) -> Result<(), WorkerError> {
-    info!(client_id = %req.id, "Starting real-time update listener");
+    info!(client_id = %req.client_id, "Starting real-time update listener");
 
     let mut update_stream = tg_client
         .iter_updates()
@@ -139,7 +153,7 @@ async fn run_listener(
                 backfill_handle = Some(tokio::spawn(async move {
                     if chats_changed {
                         // Scan newly-enabled chats
-                        let chats = match cx::list_worker_chats(&bf_convex, &bf_req.id).await {
+                        let chats = match cx::list_worker_chats(&bf_convex, &bf_req.client_id).await {
                             Ok(c) => c,
                             Err(e) => {
                                 warn!(error = %e, "Failed to list chats for backfill");
@@ -151,7 +165,7 @@ async fn run_listener(
                         }) {
                             let chat_ext_id = chat
                                 .chat_id
-                                .strip_prefix(&format!("{}:", bf_req.id))
+                                .strip_prefix(&format!("{}:", bf_req.client_id))
                                 .unwrap_or(&chat.chat_id)
                                 .to_string();
 
@@ -164,7 +178,7 @@ async fn run_listener(
                             };
 
                             let chat_req = ChatScanRequest {
-                                client_id: bf_req.id.clone(),
+                                client_id: bf_req.client_id.clone(),
                                 user_id: bf_req.user_id.clone(),
                                 external_id: bf_req.telegram_id.clone(),
                                 chat_id: chat.chat_id.clone(),
@@ -177,26 +191,6 @@ async fn run_listener(
                             }
                         }
                     }
-
-                    // Download pending media
-                    let tg = match bf_pool.get_or_create(&bf_req.user_id, &bf_req.telegram_id).await {
-                        Ok(c) => c,
-                        Err(e) => {
-                            warn!(error = %e, "Failed to get TG client for media backfill");
-                            return;
-                        }
-                    };
-                    if let Err(e) = download_pending_media(&bf_convex, &tg, &bf_req.id).await {
-                        warn!(error = %e, "Failed to download pending media");
-                    }
-
-                    // Reset scanPhase back to Listening
-                    cx::set_scan_phase_for_client(
-                        &bf_convex,
-                        &bf_req.id,
-                        ChatsUpdateSyncProgressScanPhase::Listening,
-                    )
-                    .await;
                 }));
             }
 
@@ -222,15 +216,15 @@ async fn run_listener(
 
 async fn load_scan_enabled_chats(
     convex: &ConvexApiClient,
-    req: &ClientsTable,
+    req: &ClientTaskFields,
 ) -> Result<HashSet<String>, WorkerError> {
-    let chats = cx::list_worker_chats(convex, &req.id).await?;
+    let chats = cx::list_worker_chats(convex, &req.client_id).await?;
     Ok(chats
         .iter()
         .filter(|c| c.scan_enabled.unwrap_or(false))
         .filter_map(|c| {
             c.chat_id
-                .strip_prefix(&format!("{}:", req.id))
+                .strip_prefix(&format!("{}:", req.client_id))
                 .map(|s| s.to_string())
         })
         .collect())
@@ -239,7 +233,7 @@ async fn load_scan_enabled_chats(
 async fn process_update(
     convex: &ConvexApiClient,
     tg_client: &Arc<TelegramClient>,
-    req: &ClientsTable,
+    req: &ClientTaskFields,
     update: &Update,
     scan_enabled_chats: &HashSet<String>,
 ) -> Result<(), WorkerError> {
@@ -249,7 +243,7 @@ async fn process_update(
                 return Ok(());
             }
 
-            let chat_id = format!("{}:{}", req.id, msg.chat_external_id);
+            let chat_id = format!("{}:{}", req.client_id, msg.chat_external_id);
             let message_id = format!("{}:{}", chat_id, msg.external_id);
             let ts = msg.timestamp_ms.map(|t| t as f64).unwrap_or(0.0);
 
@@ -258,7 +252,7 @@ async fn process_update(
                     messageId: message_id,
                     externalId: msg.external_id.clone(),
                     userId: req.user_id.clone(),
-                    clientId: req.id.clone(),
+                    clientId: req.client_id.clone(),
                     chatId: chat_id,
                     senderId: msg.sender_id.clone(),
                     text: msg.text.clone(),

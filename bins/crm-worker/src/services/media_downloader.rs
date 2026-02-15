@@ -1,30 +1,24 @@
-//! MediaDownloader — Restate virtual object for downloading pending media.
+//! MediaDownloader — Restate virtual object for per-file media downloads.
 //!
-//! Keyed by `client_id`. Polls Convex for pending media records and downloads
-//! them from Telegram, streaming directly to Convex storage.
+//! Keyed by `telegram_file_id`. Each file gets its own short-lived workflow.
+//! Parallelism is controlled by `MAX_MEDIA_WORKFLOWS` in the Convex
+//! `pendingForWorker` query.
 
 use std::sync::Arc;
 
-use convex_backend::{
-    ChatsUpdateSyncProgressScanPhase, ClientsTable, ConvexApi, ConvexApiClient,
-    MediaListPendingForClientArgs,
-};
-use futures::StreamExt;
-use messanger_telegram::TelegramClient;
+use convex_backend::{ConvexApiClient, WorkerTasksTask as Task};
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
-use crate::error::WorkerError;
 use crate::ops::convex as cx;
 use crate::ops::media::download_and_upload;
-use crate::ops::telegram::{default_mime_for_pending_kind, parse_media_external_id};
+use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
 
 #[restate_sdk::object]
 pub trait MediaDownloader {
-    async fn download(req: Json<ClientsTable>) -> Result<(), HandlerError>;
-    async fn stop() -> Result<(), HandlerError>;
+    async fn download(req: Json<Task>) -> Result<(), HandlerError>;
 }
 
 pub struct MediaDownloaderImpl {
@@ -36,142 +30,80 @@ impl MediaDownloader for MediaDownloaderImpl {
     async fn download(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ClientsTable>,
+        req: Json<Task>,
     ) -> Result<(), HandlerError> {
-        let req = req.into_inner();
-        info!(client_id = %req.id, "MediaDownloader: starting");
+        let task = req.into_inner();
+        let Task::MediaDownloaderDownload {
+            telegramFileId,
+            userId,
+            clientId: _,
+            telegramId,
+            chatId,
+            kind,
+            mimeType,
+            fileSize,
+        } = task
+        else {
+            return Err(anyhow::anyhow!("Expected MediaDownloader:download task").into());
+        };
+
+        let kind_str = media_kind_to_str(&kind);
+        info!(
+            telegram_file_id = %telegramFileId,
+            chat_id = %chatId,
+            kind = kind_str,
+            "MediaDownloader: downloading file"
+        );
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.telegram_id)
+            .get_or_create(&userId, &telegramId)
             .await
             .map_err(anyhow::Error::from)?;
 
-        download_pending_media(&self.convex, &tg_client, &req.id)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(())
-    }
+        let (chat_ext_id, msg_id) = match parse_media_external_id(&telegramFileId) {
+            Some(parsed) => parsed,
+            None => {
+                let err = "Invalid media external ID format";
+                warn!(telegram_file_id = %telegramFileId, err);
+                cx::mark_media_failed(&self.convex, &telegramFileId, err).await;
+                return Ok(());
+            }
+        };
 
-    async fn stop(&self, _ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
-        info!("MediaDownloader: stop requested");
-        Ok(())
-    }
-}
+        let content_type = mimeType
+            .as_deref()
+            .unwrap_or_else(|| default_mime_for_kind_str(kind_str));
 
-/// Download all pending media for a client.
-pub async fn download_pending_media(
-    convex: &ConvexApiClient,
-    tg_client: &Arc<TelegramClient>,
-    client_id: &str,
-) -> Result<(), WorkerError> {
-    let concurrency: usize = std::env::var("DOWNLOAD_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3);
-
-    let mut total_success = 0usize;
-    let mut total_failed = 0usize;
-
-    // Signal the UI that media downloads are in progress
-    cx::set_scan_phase_for_client(
-        convex,
-        client_id,
-        ChatsUpdateSyncProgressScanPhase::DownloadingMedia,
-    )
-    .await;
-
-    loop {
-        let pending = convex
-            .query_media_list_pending_for_client(MediaListPendingForClientArgs {
-                clientId: client_id.to_string(),
-            })
-            .await?;
-        if pending.is_empty() {
-            break;
+        match download_and_upload(
+            &self.convex,
+            &tg_client,
+            &chat_ext_id,
+            msg_id,
+            &telegramFileId,
+            content_type,
+            mimeType.as_deref(),
+            None, // fileName not in task
+            None, // width
+            None, // height
+            None, // duration
+            fileSize.map(|s| s as usize),
+        )
+        .await
+        {
+            Ok(()) => {
+                info!(telegram_file_id = %telegramFileId, "File downloaded successfully");
+            }
+            Err(e) => {
+                warn!(
+                    telegram_file_id = %telegramFileId,
+                    error = %e,
+                    "Failed to download file"
+                );
+                cx::mark_media_failed(&self.convex, &telegramFileId, &e.to_string()).await;
+            }
         }
 
-        info!(count = pending.len(), concurrency, "Downloading pending media batch");
-
-        let convex = convex.clone();
-        let results: Vec<bool> = futures::stream::iter(pending.into_iter().map(|record| {
-            let convex = convex.clone();
-            let tg_client = tg_client.clone();
-            async move {
-                let (chat_ext_id, msg_id) =
-                    match parse_media_external_id(&record.telegram_file_id) {
-                        Some(parsed) => parsed,
-                        None => {
-                            warn!(external_id = %record.telegram_file_id, "Invalid media external ID");
-                            cx::mark_media_failed(
-                                &convex,
-                                &record.telegram_file_id,
-                                "Invalid external ID format",
-                            )
-                            .await;
-                            return false;
-                        }
-                    };
-
-                let content_type = default_mime_for_pending_kind(&record.kind);
-                match download_and_upload(
-                    &convex,
-                    &tg_client,
-                    &chat_ext_id,
-                    msg_id,
-                    &record.telegram_file_id,
-                    content_type,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    record.file_size.map(|s| s as usize),
-                )
-                .await
-                {
-                    Ok(()) => true,
-                    Err(e) => {
-                        warn!(
-                            external_id = %record.telegram_file_id,
-                            error = %e,
-                            "Failed to upload media"
-                        );
-                        cx::mark_media_failed(
-                            &convex,
-                            &record.telegram_file_id,
-                            &e.to_string(),
-                        )
-                        .await;
-                        false
-                    }
-                }
-            }
-        }))
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-        let success = results.iter().filter(|&&ok| ok).count();
-        let failed = results.len() - success;
-        total_success += success;
-        total_failed += failed;
-
-        info!(success, failed, "Batch complete");
+        Ok(())
     }
-
-    // Downloads complete — transition back to Listening
-    cx::set_scan_phase_for_client(
-        convex,
-        client_id,
-        ChatsUpdateSyncProgressScanPhase::Listening,
-    )
-    .await;
-
-    if total_success > 0 || total_failed > 0 {
-        info!(total_success, total_failed, "All pending media processed");
-    } else {
-        info!("No pending media to download");
-    }
-    Ok(())
 }

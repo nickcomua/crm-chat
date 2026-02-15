@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use std::collections::HashMap;
+
 use convex_typegen::{Configuration, generate};
 
 #[test]
@@ -13,6 +15,7 @@ fn test_crm_chat_schema() {
         schema_path,
         out_file: out_file.to_string_lossy().to_string(),
         function_paths: vec![],
+        helper_stubs: HashMap::new(),
     };
 
     generate(config).expect("Failed to generate types from CRM chat schema");
