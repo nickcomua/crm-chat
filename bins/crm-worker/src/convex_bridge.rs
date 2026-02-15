@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::auth::mint_worker_jwt;
 use crate::config::{WorkerConfig, discover_session_files};
-use crate::services::client_scanner::StartScanRequest;
+use crate::services::ScanRequest;
 use crate::services::phone_auth::{PhoneAuthRequest, SubmitCodeRequest, SubmitPasswordRequest};
 use crate::services::qr_auth::QrAuthRequest;
 
@@ -306,7 +306,7 @@ pub async fn run(config: &WorkerConfig) -> anyhow::Result<()> {
                         "Starting scan for connected client"
                     );
 
-                    let req = StartScanRequest {
+                    let req = ScanRequest {
                         client_id: client.id.clone(),
                         user_id: client.user_id.clone(),
                         external_id: client.telegram_id.clone(),
