@@ -155,10 +155,12 @@ export const updateScanEnabled = mutation({
       await ctx.db.patch(chat._id, { scanEnabled });
       // Enqueue scan if not already fully scanned
       if (!chat.fullScanned) {
-        const updated = await ctx.db.get(chat._id);
-        if (updated) {
-          await enqueueTask(ctx, "ChatScanner", "scan", chatId, JSON.stringify(updated));
-        }
+        await enqueueTask(ctx, {
+          type: "ChatScanner:scan",
+          chatId,
+          clientId: chat.clientId,
+          userId: chat.userId,
+        });
       }
     }
     return ok(null);
@@ -312,10 +314,12 @@ export const rescan = mutation({
     });
 
     // Enqueue scan task
-    const updated = await ctx.db.get(chat._id);
-    if (updated) {
-      await enqueueTask(ctx, "ChatScanner", "scan", chatId, JSON.stringify(updated));
-    }
+    await enqueueTask(ctx, {
+      type: "ChatScanner:scan",
+      chatId,
+      clientId: chat.clientId,
+      userId: chat.userId,
+    });
 
     return ok(null);
   },

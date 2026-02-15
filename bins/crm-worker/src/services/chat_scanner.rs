@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsMarkFullScannedArgs, ChatsTable, ChatsUpdateSyncProgressArgs,
-    ChatsUpdateSyncProgressScanPhase, ChatsUpsertArgs, ClientsGetForWorkerArgs, ConvexApi,
-    ConvexApiClient, MessagesUpsertArgs,
+    ChatsMarkFullScannedArgs, ChatsUpdateSyncProgressArgs, ChatsUpdateSyncProgressScanPhase,
+    ChatsUpsertArgs, ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MediaCreatePendingArgs,
+    MessagesUpsertArgs, WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
 use crate::ops::convex as cx;
-use crate::ops::telegram::to_upsert_media_kind;
+use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 
 /// Internal request used for direct `scan_chat_messages()` calls (e.g. from
 /// UpdateListener backfill). Contains the derived fields that the Restate
@@ -39,7 +39,7 @@ pub struct ChatScanRequest {
 
 #[restate_sdk::object]
 pub trait ChatScanner {
-    async fn scan(req: Json<ChatsTable>) -> Result<(), HandlerError>;
+    async fn scan(req: Json<Task>) -> Result<(), HandlerError>;
 }
 
 pub struct ChatScannerImpl {
@@ -51,41 +51,54 @@ impl ChatScanner for ChatScannerImpl {
     async fn scan(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ChatsTable>,
+        req: Json<Task>,
     ) -> Result<(), HandlerError> {
-        let chat = req.into_inner();
-        info!(chat_id = %chat.chat_id, "ChatScanner: starting scan");
+        let task = req.into_inner();
+        let Task::ChatScannerScan {
+            chatId,
+            clientId,
+            userId,
+        } = task
+        else {
+            return Err(anyhow::anyhow!("Expected ChatScanner:scan task").into());
+        };
+
+        info!(chat_id = %chatId, "ChatScanner: starting scan");
 
         // Resolve telegram_id from the client record
         let client = self
             .convex
             .query_clients_get_for_worker(ClientsGetForWorkerArgs {
-                clientId: chat.client_id.clone(),
+                clientId: clientId.clone(),
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Client {} not found", chat.client_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Client {} not found", clientId))?;
 
         let tg_client = self
             .pool
-            .get_or_create(&chat.user_id, &client.telegram_id)
+            .get_or_create(&userId, &client.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        let chat_external_id = chat
-            .chat_id
-            .strip_prefix(&format!("{}:", chat.client_id))
-            .unwrap_or(&chat.chat_id)
+        // Look up the full chat record for is_pinned/pinned_name
+        let chats = cx::list_worker_chats(&self.convex, &clientId).await
+            .map_err(anyhow::Error::from)?;
+        let chat_record = chats.iter().find(|c| c.chat_id == chatId);
+
+        let chat_external_id = chatId
+            .strip_prefix(&format!("{}:", clientId))
+            .unwrap_or(&chatId)
             .to_string();
 
         let scan_req = ChatScanRequest {
-            client_id: chat.client_id,
-            user_id: chat.user_id,
+            client_id: clientId,
+            user_id: userId,
             external_id: client.telegram_id,
-            chat_id: chat.chat_id,
+            chat_id: chatId,
             chat_external_id,
-            is_pinned: chat.is_pinned,
-            pinned_name: chat.pinned_name,
+            is_pinned: chat_record.map(|c| c.is_pinned).unwrap_or(false),
+            pinned_name: chat_record.and_then(|c| c.pinned_name.clone()),
         };
 
         scan_chat_messages(&self.convex, &tg_client, &scan_req)
@@ -144,6 +157,7 @@ pub async fn scan_chat_messages(
 
         let message_id = format!("{}:{}", req.chat_id, msg.external_id);
 
+        let message_id_clone = message_id.clone();
         convex
             .messages_upsert(MessagesUpsertArgs {
                 messageId: message_id,
@@ -156,13 +170,36 @@ pub async fn scan_chat_messages(
                 outgoing: msg.outgoing,
                 deleted: false,
                 timestamp: ts,
-                mediaExternalId: msg.media_external_id,
+                mediaExternalId: msg.media_external_id.clone(),
                 mediaKind: msg
                     .media_summary
                     .as_ref()
                     .map(|s| to_upsert_media_kind(s.kind)),
             })
             .await?;
+
+        // Create pending media record + enqueue per-file download task
+        if let Some(ref summary) = msg.media_summary
+            && let Some(ref media_ext_id) = msg.media_external_id
+        {
+            convex
+                .media_create_pending(MediaCreatePendingArgs {
+                    telegramFileId: media_ext_id.clone(),
+                    userId: req.user_id.clone(),
+                    clientId: req.client_id.clone(),
+                    chatId: req.chat_id.clone(),
+                    messageId: message_id_clone,
+                    kind: to_create_pending_kind(summary.kind),
+                    mimeType: summary.mime_type.clone(),
+                    fileName: summary.file_name.clone(),
+                    fileSize: summary.file_size.map(|s| s as f64),
+                    width: summary.width.map(|w| w as f64),
+                    height: summary.height.map(|h| h as f64),
+                    duration: summary.duration,
+                })
+                .await
+                .ok(); // best-effort — don't fail the scan for media
+        }
 
         msg_count += 1;
 
@@ -205,7 +242,7 @@ pub async fn scan_chat_messages(
             chatId: req.chat_id.clone(),
             totalMessages: None,
             syncedMessages: Some(msg_count as f64),
-            scanPhase: None,
+            scanPhase: Some(ChatsUpdateSyncProgressScanPhase::Listening),
         })
         .await
         .ok();

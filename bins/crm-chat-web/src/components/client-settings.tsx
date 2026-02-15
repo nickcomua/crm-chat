@@ -47,7 +47,7 @@ interface ChatDoc {
   mediaSettings?: MediaSettings;
   totalMessages?: number;
   syncedMessages?: number;
-  scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
+  scanPhase?: "ScanningMessages" | "Listening";
 }
 
 interface ClientDoc {
@@ -77,12 +77,6 @@ const MEDIA_SETTINGS_ITEMS: { key: keyof MediaSettings; label: string }[] = [
 
 function getScanStatus(chat: ChatDoc): { label: string; className: string } {
   // Active scanning phases take priority — show progress while work is happening
-  if (chat.scanPhase === "DownloadingMedia") {
-    return {
-      label: "Downloading media...",
-      className: "bg-blue-500/15 text-blue-700",
-    };
-  }
   if (chat.scanPhase === "ScanningMessages") {
     return {
       label: "Scanning messages...",

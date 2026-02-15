@@ -288,7 +288,6 @@
           SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
-            export PATH="$HOME/.opencode/bin:$PATH"
             export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
           '';
           checks = self.checks.${system};
@@ -301,7 +300,7 @@
           # cargo, rustc, clippy, rustfmt are provided by the fenix toolchain
           packages = with pkgs; [
             openssl
-
+            bun
             taplo
             cargo-hakari
             cargo-audit
