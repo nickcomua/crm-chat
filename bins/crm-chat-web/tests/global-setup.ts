@@ -90,41 +90,6 @@ function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
   }
 }
 
-/** Register crm-worker with Restate admin API. */
-async function registerWorkerWithRestate(): Promise<void> {
-  const adminUrl = `http://localhost:${RESTATE_ADMIN_PORT}`;
-  const workerUrl = `http://host.docker.internal:${WORKER_SERVICE_PORT}`;
-
-  for (let attempt = 0; attempt < 30; attempt++) {
-    try {
-      const res = await fetch(`${adminUrl}/deployments`);
-      if (res.ok) {
-        break;
-      }
-    } catch {
-      // not ready yet
-    }
-    if (attempt === 29) {
-      throw new Error("Restate admin API not ready after 30s");
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  const res = await fetch(`${adminUrl}/deployments`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ uri: workerUrl }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `Failed to register worker with Restate (${res.status}): ${body}`
-    );
-  }
-  console.log("[e2e] Registered crm-worker with Restate");
-}
-
 export default async function globalSetup(): Promise<void> {
   loadEnvFile();
   ensureDockerHost();
@@ -314,6 +279,7 @@ export default async function globalSetup(): Promise<void> {
       TG_HASH: process.env.TG_HASH,
       TG_SESSION_DIR: sessionDir,
       RESTATE_SERVICE_PORT: String(WORKER_SERVICE_PORT),
+      RESTATE_ADMIN_URL: `http://localhost:${RESTATE_ADMIN_PORT}`,
       RESTATE_INGRESS_URL: `http://localhost:${RESTATE_INGRESS_PORT}`,
       SCAN_REFRESH_SECS: "5",
       RUST_LOG: "debug,crm_worker=debug",
@@ -321,15 +287,13 @@ export default async function globalSetup(): Promise<void> {
     stdio: ["ignore", workerLogFd, workerLogFd],
   });
 
-  // Give worker time to start its HTTP server
-  await new Promise((r) => setTimeout(r, 3000));
+  // Worker self-registers with Restate and bootstraps the TaskOrchestrator.
+  // Wait for it to be ready (registration + bootstrap happen ~500ms after bind).
+  await new Promise((r) => setTimeout(r, 5000));
   if (worker.exitCode !== null) {
     throw new Error(`crm-worker exited prematurely (code ${worker.exitCode})`);
   }
   console.log(`[e2e] crm-worker running (PID ${worker.pid})`);
-
-  // ── 5c. Register crm-worker with Restate ──────────────────────────
-  await registerWorkerWithRestate();
 
   // ── 6. Set environment for test workers ───────────────────────────
   // VITE_CONVEX_URL is handled by playwright.config.ts webServer.env

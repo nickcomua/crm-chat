@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use convex_backend::{
     ConvexApi, ConvexApiClient, QrAuthWorkerClaimArgs, QrAuthWorkerCompleteQrAuthArgs,
-    QrAuthWorkerCompleteQrAuthResult, QrAuthWorkerUpdateQrTokenArgs,
+    QrAuthWorkerCompleteQrAuthResult, QrAuthWorkerUpdateQrTokenArgs, QrAuthsTable,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -24,14 +24,8 @@ use crate::client_pool::ClientPool;
 use crate::config;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Request / result types (serializable for Restate)
+// Result type (serializable for Restate)
 // ────────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize)]
-pub struct QrAuthRequest {
-    pub auth_id: String,
-    pub user_id: String,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct QrAuthResult {
@@ -45,7 +39,7 @@ pub struct QrAuthResult {
 
 #[restate_sdk::workflow]
 pub trait QrAuthWorkflow {
-    async fn run(req: Json<QrAuthRequest>) -> Result<Json<QrAuthResult>, HandlerError>;
+    async fn run(req: Json<QrAuthsTable>) -> Result<Json<QrAuthResult>, HandlerError>;
     #[shared]
     async fn cancel() -> Result<(), HandlerError>;
 }
@@ -59,15 +53,15 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
     async fn run(
         &self,
         _ctx: WorkflowContext<'_>,
-        req: Json<QrAuthRequest>,
+        req: Json<QrAuthsTable>,
     ) -> Result<Json<QrAuthResult>, HandlerError> {
         let req = req.into_inner();
-        info!(auth_id = %req.auth_id, "QrAuthWorkflow started");
+        info!(auth_id = %req.id, "QrAuthWorkflow started");
 
         // Step 1: Claim the auth session
         self.convex
             .qr_auth_worker_claim(QrAuthWorkerClaimArgs {
-                authId: req.auth_id.clone(),
+                authId: req.id.clone(),
             })
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
@@ -75,25 +69,25 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
         // Step 2: Get or create Telegram client (using auth_id as session identifier)
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.auth_id)
+            .get_or_create(&req.user_id, &req.id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
         // Step 3: Check if already authorized
         if let Ok(true) = tg_client.is_authorized().await {
-            info!(auth_id = %req.auth_id, "Client already authorized");
+            info!(auth_id = %req.id, "Client already authorized");
             let user_id = get_telegram_user_id(&tg_client).await;
-            config::copy_session_for_scanning(&req.auth_id, &req.user_id, user_id);
+            config::copy_session_for_scanning(&req.id, &req.user_id, user_id);
 
             self.convex
                 .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
-                    authId: req.auth_id.clone(),
+                    authId: req.id.clone(),
                     result: QrAuthWorkerCompleteQrAuthResult::AlreadyAuthorized { userId: user_id },
                 })
                 .await
                 .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
-            self.pool.remove(&req.user_id, &req.auth_id);
+            self.pool.remove(&req.user_id, &req.id);
             return Ok(Json(QrAuthResult {
                 success: true,
                 error: None,
@@ -104,7 +98,7 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
         let result = self.qr_polling_loop(&req).await;
 
         // Clean up client from pool regardless of outcome
-        self.pool.remove(&req.user_id, &req.auth_id);
+        self.pool.remove(&req.user_id, &req.id);
 
         result
     }
@@ -120,10 +114,10 @@ impl QrAuthWorkflowImpl {
     ///
     /// Streams QR tokens from the Telegram client, posting each new token URL
     /// to Convex. Completes when login succeeds, fails, or is cancelled.
-    async fn qr_polling_loop(&self, req: &QrAuthRequest) -> Result<Json<QrAuthResult>, HandlerError> {
+    async fn qr_polling_loop(&self, req: &QrAuthsTable) -> Result<Json<QrAuthResult>, HandlerError> {
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.auth_id)
+            .get_or_create(&req.user_id, &req.id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
@@ -140,10 +134,10 @@ impl QrAuthWorkflowImpl {
                 Err(_) => {
                     // Overall timeout expired
                     let msg = "QR login timed out after 5 minutes";
-                    warn!(auth_id = %req.auth_id, msg);
+                    warn!(auth_id = %req.id, msg);
                     self.convex
                         .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: QrAuthWorkerCompleteQrAuthResult::Failed {
                                 error: msg.to_string(),
                             },
@@ -158,10 +152,10 @@ impl QrAuthWorkflowImpl {
                 Ok(None) => {
                     // Stream ended unexpectedly
                     let msg = "QR login stream ended unexpectedly";
-                    warn!(auth_id = %req.auth_id, msg);
+                    warn!(auth_id = %req.id, msg);
                     self.convex
                         .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: QrAuthWorkerCompleteQrAuthResult::Failed {
                                 error: msg.to_string(),
                             },
@@ -176,10 +170,10 @@ impl QrAuthWorkflowImpl {
                 Ok(Some(Err(e))) => {
                     // Stream error
                     let msg = format!("QR login error: {e}");
-                    error!(auth_id = %req.auth_id, %msg);
+                    error!(auth_id = %req.id, %msg);
                     self.convex
                         .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: QrAuthWorkerCompleteQrAuthResult::Failed { error: msg.clone() },
                         })
                         .await
@@ -195,34 +189,34 @@ impl QrAuthWorkflowImpl {
                         if last_token_url.as_ref() == Some(&url) {
                             continue;
                         }
-                        info!(auth_id = %req.auth_id, expires, "New QR token generated");
+                        info!(auth_id = %req.id, expires, "New QR token generated");
                         last_token_url = Some(url.clone());
 
                         if let Err(e) = self
                             .convex
                             .qr_auth_worker_update_qr_token(QrAuthWorkerUpdateQrTokenArgs {
-                                authId: req.auth_id.clone(),
+                                authId: req.id.clone(),
                                 url,
                                 expires: f64::from(expires),
                             })
                             .await
                         {
-                            error!(auth_id = %req.auth_id, error = %e, "Failed to update QR token");
+                            error!(auth_id = %req.id, error = %e, "Failed to update QR token");
                             // Continue polling — the update failure might be transient
                         }
                     }
                     QrLoginToken::Success => {
-                        info!(auth_id = %req.auth_id, "QR login successful");
+                        info!(auth_id = %req.id, "QR login successful");
                         let user_id = get_telegram_user_id(&tg_client).await;
                         config::copy_session_for_scanning(
-                            &req.auth_id,
+                            &req.id,
                             &req.user_id,
                             user_id,
                         );
 
                         self.convex
                             .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
-                                authId: req.auth_id.clone(),
+                                authId: req.id.clone(),
                                 result: QrAuthWorkerCompleteQrAuthResult::Authorized { userId: user_id },
                             })
                             .await
@@ -234,7 +228,7 @@ impl QrAuthWorkflowImpl {
                         }));
                     }
                     QrLoginToken::MigrateTo { dc_id } => {
-                        info!(auth_id = %req.auth_id, dc_id, "DC migration in progress");
+                        info!(auth_id = %req.id, dc_id, "DC migration in progress");
                         // Migration is handled internally by grammers, continue polling
                     }
                 },

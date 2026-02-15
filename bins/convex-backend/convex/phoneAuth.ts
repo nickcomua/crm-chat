@@ -11,6 +11,7 @@ import {
   sendError,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
+import { enqueueClientStart, enqueueTask } from "./helpers/tasks";
 
 // =============================================================================
 // Validation — returns error string or null
@@ -57,34 +58,6 @@ export const active = query({
   },
 });
 
-/** Unclaimed phone auths (step=SendingCode, no assigned worker). For worker polling. */
-export const pendingForWorker = query({
-  args: {},
-  returns: v.array(phoneAuthDoc),
-  handler: async (ctx) => {
-    await requireWorker(ctx);
-    const pending = await ctx.db
-      .query("phoneAuths")
-      .withIndex("by_step", (q) => q.eq("step", "SendingCode"))
-      .collect();
-    return pending.filter((a) => !a.claimedByWorkerId);
-  },
-});
-
-/** Phone auths assigned to the calling worker. */
-export const assignedToWorker = query({
-  args: {},
-  returns: v.array(phoneAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireWorker(ctx);
-    const assigned = await ctx.db
-      .query("phoneAuths")
-      .withIndex("by_claimedByWorkerId", (q) => q.eq("claimedByWorkerId", caller.id))
-      .collect();
-    return assigned.filter((a) => !isPhoneAuthTerminal(a.step));
-  },
-});
-
 // =============================================================================
 // Human Mutations
 // =============================================================================
@@ -121,13 +94,20 @@ export const start = mutation({
     });
 
     // Create the PhoneAuth row
-    await ctx.db.insert("phoneAuths", {
+    const authId = await ctx.db.insert("phoneAuths", {
       userId: caller.id,
       clientId,
       phone,
       step: "SendingCode",
       updatedAt: now,
     });
+
+    // Enqueue worker task
+    const auth = await ctx.db.get(authId);
+    if (auth) {
+      await enqueueTask(ctx, "PhoneAuthWorkflow", "run", authId, JSON.stringify(auth));
+    }
+
     return ok(null);
   },
 });
@@ -153,6 +133,13 @@ export const submitCode = mutation({
       step: "VerifyingCode",
       updatedAt: Date.now(),
     });
+
+    // Enqueue worker task
+    const updated = await ctx.db.get(authId);
+    if (updated) {
+      await enqueueTask(ctx, "PhoneAuthWorkflow", "submit_code", authId, JSON.stringify(updated));
+    }
+
     return ok(null);
   },
 });
@@ -178,6 +165,13 @@ export const submitPassword = mutation({
       step: "VerifyingPassword",
       updatedAt: Date.now(),
     });
+
+    // Enqueue worker task
+    const updated = await ctx.db.get(authId);
+    if (updated) {
+      await enqueueTask(ctx, "PhoneAuthWorkflow", "submit_password", authId, JSON.stringify(updated));
+    }
+
     return ok(null);
   },
 });
@@ -203,6 +197,10 @@ export const cancel = mutation({
       step: "Cancelled",
       updatedAt: Date.now(),
     });
+
+    // Enqueue worker task (no payload needed for cancel)
+    await enqueueTask(ctx, "PhoneAuthWorkflow", "cancel", authId);
+
     return ok(null);
   },
 });
@@ -273,6 +271,9 @@ export const workerCompleteSendCode = mutation({
         step: "Connected",
         updatedAt: now,
       });
+      // Enqueue client services
+      const client = await ctx.db.get(auth.clientId);
+      if (client) await enqueueClientStart(ctx, client);
     } else {
       // Failed
       await ctx.db.delete(auth.clientId);
@@ -317,10 +318,14 @@ export const workerCompleteVerifyCode = mutation({
     const now = Date.now();
 
     switch (verifyResult.type) {
-      case "Success":
+      case "Success": {
         await ctx.db.patch(auth.clientId, { status: { type: "Connected" } });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
+        // Enqueue client services
+        const client = await ctx.db.get(auth.clientId);
+        if (client) await enqueueClientStart(ctx, client);
         break;
+      }
 
       case "InvalidCode":
         await sendError(ctx, auth.userId, "Invalid code. Please try again.");
@@ -392,10 +397,14 @@ export const workerCompleteVerifyPassword = mutation({
     const now = Date.now();
 
     switch (pwResult.type) {
-      case "Success":
+      case "Success": {
         await ctx.db.patch(auth.clientId, { status: { type: "Connected" } });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
+        // Enqueue client services
+        const client = await ctx.db.get(auth.clientId);
+        if (client) await enqueueClientStart(ctx, client);
         break;
+      }
 
       case "InvalidPassword":
         await sendError(ctx, auth.userId, "Invalid password. Please try again.");

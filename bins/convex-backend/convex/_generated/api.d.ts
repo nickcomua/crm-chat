@@ -12,11 +12,13 @@ import type * as chats from "../chats.js";
 import type * as clients from "../clients.js";
 import type * as helpers_auth from "../helpers/auth.js";
 import type * as helpers_result from "../helpers/result.js";
+import type * as helpers_tasks from "../helpers/tasks.js";
 import type * as media from "../media.js";
 import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
 import type * as phoneAuth from "../phoneAuth.js";
 import type * as qrAuth from "../qrAuth.js";
+import type * as workerTasks from "../workerTasks.js";
 
 import type {
   ApiFromModules,
@@ -29,11 +31,13 @@ declare const fullApi: ApiFromModules<{
   clients: typeof clients;
   "helpers/auth": typeof helpers_auth;
   "helpers/result": typeof helpers_result;
+  "helpers/tasks": typeof helpers_tasks;
   media: typeof media;
   messages: typeof messages;
   notifications: typeof notifications;
   phoneAuth: typeof phoneAuth;
   qrAuth: typeof qrAuth;
+  workerTasks: typeof workerTasks;
 }>;
 
 /**

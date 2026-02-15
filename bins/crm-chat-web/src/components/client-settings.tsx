@@ -76,12 +76,7 @@ const MEDIA_SETTINGS_ITEMS: { key: keyof MediaSettings; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function getScanStatus(chat: ChatDoc): { label: string; className: string } {
-  if (chat.scanPhase === "Listening") {
-    return {
-      label: "Listening",
-      className: "bg-emerald-500/15 text-emerald-700",
-    };
-  }
+  // Active scanning phases take priority — show progress while work is happening
   if (chat.scanPhase === "DownloadingMedia") {
     return {
       label: "Downloading media...",
@@ -94,8 +89,16 @@ function getScanStatus(chat: ChatDoc): { label: string; className: string } {
       className: "bg-amber-500/15 text-amber-700",
     };
   }
+  // Fully scanned = "Synced" even if UpdateListener set scanPhase to "Listening"
   if (chat.fullScanned) {
     return { label: "Synced", className: "bg-emerald-500/15 text-emerald-700" };
+  }
+  // Not fully scanned but listening — still catching up
+  if (chat.scanPhase === "Listening") {
+    return {
+      label: "Listening",
+      className: "bg-emerald-500/15 text-emerald-700",
+    };
   }
   if (chat.scanEnabled) {
     return { label: "Syncing...", className: "bg-amber-500/15 text-amber-700" };
@@ -256,8 +259,8 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
   const msgPercent =
     msgTotal > 0 ? Math.min(100, Math.round((msgSynced / msgTotal) * 100)) : 0;
 
-  const mediaTotal = mediaCounts ? mediaCounts.total - mediaCounts.skipped : 0;
-  const mediaStored = mediaCounts?.stored ?? 0;
+  const mediaTotal = mediaCounts ? mediaCounts.total - mediaCounts.Skipped : 0;
+  const mediaStored = mediaCounts?.Stored ?? 0;
   const mediaPercent =
     mediaTotal > 0
       ? Math.min(100, Math.round((mediaStored / mediaTotal) * 100))

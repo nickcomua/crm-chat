@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { chatDoc, chatListItem, chatType, mediaSettingsValidator, scanPhase } from "./schema";
 import { isWorkerCaller, requireAuth, requireHuman, requireOwner, requireWorker } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
+import { enqueueTask } from "./helpers/tasks";
 
 /** List scan-enabled chats for the current user, sorted by last message time (newest first). */
 export const list = query({
@@ -152,6 +153,13 @@ export const updateScanEnabled = mutation({
       await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
     } else {
       await ctx.db.patch(chat._id, { scanEnabled });
+      // Enqueue scan if not already fully scanned
+      if (!chat.fullScanned) {
+        const updated = await ctx.db.get(chat._id);
+        if (updated) {
+          await enqueueTask(ctx, "ChatScanner", "scan", chatId, JSON.stringify(updated));
+        }
+      }
     }
     return ok(null);
   },
@@ -238,35 +246,6 @@ export const listForWorker = query({
   },
 });
 
-/** Chats that need scanning: scanEnabled=true, fullScanned=false. Worker-only.
- *  Used by TaskOrchestrator to reactively dispatch ChatScanner per chat. */
-export const scanPendingForWorker = query({
-  args: { clientId: v.id("clients") },
-  returns: v.array(chatDoc),
-  handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
-    const chats = await ctx.db
-      .query("chats")
-      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
-      .collect();
-    return chats.filter((c) => c.scanEnabled && !c.fullScanned);
-  },
-});
-
-/** All chats for a client (for photo sync). Worker-only.
- *  Used by TaskOrchestrator to reactively trigger ProfilePhotoSync. */
-export const photoSyncForWorker = query({
-  args: { clientId: v.id("clients") },
-  returns: v.array(chatDoc),
-  handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
-    return await ctx.db
-      .query("chats")
-      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
-      .collect();
-  },
-});
-
 /** Update per-chat media download settings. Human-only. */
 export const updateMediaSettings = mutation({
   args: { chatId: v.string(), mediaSettings: mediaSettingsValidator },
@@ -331,6 +310,13 @@ export const rescan = mutation({
       totalMessages: undefined,
       scanPhase: undefined,
     });
+
+    // Enqueue scan task
+    const updated = await ctx.db.get(chat._id);
+    if (updated) {
+      await enqueueTask(ctx, "ChatScanner", "scan", chatId, JSON.stringify(updated));
+    }
+
     return ok(null);
   },
 });

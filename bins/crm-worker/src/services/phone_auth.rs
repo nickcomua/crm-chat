@@ -12,14 +12,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use convex_backend::{
-    ConvexApi, ConvexApiClient, PhoneAuthWorkerClaimArgs,
-    PhoneAuthWorkerCompleteSendCodeArgs, PhoneAuthWorkerCompleteSendCodeResult,
-    PhoneAuthWorkerCompleteVerifyCodeArgs, PhoneAuthWorkerCompleteVerifyCodeResult,
-    PhoneAuthWorkerCompleteVerifyPasswordArgs, PhoneAuthWorkerCompleteVerifyPasswordResult,
+    ConvexApi, ConvexApiClient, PhoneAuthWorkerClaimArgs, PhoneAuthWorkerCompleteSendCodeArgs,
+    PhoneAuthWorkerCompleteSendCodeResult, PhoneAuthWorkerCompleteVerifyCodeArgs,
+    PhoneAuthWorkerCompleteVerifyCodeResult, PhoneAuthWorkerCompleteVerifyPasswordArgs,
+    PhoneAuthWorkerCompleteVerifyPasswordResult, PhoneAuthsStep, PhoneAuthsTable,
 };
 use grammers_tl_types as tl;
 use messanger_interface::MessengerClient;
-use messanger_telegram::{CheckPasswordResult, ClonableLoginToken, ClonablePasswordToken, SignInResult};
+use messanger_telegram::{
+    CheckPasswordResult, ClonableLoginToken, ClonablePasswordToken, SignInResult,
+};
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use serde::{Deserialize, Serialize};
@@ -28,27 +30,8 @@ use tracing::{error, info, warn};
 use crate::client_pool::ClientPool;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Request / result types (serializable for Restate)
+// Result type (serializable for Restate)
 // ────────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize)]
-pub struct PhoneAuthRequest {
-    pub auth_id: String,
-    pub user_id: String,
-    pub phone: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SubmitCodeRequest {
-    pub login_code: String,
-    pub phone_code_hash: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SubmitPasswordRequest {
-    pub password: String,
-    pub password_token: String,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct PhoneAuthResult {
@@ -62,11 +45,11 @@ pub struct PhoneAuthResult {
 
 #[restate_sdk::workflow]
 pub trait PhoneAuthWorkflow {
-    async fn run(req: Json<PhoneAuthRequest>) -> Result<Json<PhoneAuthResult>, HandlerError>;
+    async fn run(req: Json<PhoneAuthsTable>) -> Result<Json<PhoneAuthResult>, HandlerError>;
     #[shared]
-    async fn submit_code(req: Json<SubmitCodeRequest>) -> Result<(), HandlerError>;
+    async fn submit_code(req: Json<PhoneAuthsTable>) -> Result<(), HandlerError>;
     #[shared]
-    async fn submit_password(req: Json<SubmitPasswordRequest>) -> Result<(), HandlerError>;
+    async fn submit_password(req: Json<PhoneAuthsTable>) -> Result<(), HandlerError>;
     #[shared]
     async fn cancel() -> Result<(), HandlerError>;
 }
@@ -80,15 +63,15 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        req: Json<PhoneAuthRequest>,
+        req: Json<PhoneAuthsTable>,
     ) -> Result<Json<PhoneAuthResult>, HandlerError> {
         let req = req.into_inner();
-        info!(auth_id = %req.auth_id, phone = %req.phone, "PhoneAuthWorkflow started");
+        info!(auth_id = %req.id, phone = %req.phone, "PhoneAuthWorkflow started");
 
         // Step 1: Claim the auth session
         self.convex
             .phone_auth_worker_claim(PhoneAuthWorkerClaimArgs {
-                authId: req.auth_id.clone(),
+                authId: req.id.clone(),
             })
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
@@ -102,10 +85,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
 
         // Step 3: Check if already authorized
         if let Ok(true) = tg_client.is_authorized().await {
-            info!(auth_id = %req.auth_id, "Client already authorized");
+            info!(auth_id = %req.id, "Client already authorized");
             self.convex
                 .phone_auth_worker_complete_send_code(PhoneAuthWorkerCompleteSendCodeArgs {
-                    authId: req.auth_id.clone(),
+                    authId: req.id.clone(),
                     result: PhoneAuthWorkerCompleteSendCodeResult::AlreadyAuthorized,
                 })
                 .await
@@ -129,7 +112,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(msg);
                 self.convex
                     .phone_auth_worker_complete_send_code(PhoneAuthWorkerCompleteSendCodeArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteSendCodeResult::Failed {
                             error: msg.to_string(),
                         },
@@ -146,7 +129,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(%msg);
                 self.convex
                     .phone_auth_worker_complete_send_code(PhoneAuthWorkerCompleteSendCodeArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteSendCodeResult::Failed { error: msg.clone() },
                     })
                     .await
@@ -157,10 +140,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 }));
             }
             Ok(Ok(token)) => {
-                info!(auth_id = %req.auth_id, "Login code sent successfully");
+                info!(auth_id = %req.id, "Login code sent successfully");
                 self.convex
                     .phone_auth_worker_complete_send_code(PhoneAuthWorkerCompleteSendCodeArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteSendCodeResult::Success {
                             phoneCodeHash: token.phone_code_hash.clone(),
                         },
@@ -173,11 +156,12 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
 
         // Step 5: Wait for user to submit the code (durable promise)
         // The Convex bridge detects the step change to VerifyingCode and calls submit_code()
-        let code_data: Json<SubmitCodeRequest> = ctx.promise("code").await?;
+        let code_data: Json<PhoneAuthsTable> = ctx.promise("code").await?;
         let code_data = code_data.into_inner();
-        info!(auth_id = %req.auth_id, "Received login code from user");
+        info!(auth_id = %req.id, "Received login code from user");
 
         // Step 6: Verify the code
+        let login_code = code_data.login_code.unwrap_or_default();
         let clonable_token = ClonableLoginToken {
             phone: req.phone.clone(),
             phone_code_hash,
@@ -185,7 +169,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
 
         let sign_in_result = tokio::time::timeout(
             Duration::from_secs(30),
-            tg_client.sign_in(&clonable_token, &code_data.login_code),
+            tg_client.sign_in(&clonable_token, &login_code),
         )
         .await;
 
@@ -195,7 +179,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(msg);
                 self.convex
                     .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteVerifyCodeResult::Failed {
                             error: msg.to_string(),
                         },
@@ -212,7 +196,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(%msg);
                 self.convex
                     .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteVerifyCodeResult::Failed { error: msg.clone() },
                     })
                     .await
@@ -224,10 +208,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
             }
             Ok(Ok(result)) => match result {
                 SignInResult::Success { user_id } => {
-                    info!(auth_id = %req.auth_id, user_id, "Sign in successful");
+                    info!(auth_id = %req.id, user_id, "Sign in successful");
                     self.convex
                         .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::Success { userId: user_id },
                         })
                         .await
@@ -238,10 +222,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                     }));
                 }
                 SignInResult::InvalidCode => {
-                    warn!(auth_id = %req.auth_id, "Invalid login code");
+                    warn!(auth_id = %req.id, "Invalid login code");
                     self.convex
                         .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::InvalidCode,
                         })
                         .await
@@ -252,10 +236,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                     }));
                 }
                 SignInResult::SignUpRequired => {
-                    warn!(auth_id = %req.auth_id, "Sign up required");
+                    warn!(auth_id = %req.id, "Sign up required");
                     self.convex
                         .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::SignUpRequired,
                         })
                         .await
@@ -266,12 +250,12 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                     }));
                 }
                 SignInResult::PasswordRequired(password_token) => {
-                    info!(auth_id = %req.auth_id, "2FA password required");
+                    info!(auth_id = %req.id, "2FA password required");
                     let token_json = serde_json::to_string(&password_token.password_data)
                         .map_err(|e| HandlerError::from(anyhow::anyhow!("Serialization: {e}")))?;
                     self.convex
                         .phone_auth_worker_complete_verify_code(PhoneAuthWorkerCompleteVerifyCodeArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::PasswordRequired {
                                 hint: password_token.hint.clone(),
                                 passwordToken: token_json,
@@ -285,13 +269,15 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
         }
 
         // Step 7: Wait for user to submit password (durable promise)
-        let pw_data: Json<SubmitPasswordRequest> = ctx.promise("password").await?;
+        let pw_data: Json<PhoneAuthsTable> = ctx.promise("password").await?;
         let pw_data = pw_data.into_inner();
-        info!(auth_id = %req.auth_id, "Received password from user");
+        info!(auth_id = %req.id, "Received password from user");
 
         // Step 8: Verify the password
+        let pw_token = pw_data.password_token.unwrap_or_default();
+        let pw_value = pw_data.password.unwrap_or_default();
         let password_data: tl::types::account::Password =
-            serde_json::from_str(&pw_data.password_token)
+            serde_json::from_str(&pw_token)
                 .map_err(|e| HandlerError::from(anyhow::anyhow!("Password token invalid: {e}")))?;
 
         let clonable_pw_token = ClonablePasswordToken {
@@ -301,7 +287,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
 
         let check_result_val = tokio::time::timeout(
             Duration::from_secs(30),
-            tg_client.check_password(clonable_pw_token, &pw_data.password),
+            tg_client.check_password(clonable_pw_token, &pw_value),
         )
         .await;
 
@@ -311,7 +297,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(msg);
                 self.convex
                     .phone_auth_worker_complete_verify_password(PhoneAuthWorkerCompleteVerifyPasswordArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteVerifyPasswordResult::Failed {
                             error: msg.to_string(),
                         },
@@ -328,7 +314,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 error!(%msg);
                 self.convex
                     .phone_auth_worker_complete_verify_password(PhoneAuthWorkerCompleteVerifyPasswordArgs {
-                        authId: req.auth_id.clone(),
+                        authId: req.id.clone(),
                         result: PhoneAuthWorkerCompleteVerifyPasswordResult::Failed { error: msg.clone() },
                     })
                     .await
@@ -340,10 +326,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
             }
             Ok(Ok(result)) => match result {
                 CheckPasswordResult::Success { user_id } => {
-                    info!(auth_id = %req.auth_id, user_id, "Password verified");
+                    info!(auth_id = %req.id, user_id, "Password verified");
                     self.convex
                         .phone_auth_worker_complete_verify_password(PhoneAuthWorkerCompleteVerifyPasswordArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyPasswordResult::Success { userId: user_id },
                         })
                         .await
@@ -354,10 +340,10 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                     }))
                 }
                 CheckPasswordResult::InvalidPassword => {
-                    warn!(auth_id = %req.auth_id, "Invalid password");
+                    warn!(auth_id = %req.id, "Invalid password");
                     self.convex
                         .phone_auth_worker_complete_verify_password(PhoneAuthWorkerCompleteVerifyPasswordArgs {
-                            authId: req.auth_id.clone(),
+                            authId: req.id.clone(),
                             result: PhoneAuthWorkerCompleteVerifyPasswordResult::InvalidPassword,
                         })
                         .await
@@ -374,38 +360,43 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
     async fn submit_code(
         &self,
         ctx: SharedWorkflowContext<'_>,
-        req: Json<SubmitCodeRequest>,
+        req: Json<PhoneAuthsTable>,
     ) -> Result<(), HandlerError> {
-        ctx.resolve_promise::<Json<SubmitCodeRequest>>("code", req);
+        ctx.resolve_promise::<Json<PhoneAuthsTable>>("code", req);
         Ok(())
     }
 
     async fn submit_password(
         &self,
         ctx: SharedWorkflowContext<'_>,
-        req: Json<SubmitPasswordRequest>,
+        req: Json<PhoneAuthsTable>,
     ) -> Result<(), HandlerError> {
-        ctx.resolve_promise::<Json<SubmitPasswordRequest>>("password", req);
+        ctx.resolve_promise::<Json<PhoneAuthsTable>>("password", req);
         Ok(())
     }
 
     async fn cancel(&self, ctx: SharedWorkflowContext<'_>) -> Result<(), HandlerError> {
-        // Resolve both promises with empty data to unblock the workflow,
-        // which will then exit cleanly.
-        ctx.resolve_promise::<Json<SubmitCodeRequest>>(
-            "code",
-            Json(SubmitCodeRequest {
-                login_code: String::new(),
-                phone_code_hash: String::new(),
-            }),
-        );
-        ctx.resolve_promise::<Json<SubmitPasswordRequest>>(
-            "password",
-            Json(SubmitPasswordRequest {
-                password: String::new(),
-                password_token: String::new(),
-            }),
-        );
+        // Resolve both promises with empty/dummy data to unblock the workflow,
+        // which will then exit cleanly. Only the relevant Option fields are read
+        // by the workflow — the rest are ignored.
+        let empty = PhoneAuthsTable {
+            id: String::new(),
+            creation_time: 0.0,
+            user_id: String::new(),
+            client_id: String::new(),
+            phone: String::new(),
+            step: PhoneAuthsStep::Cancelled,
+            phone_code_hash: None,
+            login_code: None,
+            password_token: None,
+            password: None,
+            password_hint: None,
+            error: None,
+            claimed_by_worker_id: None,
+            updated_at: 0.0,
+        };
+        ctx.resolve_promise::<Json<PhoneAuthsTable>>("code", Json(empty.clone()));
+        ctx.resolve_promise::<Json<PhoneAuthsTable>>("password", Json(empty));
         Ok(())
     }
 }
