@@ -11,7 +11,14 @@ pub use convex_backend::ConvexApi;
 pub use convex_backend::ConvexApiClient;
 pub use convex_backend::MediaListPendingForClientReturnKind as PendingMediaKind;
 
-use convex_backend::{MediaMarkFailedArgs, MediaStartDownloadArgs, MediaUpdateProgressArgs};
+use convex_backend::{
+    ChatsListForWorkerArgs, ChatsTable, ChatsUpdateSyncProgressArgs,
+    ChatsUpdateSyncProgressScanPhase, MediaMarkFailedArgs, MediaStartDownloadArgs,
+    MediaUpdateProgressArgs,
+};
+use tracing::warn;
+
+use crate::error::WorkerError;
 
 /// Map a Telegram chat type string to a Convex ChatType enum.
 pub fn map_chat_type(chat_type: Option<&str>) -> ChatsUpsertChatType {
@@ -55,4 +62,48 @@ pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str,
             error: error.into(),
         })
         .await;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared query helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Query the list of chats for a worker's client.
+pub async fn list_worker_chats(
+    convex: &ConvexApiClient,
+    client_id: &str,
+) -> Result<Vec<ChatsTable>, WorkerError> {
+    convex
+        .query_chats_list_for_worker(ChatsListForWorkerArgs {
+            clientId: client_id.to_string(),
+        })
+        .await
+        .map_err(|e| WorkerError::MutationFailed(e.to_string()))
+}
+
+/// Update the scan phase for all scan-enabled chats of a client.
+pub async fn set_scan_phase_for_client(
+    convex: &ConvexApiClient,
+    client_id: &str,
+    phase: ChatsUpdateSyncProgressScanPhase,
+) {
+    let chats = match list_worker_chats(convex, client_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "Failed to query chats for phase update");
+            return;
+        }
+    };
+
+    for chat in chats.iter().filter(|c| c.scan_enabled.unwrap_or(false)) {
+        convex
+            .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                chatId: chat.chat_id.clone(),
+                totalMessages: None,
+                syncedMessages: None,
+                scanPhase: Some(phase),
+            })
+            .await
+            .ok();
+    }
 }

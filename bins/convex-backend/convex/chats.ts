@@ -238,6 +238,35 @@ export const listForWorker = query({
   },
 });
 
+/** Chats that need scanning: scanEnabled=true, fullScanned=false. Worker-only.
+ *  Used by TaskOrchestrator to reactively dispatch ChatScanner per chat. */
+export const scanPendingForWorker = query({
+  args: { clientId: v.id("clients") },
+  returns: v.array(chatDoc),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    const chats = await ctx.db
+      .query("chats")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
+      .collect();
+    return chats.filter((c) => c.scanEnabled && !c.fullScanned);
+  },
+});
+
+/** All chats for a client (for photo sync). Worker-only.
+ *  Used by TaskOrchestrator to reactively trigger ProfilePhotoSync. */
+export const photoSyncForWorker = query({
+  args: { clientId: v.id("clients") },
+  returns: v.array(chatDoc),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    return await ctx.db
+      .query("chats")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
+      .collect();
+  },
+});
+
 /** Update per-chat media download settings. Human-only. */
 export const updateMediaSettings = mutation({
   args: { chatId: v.string(), mediaSettings: mediaSettingsValidator },

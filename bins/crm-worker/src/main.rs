@@ -27,9 +27,14 @@ use tracing_subscriber::prelude::*;
 
 use crate::client_pool::ClientPool;
 use crate::config::WorkerConfig;
+use crate::services::chat_scanner::{ChatScanner, ChatScannerImpl};
 use crate::services::client_scanner::{ClientScanner, ClientScannerImpl};
+use crate::services::dialog_sync::{DialogSync, DialogSyncImpl};
+use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
 use crate::services::phone_auth::{PhoneAuthWorkflow, PhoneAuthWorkflowImpl};
+use crate::services::profile_photo_sync::{ProfilePhotoSync, ProfilePhotoSyncImpl};
 use crate::services::qr_auth::{QrAuthWorkflow, QrAuthWorkflowImpl};
+use crate::services::update_listener::{UpdateListener, UpdateListenerImpl};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -96,6 +101,41 @@ async fn main() -> anyhow::Result<()> {
         )
         .bind(
             ClientScannerImpl {
+                convex: convex_client.clone(),
+                pool: pool.clone(),
+            }
+            .serve(),
+        )
+        .bind(
+            DialogSyncImpl {
+                convex: convex_client.clone(),
+                pool: pool.clone(),
+            }
+            .serve(),
+        )
+        .bind(
+            ProfilePhotoSyncImpl {
+                convex: convex_client.clone(),
+                pool: pool.clone(),
+            }
+            .serve(),
+        )
+        .bind(
+            ChatScannerImpl {
+                convex: convex_client.clone(),
+                pool: pool.clone(),
+            }
+            .serve(),
+        )
+        .bind(
+            MediaDownloaderImpl {
+                convex: convex_client.clone(),
+                pool: pool.clone(),
+            }
+            .serve(),
+        )
+        .bind(
+            UpdateListenerImpl {
                 convex: convex_client.clone(),
                 pool: pool.clone(),
             }
