@@ -8,6 +8,7 @@ import {
 	requireOwner,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
+import { enqueueTask } from "./helpers/tasks";
 
 /** Generate a short-lived upload URL for Convex file storage. */
 export const generateUploadUrl = mutation({
@@ -56,6 +57,13 @@ export const createPending = mutation({
 			...args,
 			status: "Pending" as const,
 		});
+
+		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		const client = await ctx.db.get(args.clientId);
+		if (client) {
+			await enqueueTask(ctx, "MediaDownloader", "download", args.clientId, JSON.stringify(client));
+		}
+
 		return ok(null);
 	},
 });
@@ -158,6 +166,13 @@ export const retryDownload = mutation({
 			error: undefined,
 			bytesDownloaded: undefined,
 		});
+
+		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		const client = await ctx.db.get(existing.clientId);
+		if (client) {
+			await enqueueTask(ctx, "MediaDownloader", "download", existing.clientId, JSON.stringify(client));
+		}
+
 		return ok(null);
 	},
 });
@@ -551,6 +566,13 @@ export const requestDownload = mutation({
 		await ctx.db.patch(existing._id, {
 			status: "Pending" as const,
 		});
+
+		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		const client = await ctx.db.get(existing.clientId);
+		if (client) {
+			await enqueueTask(ctx, "MediaDownloader", "download", existing.clientId, JSON.stringify(client));
+		}
+
 		return ok(null);
 	},
 });

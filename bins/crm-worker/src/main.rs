@@ -1,17 +1,14 @@
 //! crm-worker — Restate-based Telegram integration service.
 //!
-//! This service replaces telegram-subscriber with durable workflows powered by
-//! Restate. It runs two concurrent subsystems:
-//!
-//! 1. **Restate HTTP server** — hosts the PhoneAuthWorkflow, QrAuthWorkflow,
-//!    and ClientScanner virtual object handlers
-//! 2. **Convex subscription bridge** — subscribes to Convex queries for pending
-//!    auth sessions and connected clients, dispatching to Restate via HTTP ingress
+//! Leaf services (DialogSync, ChatScanner, etc.) are Restate virtual objects
+//! and workflows with full durable execution. The TaskOrchestrator runs as a
+//! plain tokio task that subscribes to Convex queries and dispatches work to
+//! leaf services via HTTP POST to the Restate ingress endpoint — zero journal
+//! noise.
 
 mod auth;
 mod client_pool;
 mod config;
-mod convex_bridge;
 mod error;
 mod ops;
 mod services;
@@ -20,7 +17,9 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use restate_sdk::prelude::*;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -28,12 +27,12 @@ use tracing_subscriber::prelude::*;
 use crate::client_pool::ClientPool;
 use crate::config::WorkerConfig;
 use crate::services::chat_scanner::{ChatScanner, ChatScannerImpl};
-use crate::services::client_scanner::{ClientScanner, ClientScannerImpl};
 use crate::services::dialog_sync::{DialogSync, DialogSyncImpl};
 use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
 use crate::services::phone_auth::{PhoneAuthWorkflow, PhoneAuthWorkflowImpl};
 use crate::services::profile_photo_sync::{ProfilePhotoSync, ProfilePhotoSyncImpl};
 use crate::services::qr_auth::{QrAuthWorkflow, QrAuthWorkflowImpl};
+use crate::services::task_orchestrator::run_orchestrator;
 use crate::services::update_listener::{UpdateListener, UpdateListenerImpl};
 
 #[tokio::main]
@@ -82,8 +81,8 @@ async fn main() -> anyhow::Result<()> {
     raw_client.set_auth(Some(token)).await;
     let convex_client = convex_backend::ConvexApiClient::new(raw_client);
 
-    // Build Restate endpoint with all service handlers
-    // `.serve()` wraps each impl in the macro-generated type that implements Discoverable
+    // Build Restate endpoint with leaf service handlers (no TaskOrchestrator —
+    // it runs as a plain tokio task to avoid journal noise)
     let endpoint = Endpoint::builder()
         .bind(
             PhoneAuthWorkflowImpl {
@@ -94,13 +93,6 @@ async fn main() -> anyhow::Result<()> {
         )
         .bind(
             QrAuthWorkflowImpl {
-                convex: convex_client.clone(),
-                pool: pool.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            ClientScannerImpl {
                 convex: convex_client.clone(),
                 pool: pool.clone(),
             }
@@ -138,12 +130,14 @@ async fn main() -> anyhow::Result<()> {
             UpdateListenerImpl {
                 convex: convex_client.clone(),
                 pool: pool.clone(),
+                cancel_tokens: DashMap::new(),
             }
             .serve(),
         )
         .build();
 
     let restate_port = config.restate_port;
+    let ingress_url = config.restate_ingress_url.clone();
 
     // Spawn the Restate HTTP server
     let restate_handle = tokio::spawn(async move {
@@ -161,20 +155,23 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_millis(500)).await;
     register_deployment(&config).await;
 
-    // Spawn the Convex subscription bridge
-    let bridge_config = config.clone();
-    let bridge_handle = tokio::spawn(async move {
-        if let Err(e) = convex_bridge::run(&bridge_config).await {
-            tracing::error!(error = %e, "Convex bridge failed");
+    // Spawn the orchestrator as a plain tokio task — dispatches to Restate
+    // leaf services via HTTP ingress, zero journal entries
+    let orch_convex = convex_client.clone();
+    let orch_config = config.clone();
+    let orch_ingress = ingress_url.clone();
+    let orch_cancel = CancellationToken::new();
+    let orchestrator_handle = tokio::spawn(async move {
+        if let Err(e) = run_orchestrator(&orch_convex, &orch_config, &orch_ingress, &orch_cancel)
+            .await
+        {
+            tracing::error!(error = %e, "TaskOrchestrator exited with error");
         }
     });
 
-    info!(
-        restate_port,
-        "crm-worker ready. Restate server + Convex bridge running."
-    );
+    info!(restate_port, "crm-worker ready. All services registered.");
 
-    // Wait for either subsystem to exit
+    // Wait for either server to exit
     tokio::select! {
         result = restate_handle => {
             match result {
@@ -182,8 +179,11 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => tracing::error!(error = %e, "Restate server task panicked"),
             }
         }
-        _ = bridge_handle => {
-            info!("Convex bridge exited");
+        result = orchestrator_handle => {
+            match result {
+                Ok(()) => info!("Orchestrator exited"),
+                Err(e) => tracing::error!(error = %e, "Orchestrator task panicked"),
+            }
         }
     }
 
@@ -192,8 +192,9 @@ async fn main() -> anyhow::Result<()> {
 
 /// Register this service endpoint with the Restate admin API.
 ///
-/// Panics if registration fails — without it, all Restate handler invocations
-/// will 404 and the worker is non-functional.
+/// Retries up to 30 times (1s apart) until the admin API is reachable,
+/// then panics if registration fails — without it, all Restate handler
+/// invocations will 404 and the worker is non-functional.
 async fn register_deployment(config: &WorkerConfig) {
     let http = reqwest::Client::new();
     let url = format!("{}/deployments", config.restate_admin_url);
@@ -209,40 +210,50 @@ async fn register_deployment(config: &WorkerConfig) {
         "force": true,
     });
 
-    let response = http
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "Failed to connect to Restate admin API at {}: {e}. \
-                 Is the Restate server running? (docker compose up -d)",
-                config.restate_admin_url
-            )
-        });
+    // Retry loop — Restate may still be starting up (especially in test/CI)
+    let mut last_error = String::new();
+    for attempt in 1..=30 {
+        match http.post(&url).json(&body).send().await {
+            Ok(response) if response.status().is_success() => {
+                let result: serde_json::Value = response.json().await.unwrap_or_default();
+                let services: Vec<String> = result["services"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|s| s["name"].as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                info!(
+                    services = ?services,
+                    attempt,
+                    "Deployment registered with Restate"
+                );
+                return;
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                last_error = format!("HTTP {status}: {body}");
+            }
+            Err(e) => {
+                last_error = e.to_string();
+            }
+        }
 
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await.unwrap_or_default();
-        let services: Vec<String> = result["services"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s["name"].as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        info!(
-            services = ?services,
-            "Deployment registered with Restate"
-        );
-    } else {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        panic!(
-            "Failed to register deployment with Restate (HTTP {status}): {body}. \
-             Admin URL: {}, Service URL: {}",
-            config.restate_admin_url, config.restate_service_url
-        );
+        if attempt < 30 {
+            tracing::debug!(
+                attempt,
+                error = %last_error,
+                "Restate admin not ready, retrying in 1s"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
+
+    panic!(
+        "Failed to register deployment with Restate after 30 attempts: {last_error}. \
+         Admin URL: {}, Service URL: {}",
+        config.restate_admin_url, config.restate_service_url
+    );
 }

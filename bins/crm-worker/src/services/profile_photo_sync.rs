@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use convex_backend::{ChatsUpdatePhotoArgs, ConvexApi, ConvexApiClient};
+use convex_backend::{ChatsUpdatePhotoArgs, ClientsTable, ConvexApi, ConvexApiClient};
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
@@ -15,11 +15,9 @@ use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
 use crate::ops::convex as cx;
 
-use super::ScanRequest;
-
 #[restate_sdk::object]
 pub trait ProfilePhotoSync {
-    async fn sync(req: Json<ScanRequest>) -> Result<(), HandlerError>;
+    async fn sync(req: Json<ClientsTable>) -> Result<(), HandlerError>;
     async fn stop() -> Result<(), HandlerError>;
 }
 
@@ -32,14 +30,14 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
     async fn sync(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ScanRequest>,
+        req: Json<ClientsTable>,
     ) -> Result<(), HandlerError> {
         let req = req.into_inner();
-        info!(client_id = %req.client_id, "ProfilePhotoSync: starting");
+        info!(client_id = %req.id, "ProfilePhotoSync: starting");
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.external_id)
+            .get_or_create(&req.user_id, &req.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
@@ -49,9 +47,8 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
         Ok(())
     }
 
-    async fn stop(&self, ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
+    async fn stop(&self, _ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
         info!("ProfilePhotoSync: stop requested");
-        ctx.set("cancelled", true);
         Ok(())
     }
 }
@@ -60,9 +57,9 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
 pub async fn sync_profile_photos(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
-    req: &ScanRequest,
+    client: &ClientsTable,
 ) -> Result<(), WorkerError> {
-    let chats = cx::list_worker_chats(convex, &req.client_id).await?;
+    let chats = cx::list_worker_chats(convex, &client.id).await?;
     if chats.is_empty() {
         return Ok(());
     }
@@ -75,7 +72,7 @@ pub async fn sync_profile_photos(
     for chat in &chats {
         let chat_external_id = chat
             .chat_id
-            .strip_prefix(&format!("{}:", req.client_id))
+            .strip_prefix(&format!("{}:", client.id))
             .unwrap_or(&chat.chat_id);
 
         let tg_photo_id = match tg_client.get_chat_photo_id(chat_external_id).await {

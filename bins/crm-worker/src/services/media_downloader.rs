@@ -5,7 +5,10 @@
 
 use std::sync::Arc;
 
-use convex_backend::{ConvexApi, ConvexApiClient, MediaListPendingForClientArgs};
+use convex_backend::{
+    ChatsUpdateSyncProgressScanPhase, ClientsTable, ConvexApi, ConvexApiClient,
+    MediaListPendingForClientArgs,
+};
 use futures::StreamExt;
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
@@ -18,11 +21,9 @@ use crate::ops::convex as cx;
 use crate::ops::media::download_and_upload;
 use crate::ops::telegram::{default_mime_for_pending_kind, parse_media_external_id};
 
-use super::ScanRequest;
-
 #[restate_sdk::object]
 pub trait MediaDownloader {
-    async fn download(req: Json<ScanRequest>) -> Result<(), HandlerError>;
+    async fn download(req: Json<ClientsTable>) -> Result<(), HandlerError>;
     async fn stop() -> Result<(), HandlerError>;
 }
 
@@ -35,26 +36,25 @@ impl MediaDownloader for MediaDownloaderImpl {
     async fn download(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ScanRequest>,
+        req: Json<ClientsTable>,
     ) -> Result<(), HandlerError> {
         let req = req.into_inner();
-        info!(client_id = %req.client_id, "MediaDownloader: starting");
+        info!(client_id = %req.id, "MediaDownloader: starting");
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.external_id)
+            .get_or_create(&req.user_id, &req.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        download_pending_media(&self.convex, &tg_client, &req.client_id)
+        download_pending_media(&self.convex, &tg_client, &req.id)
             .await
             .map_err(anyhow::Error::from)?;
         Ok(())
     }
 
-    async fn stop(&self, ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
+    async fn stop(&self, _ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
         info!("MediaDownloader: stop requested");
-        ctx.set("cancelled", true);
         Ok(())
     }
 }
@@ -72,6 +72,14 @@ pub async fn download_pending_media(
 
     let mut total_success = 0usize;
     let mut total_failed = 0usize;
+
+    // Signal the UI that media downloads are in progress
+    cx::set_scan_phase_for_client(
+        convex,
+        client_id,
+        ChatsUpdateSyncProgressScanPhase::DownloadingMedia,
+    )
+    .await;
 
     loop {
         let pending = convex
@@ -151,6 +159,14 @@ pub async fn download_pending_media(
 
         info!(success, failed, "Batch complete");
     }
+
+    // Downloads complete — transition back to Listening
+    cx::set_scan_phase_for_client(
+        convex,
+        client_id,
+        ChatsUpdateSyncProgressScanPhase::Listening,
+    )
+    .await;
 
     if total_success > 0 || total_failed > 0 {
         info!(total_success, total_failed, "All pending media processed");
