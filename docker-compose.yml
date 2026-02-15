@@ -13,6 +13,9 @@ services:
       # loops that may be idle for extended periods between events.
       - RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT=24h
       - RESTATE_WORKER__INVOKER__ABORT_TIMEOUT=25h
+      # Optional: send Restate traces to Sentry via OTEL ingest
+      - RESTATE_OBSERVABILITY__TRACING__ENDPOINT=${SENTRY_OTEL_ENDPOINT:-}
+      - RESTATE_OBSERVABILITY__TRACING__HEADERS=${SENTRY_OTEL_HEADERS:-}
 
   backend:
     image: ghcr.io/get-convex/convex-backend:latest

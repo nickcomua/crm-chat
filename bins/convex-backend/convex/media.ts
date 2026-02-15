@@ -58,10 +58,20 @@ export const createPending = mutation({
 			status: "Pending" as const,
 		});
 
-		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		// Enqueue per-file download task (dedup by telegramFileId)
 		const client = await ctx.db.get(args.clientId);
 		if (client) {
-			await enqueueTask(ctx, "MediaDownloader", "download", args.clientId, JSON.stringify(client));
+			await enqueueTask(ctx, {
+				type: "MediaDownloader:download",
+				telegramFileId: args.telegramFileId,
+				userId: args.userId,
+				clientId: args.clientId,
+				telegramId: client.telegramId,
+				chatId: args.chatId,
+				kind: args.kind,
+				mimeType: args.mimeType,
+				fileSize: args.fileSize,
+			});
 		}
 
 		return ok(null);
@@ -167,10 +177,20 @@ export const retryDownload = mutation({
 			bytesDownloaded: undefined,
 		});
 
-		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		// Enqueue per-file download task (dedup by telegramFileId)
 		const client = await ctx.db.get(existing.clientId);
 		if (client) {
-			await enqueueTask(ctx, "MediaDownloader", "download", existing.clientId, JSON.stringify(client));
+			await enqueueTask(ctx, {
+				type: "MediaDownloader:download",
+				telegramFileId: existing.telegramFileId,
+				userId: existing.userId,
+				clientId: existing.clientId,
+				telegramId: client.telegramId,
+				chatId: existing.chatId,
+				kind: existing.kind,
+				mimeType: existing.mimeType,
+				fileSize: existing.fileSize,
+			});
 		}
 
 		return ok(null);
@@ -567,10 +587,20 @@ export const requestDownload = mutation({
 			status: "Pending" as const,
 		});
 
-		// Enqueue MediaDownloader (dedup prevents redundant tasks)
+		// Enqueue per-file download task (dedup by telegramFileId)
 		const client = await ctx.db.get(existing.clientId);
 		if (client) {
-			await enqueueTask(ctx, "MediaDownloader", "download", existing.clientId, JSON.stringify(client));
+			await enqueueTask(ctx, {
+				type: "MediaDownloader:download",
+				telegramFileId: existing.telegramFileId,
+				userId: existing.userId,
+				clientId: existing.clientId,
+				telegramId: client.telegramId,
+				chatId: existing.chatId,
+				kind: existing.kind,
+				mimeType: existing.mimeType,
+				fileSize: existing.fileSize,
+			});
 		}
 
 		return ok(null);

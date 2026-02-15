@@ -1,43 +1,74 @@
+import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import type { workerTask } from "../schema";
+
+type WorkerTask = Infer<typeof workerTask>;
 
 /**
- * Enqueue a worker task with deduplication.
+ * Extract a deduplication key from a typed worker task.
+ * Tasks with the same (type, dedupKey) are considered duplicates.
+ */
+function getDeduplicationKey(task: WorkerTask): string {
+	switch (task.type) {
+		case "PhoneAuth:run":
+		case "PhoneAuth:submitCode":
+		case "PhoneAuth:submitPassword":
+		case "PhoneAuth:cancel":
+		case "QrAuth:run":
+		case "QrAuth:cancel":
+			return task.authId;
+
+		case "DialogSync:sync":
+		case "UpdateListener:listen":
+		case "UpdateListener:stop":
+		case "ProfilePhotoSync:sync":
+		case "ProfilePhotoSync:stop":
+			return task.clientId;
+
+		case "ChatScanner:scan":
+			return task.chatId;
+
+		case "MediaDownloader:download":
+			return task.telegramFileId;
+	}
+}
+
+/**
+ * Enqueue a typed worker task with deduplication.
  *
- * Checks the `by_service_key_status` index for an existing Pending or
- * Dispatched task with the same (service, handler, key) before inserting.
- * If one already exists the call is a no-op.
+ * Checks for an existing Pending or Dispatched task with the same
+ * (type, dedupKey) before inserting. If one already exists, this is a no-op.
+ *
+ * Uses `by_status` index + in-memory filtering since the workerTasks table
+ * only contains active (Pending/Dispatched) rows — always small.
  */
 export async function enqueueTask(
 	ctx: MutationCtx,
-	service: string,
-	handler: string,
-	key: string,
-	payload?: string,
+	task: WorkerTask,
 ): Promise<void> {
-	// Dedup: skip if a Pending task already exists for the same service+key
-	const existingPending = await ctx.db
-		.query("workerTasks")
-		.withIndex("by_service_key_status", (q) =>
-			q.eq("service", service).eq("key", key).eq("status", "Pending"),
-		)
-		.first();
-	if (existingPending && existingPending.handler === handler) return;
+	const key = getDeduplicationKey(task);
 
-	// Dedup: also skip if a Dispatched (in-flight) task exists
-	const existingDispatched = await ctx.db
+	// Dedup: check Pending tasks
+	const pending = await ctx.db
 		.query("workerTasks")
-		.withIndex("by_service_key_status", (q) =>
-			q.eq("service", service).eq("key", key).eq("status", "Dispatched"),
-		)
-		.first();
-	if (existingDispatched && existingDispatched.handler === handler) return;
+		.withIndex("by_status", (q) => q.eq("status", "Pending"))
+		.collect();
+	if (pending.some((t) => t.task.type === task.type && getDeduplicationKey(t.task) === key)) {
+		return;
+	}
+
+	// Dedup: check Dispatched (in-flight) tasks
+	const dispatched = await ctx.db
+		.query("workerTasks")
+		.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
+		.collect();
+	if (dispatched.some((t) => t.task.type === task.type && getDeduplicationKey(t.task) === key)) {
+		return;
+	}
 
 	await ctx.db.insert("workerTasks", {
-		service,
-		handler,
-		key,
-		payload,
+		task,
 		status: "Pending",
 		createdAt: Date.now(),
 	});
@@ -51,19 +82,23 @@ export async function enqueueClientStart(
 	ctx: MutationCtx,
 	client: Doc<"clients">,
 ): Promise<void> {
-	const payload = JSON.stringify(client);
-	await enqueueTask(ctx, "DialogSync", "sync", client._id, payload);
-	await enqueueTask(ctx, "UpdateListener", "listen", client._id, payload);
+	const base = {
+		clientId: client._id,
+		userId: client.userId,
+		telegramId: client.telegramId,
+	};
+	await enqueueTask(ctx, { type: "DialogSync:sync", ...base });
+	await enqueueTask(ctx, { type: "UpdateListener:listen", ...base });
 }
 
 /**
  * Enqueue stop handlers for all services of a disconnecting client.
+ * MediaDownloader has no stop — per-file downloads are short-lived.
  */
 export async function enqueueClientStop(
 	ctx: MutationCtx,
 	clientId: Id<"clients">,
 ): Promise<void> {
-	await enqueueTask(ctx, "UpdateListener", "stop", clientId);
-	await enqueueTask(ctx, "ProfilePhotoSync", "stop", clientId);
-	await enqueueTask(ctx, "MediaDownloader", "stop", clientId);
+	await enqueueTask(ctx, { type: "UpdateListener:stop", clientId });
+	await enqueueTask(ctx, { type: "ProfilePhotoSync:stop", clientId });
 }

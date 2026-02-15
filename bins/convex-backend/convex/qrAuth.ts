@@ -68,7 +68,7 @@ export const start = mutation({
     // Enqueue worker task
     const auth = await ctx.db.get(authId);
     if (auth) {
-      await enqueueTask(ctx, "QrAuthWorkflow", "run", authId, JSON.stringify(auth));
+      await enqueueTask(ctx, { type: "QrAuth:run", authId, doc: JSON.stringify(auth) });
     }
 
     return ok(null);
@@ -95,7 +95,7 @@ export const cancel = mutation({
     });
 
     // Enqueue worker task
-    await enqueueTask(ctx, "QrAuthWorkflow", "cancel", authId);
+    await enqueueTask(ctx, { type: "QrAuth:cancel", authId });
 
     return ok(null);
   },

@@ -1,9 +1,10 @@
 //! Telegram operation wrappers and media helpers.
 
-use convex_backend::MessagesUpsertMediaKind;
+use convex_backend::{
+    MediaCreatePendingKind, MessagesUpsertMediaKind,
+    WorkerTasksTaskMediaDownloaderDownloadKind as MediaDownloadKind,
+};
 use messanger_interface::media::MediaKind;
-
-use crate::ops::convex::PendingMediaKind;
 
 /// Convert a `MediaKind` to the generated `MessagesUpsertMediaKind`.
 pub fn to_upsert_media_kind(kind: MediaKind) -> MessagesUpsertMediaKind {
@@ -19,6 +20,20 @@ pub fn to_upsert_media_kind(kind: MediaKind) -> MessagesUpsertMediaKind {
     }
 }
 
+/// Convert a `MediaKind` to the generated `MediaCreatePendingKind`.
+pub fn to_create_pending_kind(kind: MediaKind) -> MediaCreatePendingKind {
+    match kind {
+        MediaKind::Photo => MediaCreatePendingKind::Photo,
+        MediaKind::Video => MediaCreatePendingKind::Video,
+        MediaKind::VideoNote => MediaCreatePendingKind::VideoNote,
+        MediaKind::Audio => MediaCreatePendingKind::Audio,
+        MediaKind::Voice => MediaCreatePendingKind::Voice,
+        MediaKind::Sticker => MediaCreatePendingKind::Sticker,
+        MediaKind::Animation => MediaCreatePendingKind::Animation,
+        MediaKind::Document => MediaCreatePendingKind::Document,
+    }
+}
+
 /// Map a `MediaKind` to its default MIME type.
 pub fn default_mime_for_kind(kind: MediaKind) -> &'static str {
     match kind {
@@ -31,17 +46,29 @@ pub fn default_mime_for_kind(kind: MediaKind) -> &'static str {
     }
 }
 
-/// Map a pending record's kind (from convex-typegen) to its default MIME type.
-pub fn default_mime_for_pending_kind(kind: &PendingMediaKind) -> &'static str {
+/// Convert a generated `MediaDownloadKind` to its string name (for logging & MIME lookup).
+pub fn media_kind_to_str(kind: &MediaDownloadKind) -> &'static str {
     match kind {
-        PendingMediaKind::Photo => "image/jpeg",
-        PendingMediaKind::Video | PendingMediaKind::VideoNote | PendingMediaKind::Animation => {
-            "video/mp4"
-        }
-        PendingMediaKind::Audio => "audio/mpeg",
-        PendingMediaKind::Voice => "audio/ogg",
-        PendingMediaKind::Sticker => "image/webp",
-        PendingMediaKind::Document => "application/octet-stream",
+        MediaDownloadKind::Photo => "Photo",
+        MediaDownloadKind::Video => "Video",
+        MediaDownloadKind::VideoNote => "VideoNote",
+        MediaDownloadKind::Audio => "Audio",
+        MediaDownloadKind::Voice => "Voice",
+        MediaDownloadKind::Sticker => "Sticker",
+        MediaDownloadKind::Animation => "Animation",
+        MediaDownloadKind::Document => "Document",
+    }
+}
+
+/// Map a media kind string (from the typed workerTask union) to its default MIME type.
+pub fn default_mime_for_kind_str(kind: &str) -> &'static str {
+    match kind {
+        "Photo" => "image/jpeg",
+        "Video" | "VideoNote" | "Animation" => "video/mp4",
+        "Audio" => "audio/mpeg",
+        "Voice" => "audio/ogg",
+        "Sticker" => "image/webp",
+        _ => "application/octet-stream",
     }
 }
 
