@@ -11,6 +11,7 @@ import {
   sendError,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
+import { enqueueClientStart, enqueueTask } from "./helpers/tasks";
 
 // =============================================================================
 // Queries
@@ -48,34 +49,6 @@ export const active = query({
   },
 });
 
-/** Unclaimed QR auths (step=Pending, no claimed worker). For worker polling. */
-export const pendingForWorker = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    await requireWorker(ctx);
-    const pending = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_step", (q) => q.eq("step", "Pending"))
-      .collect();
-    return pending.filter((a) => !a.claimedByWorkerId);
-  },
-});
-
-/** QR auths assigned to the calling worker. */
-export const assignedToWorker = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireWorker(ctx);
-    const assigned = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_claimedByWorkerId", (q) => q.eq("claimedByWorkerId", caller.id))
-      .collect();
-    return assigned.filter((a) => !isQrAuthTerminal(a.step));
-  },
-});
-
 // =============================================================================
 // Human Mutations
 // =============================================================================
@@ -86,11 +59,18 @@ export const start = mutation({
   returns: result(v.null()),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
-    await ctx.db.insert("qrAuths", {
+    const authId = await ctx.db.insert("qrAuths", {
       userId: caller.id,
       step: "Pending",
       updatedAt: Date.now(),
     });
+
+    // Enqueue worker task
+    const auth = await ctx.db.get(authId);
+    if (auth) {
+      await enqueueTask(ctx, "QrAuthWorkflow", "run", authId, JSON.stringify(auth));
+    }
+
     return ok(null);
   },
 });
@@ -113,6 +93,10 @@ export const cancel = mutation({
       step: "Cancelled",
       updatedAt: Date.now(),
     });
+
+    // Enqueue worker task
+    await enqueueTask(ctx, "QrAuthWorkflow", "cancel", authId);
+
     return ok(null);
   },
 });
@@ -209,12 +193,14 @@ export const workerCompleteQrAuth = mutation({
         )
         .unique();
 
+      let clientId;
       if (existing) {
         await ctx.db.patch(existing._id, {
           status: { type: "Connected" },
         });
+        clientId = existing._id;
       } else {
-        await ctx.db.insert("clients", {
+        clientId = await ctx.db.insert("clients", {
           userId: auth.userId,
           kind: "Telegram",
           telegramId,
@@ -228,6 +214,10 @@ export const workerCompleteQrAuth = mutation({
         step,
         updatedAt: now,
       });
+
+      // Enqueue client services
+      const client = await ctx.db.get(clientId);
+      if (client) await enqueueClientStart(ctx, client);
     } else {
       // Failed
       await sendError(ctx, auth.userId, `QR code login failed: ${qrResult.error}`);

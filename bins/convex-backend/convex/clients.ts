@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { clientDoc, clientKind } from "./schema";
 import { requireHuman, requireOwner, requireWorker, isPhoneAuthTerminal } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
+import { enqueueClientStart, enqueueClientStop } from "./helpers/tasks";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -45,19 +46,21 @@ export const deleteClient = mutation({
       }
     }
 
+    // Enqueue stop tasks for all services of this client
+    await enqueueClientStop(ctx, clientId);
+
     await ctx.db.delete(clientId);
     return ok(null);
   },
 });
 
-/** List all connected clients. Worker-only (for scanning). */
-export const connectedForWorker = query({
-  args: {},
-  returns: v.array(clientDoc),
-  handler: async (ctx) => {
+/** Get a single client by ID. Worker-only. */
+export const getForWorker = query({
+  args: { clientId: v.id("clients") },
+  returns: v.union(clientDoc, v.null()),
+  handler: async (ctx, { clientId }) => {
     await requireWorker(ctx);
-    const all = await ctx.db.query("clients").collect();
-    return all.filter((c) => c.status.type === "Connected");
+    return await ctx.db.get(clientId);
   },
 });
 
@@ -79,6 +82,8 @@ export const workerRegisterConnected = mutation({
       .unique();
     if (existing) {
       await ctx.db.patch(existing._id, { status: { type: "Connected" } });
+      const client = await ctx.db.get(existing._id);
+      if (client) await enqueueClientStart(ctx, client);
       return ok(existing._id);
     }
     const id = await ctx.db.insert("clients", {
@@ -86,6 +91,8 @@ export const workerRegisterConnected = mutation({
       scanningChatIds: [],
       status: { type: "Connected" },
     });
+    const client = await ctx.db.get(id);
+    if (client) await enqueueClientStart(ctx, client);
     return ok(id);
   },
 });

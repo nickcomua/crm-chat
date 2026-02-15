@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use convex_backend::{ChatsUpsertArgs, ConvexApi, ConvexApiClient};
+use convex_backend::{
+    ChatsUpsertArgs, ClientsTable, ConvexApi, ConvexApiClient,
+    WorkerTasksEnqueuePostSyncTasksArgs,
+};
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
 use messanger_telegram::TelegramClient;
@@ -16,11 +19,9 @@ use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
 use crate::ops::convex as cx;
 
-use super::ScanRequest;
-
 #[restate_sdk::object]
 pub trait DialogSync {
-    async fn sync(req: Json<ScanRequest>) -> Result<(), HandlerError>;
+    async fn sync(req: Json<ClientsTable>) -> Result<(), HandlerError>;
 }
 
 pub struct DialogSyncImpl {
@@ -32,20 +33,29 @@ impl DialogSync for DialogSyncImpl {
     async fn sync(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ScanRequest>,
+        req: Json<ClientsTable>,
     ) -> Result<(), HandlerError> {
         let req = req.into_inner();
-        info!(client_id = %req.client_id, "DialogSync: syncing dialogs");
+        info!(client_id = %req.id, "DialogSync: syncing dialogs");
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.external_id)
+            .get_or_create(&req.user_id, &req.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
         sync_dialogs(&self.convex, &tg_client, &req)
             .await
             .map_err(anyhow::Error::from)?;
+
+        // Enqueue post-sync tasks (ChatScanner, ProfilePhotoSync)
+        self.convex
+            .worker_tasks_enqueue_post_sync_tasks(WorkerTasksEnqueuePostSyncTasksArgs {
+                clientId: req.id.clone(),
+            })
+            .await
+            .ok();
+
         Ok(())
     }
 }
@@ -54,7 +64,7 @@ impl DialogSync for DialogSyncImpl {
 pub async fn sync_dialogs(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
-    req: &ScanRequest,
+    client: &ClientsTable,
 ) -> Result<(), WorkerError> {
     let mut stream = tg_client
         .iter_dialogs()
@@ -71,14 +81,14 @@ pub async fn sync_dialogs(
             }
         };
 
-        let chat_id = format!("{}:{}", req.client_id, dialog.external_id);
+        let chat_id = format!("{}:{}", client.id, dialog.external_id);
         let chat_type = cx::map_chat_type(dialog.chat_type.as_deref());
 
         convex
             .chats_upsert(ChatsUpsertArgs {
                 chatId: chat_id,
-                userId: req.user_id.clone(),
-                clientId: req.client_id.clone(),
+                userId: client.user_id.clone(),
+                clientId: client.id.clone(),
                 chatType: chat_type,
                 isPinned: dialog.is_pinned,
                 pinnedName: dialog.name.clone(),

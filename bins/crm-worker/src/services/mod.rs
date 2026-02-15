@@ -1,6 +1,7 @@
-//! Restate service definitions.
+//! Restate service definitions and orchestrator.
 //!
-//! - `ClientScanner`:    Orchestrator — dispatches scan work to sub-services
+//! - `task_orchestrator`: Plain async loop (NOT a Restate service) — subscribes
+//!   to Convex queries and dispatches to leaf services via HTTP ingress
 //! - `DialogSync`:       Syncs Telegram dialog list to Convex
 //! - `ProfilePhotoSync`: Downloads and uploads chat profile photos
 //! - `ChatScanner`:      Per-chat message scanning
@@ -10,20 +11,14 @@
 //! - `QrAuthWorkflow`:    Durable workflow for QR-code-based authentication
 
 pub mod chat_scanner;
-pub mod client_scanner;
 pub mod dialog_sync;
 pub mod media_downloader;
 pub mod phone_auth;
 pub mod profile_photo_sync;
 pub mod qr_auth;
+pub mod task_orchestrator;
 pub mod update_listener;
 
-use serde::{Deserialize, Serialize};
-
-/// Shared request type for scan-related services.
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ScanRequest {
-    pub client_id: String,
-    pub user_id: String,
-    pub external_id: String,
-}
+// All handler inputs use generated Convex table types directly — no custom
+// request structs. The orchestrator sends the same types it receives from
+// Convex subscriptions, eliminating mapping boilerplate.

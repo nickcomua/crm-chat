@@ -81,6 +81,11 @@ export const scanPhase = v.union(
   v.literal("Listening"),
 );
 
+export const workerTaskStatus = v.union(
+  v.literal("Pending"),
+  v.literal("Dispatched"),
+);
+
 // =============================================================================
 // Document validators (for typed query returns)
 // =============================================================================
@@ -229,6 +234,18 @@ export const notificationDoc = v.object({
   dismissed: v.boolean(),
 });
 
+export const workerTaskDoc = v.object({
+  _id: v.id("workerTasks"),
+  _creationTime: v.number(),
+  service: v.string(),
+  handler: v.string(),
+  key: v.string(),
+  payload: v.optional(v.string()),
+  status: workerTaskStatus,
+  createdAt: v.number(),
+  dispatchedAt: v.optional(v.number()),
+});
+
 // =============================================================================
 // Schema
 // =============================================================================
@@ -373,4 +390,18 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"])
     .index("by_userId_dismissed", ["userId", "dismissed"]),
+
+  // ---- Worker Task Queue ----
+
+  workerTasks: defineTable({
+    service: v.string(), // Restate service name (e.g. "PhoneAuthWorkflow", "DialogSync")
+    handler: v.string(), // Restate handler name (e.g. "run", "sync", "stop")
+    key: v.string(), // Restate object/workflow key (auth_id, client_id, chat_id)
+    payload: v.optional(v.string()), // JSON-serialized table row for the handler
+    status: workerTaskStatus, // Pending → Dispatched
+    createdAt: v.number(),
+    dispatchedAt: v.optional(v.number()),
+  })
+    .index("by_status", ["status"])
+    .index("by_service_key_status", ["service", "key", "status"]),
 });

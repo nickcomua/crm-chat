@@ -21,6 +21,10 @@ pub struct WorkerConfig {
     /// URL the Restate runtime uses to reach this service endpoint.
     /// Must be reachable from within Docker (default: http://host.docker.internal:{restate_port}).
     pub restate_service_url: String,
+    /// Maximum number of MediaDownloader workflows running in parallel.
+    /// Controls how many clients can download media simultaneously.
+    /// 0 = unlimited. (default: 2)
+    pub max_media_workflows: usize,
 }
 
 impl WorkerConfig {
@@ -47,6 +51,10 @@ impl WorkerConfig {
             .unwrap_or_else(|_| "http://localhost:8080".to_string());
         let restate_service_url = env::var("RESTATE_SERVICE_URL")
             .unwrap_or_else(|_| format!("http://host.docker.internal:{restate_port}"));
+        let max_media_workflows: usize = env::var("MAX_MEDIA_WORKFLOWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
 
         Ok(Self {
             api_id,
@@ -59,6 +67,7 @@ impl WorkerConfig {
             restate_admin_url,
             restate_ingress_url,
             restate_service_url,
+            max_media_workflows,
         })
     }
 }

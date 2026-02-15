@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsMarkFullScannedArgs, ChatsUpdateSyncProgressArgs, ChatsUpdateSyncProgressScanPhase,
-    ChatsUpsertArgs, ConvexApi, ConvexApiClient, MessagesUpsertArgs,
+    ChatsMarkFullScannedArgs, ChatsTable, ChatsUpdateSyncProgressArgs,
+    ChatsUpdateSyncProgressScanPhase, ChatsUpsertArgs, ClientsGetForWorkerArgs, ConvexApi,
+    ConvexApiClient, MessagesUpsertArgs,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -22,7 +23,9 @@ use crate::error::WorkerError;
 use crate::ops::convex as cx;
 use crate::ops::telegram::to_upsert_media_kind;
 
-/// Request to scan a single chat's messages.
+/// Internal request used for direct `scan_chat_messages()` calls (e.g. from
+/// UpdateListener backfill). Contains the derived fields that the Restate
+/// handler resolves from `ChatsTable` + a Convex lookup.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatScanRequest {
     pub client_id: String,
@@ -36,7 +39,7 @@ pub struct ChatScanRequest {
 
 #[restate_sdk::object]
 pub trait ChatScanner {
-    async fn scan(req: Json<ChatScanRequest>) -> Result<(), HandlerError>;
+    async fn scan(req: Json<ChatsTable>) -> Result<(), HandlerError>;
 }
 
 pub struct ChatScannerImpl {
@@ -48,18 +51,44 @@ impl ChatScanner for ChatScannerImpl {
     async fn scan(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<ChatScanRequest>,
+        req: Json<ChatsTable>,
     ) -> Result<(), HandlerError> {
-        let req = req.into_inner();
-        info!(chat_id = %req.chat_id, "ChatScanner: starting scan");
+        let chat = req.into_inner();
+        info!(chat_id = %chat.chat_id, "ChatScanner: starting scan");
+
+        // Resolve telegram_id from the client record
+        let client = self
+            .convex
+            .query_clients_get_for_worker(ClientsGetForWorkerArgs {
+                clientId: chat.client_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("Client {} not found", chat.client_id))?;
 
         let tg_client = self
             .pool
-            .get_or_create(&req.user_id, &req.external_id)
+            .get_or_create(&chat.user_id, &client.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        scan_chat_messages(&self.convex, &tg_client, &req)
+        let chat_external_id = chat
+            .chat_id
+            .strip_prefix(&format!("{}:", chat.client_id))
+            .unwrap_or(&chat.chat_id)
+            .to_string();
+
+        let scan_req = ChatScanRequest {
+            client_id: chat.client_id,
+            user_id: chat.user_id,
+            external_id: client.telegram_id,
+            chat_id: chat.chat_id,
+            chat_external_id,
+            is_pinned: chat.is_pinned,
+            pinned_name: chat.pinned_name,
+        };
+
+        scan_chat_messages(&self.convex, &tg_client, &scan_req)
             .await
             .map_err(anyhow::Error::from)?;
         Ok(())
