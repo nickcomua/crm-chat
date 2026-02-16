@@ -21,8 +21,8 @@ rsa = "0.9"
 rand = "0.8"
 base64 = "0.22"
 futures = "0.3"
-convex-typegen = { path = "../../../convex-typegen" }
+convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
 tempfile = "3"
 
 [build-dependencies]
-convex-typegen = { path = "../../../convex-typegen" }
+convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
