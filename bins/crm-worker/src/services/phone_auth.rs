@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::client_pool::ClientPool;
+use crate::ops::convex::ConvexResultExt as _;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Result type (serializable for Restate)
@@ -74,6 +75,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 authId: req.id.clone(),
             })
             .await
+            .check()
             .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
         // Step 2: Get or create Telegram client
@@ -92,6 +94,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                     result: PhoneAuthWorkerCompleteSendCodeResult::AlreadyAuthorized,
                 })
                 .await
+                .check()
                 .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
             return Ok(Json(PhoneAuthResult {
                 success: true,
@@ -118,7 +121,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report send-code timeout");
                 return Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg.to_string()),
@@ -133,7 +136,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         result: PhoneAuthWorkerCompleteSendCodeResult::Failed { error: msg.clone() },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report send-code failure");
                 return Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg),
@@ -149,6 +152,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         },
                     })
                     .await
+                    .check()
                     .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
                 token.phone_code_hash
             }
@@ -185,7 +189,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report verify-code timeout");
                 return Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg.to_string()),
@@ -200,7 +204,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         result: PhoneAuthWorkerCompleteVerifyCodeResult::Failed { error: msg.clone() },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report verify-code failure");
                 return Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg),
@@ -215,6 +219,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::Success { userId: user_id },
                         })
                         .await
+                        .check()
                         .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
                     return Ok(Json(PhoneAuthResult {
                         success: true,
@@ -229,7 +234,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::InvalidCode,
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report invalid code");
                     return Ok(Json(PhoneAuthResult {
                         success: false,
                         error: Some("Invalid code".to_string()),
@@ -243,7 +248,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             result: PhoneAuthWorkerCompleteVerifyCodeResult::SignUpRequired,
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report sign-up required");
                     return Ok(Json(PhoneAuthResult {
                         success: false,
                         error: Some("Sign up required".to_string()),
@@ -262,6 +267,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             },
                         })
                         .await
+                        .check()
                         .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
                     // Fall through to password step
                 }
@@ -303,7 +309,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report verify-password timeout");
                 Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg.to_string()),
@@ -318,7 +324,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                         result: PhoneAuthWorkerCompleteVerifyPasswordResult::Failed { error: msg.clone() },
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to report verify-password failure");
                 Ok(Json(PhoneAuthResult {
                     success: false,
                     error: Some(msg),
@@ -333,6 +339,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             result: PhoneAuthWorkerCompleteVerifyPasswordResult::Success { userId: user_id },
                         })
                         .await
+                        .check()
                         .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
                     Ok(Json(PhoneAuthResult {
                         success: true,
@@ -347,7 +354,7 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                             result: PhoneAuthWorkerCompleteVerifyPasswordResult::InvalidPassword,
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report invalid password");
                     Ok(Json(PhoneAuthResult {
                         success: false,
                         error: Some("Invalid password".to_string()),

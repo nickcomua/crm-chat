@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 
 use super::dialog_sync::ClientTaskFields;
 
@@ -185,7 +185,8 @@ async fn upload_photo_to_convex(
             storageId: storage_id.to_string(),
             photoExternalId: photo_external_id.to_string(),
         })
-        .await?;
+        .await
+        .check()?;
 
     Ok(())
 }

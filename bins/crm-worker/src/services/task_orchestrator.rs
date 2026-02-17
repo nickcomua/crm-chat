@@ -23,6 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::auth::mint_worker_jwt;
 use crate::config::{WorkerConfig, discover_session_files};
+use crate::ops::convex::ConvexResultExt as _;
 
 /// Fire-and-forget dispatch to a Restate service handler via HTTP ingress.
 ///
@@ -155,12 +156,14 @@ pub async fn run_orchestrator(
                 let pending: Vec<WorkerTasksTable> = pending;
                 for row in &pending {
                     // Mark dispatched first (idempotent — Restate handles dedup)
-                    convex
+                    if let Err(e) = convex
                         .worker_tasks_mark_dispatched(WorkerTasksMarkDispatchedArgs {
                             taskId: row.id.clone(),
                         })
                         .await
-                        .ok();
+                    {
+                        warn!(error = %e, "Failed to mark task dispatched");
+                    }
 
                     let (service, key, handler, payload) = dispatch_info(&row.task);
 
@@ -319,11 +322,12 @@ async fn discover_and_register_sessions(client: &ConvexApiClient, config: &Worke
                 kind: "Telegram".to_string(),
             })
             .await
+            .check()
         {
-            Ok(result) => {
+            Ok(client_id) => {
                 registered += 1;
                 info!(
-                    result = ?result,
+                    client_id,
                     external_id = %external_id,
                     owner = %owner_id,
                     "Registered session from disk"
