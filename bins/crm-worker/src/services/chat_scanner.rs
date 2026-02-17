@@ -20,7 +20,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 
 /// Internal request used for direct `scan_chat_messages()` calls (e.g. from
@@ -129,7 +129,7 @@ pub async fn scan_chat_messages(
             scanPhase: Some(ChatsUpdateSyncProgressScanPhase::ScanningMessages),
         })
         .await
-        .ok();
+        .warn_on_err("Failed to update initial sync progress");
 
     let mut msg_stream = match tg_client.iter_messages(&req.chat_external_id).await {
         Ok(s) => s,
@@ -176,7 +176,8 @@ pub async fn scan_chat_messages(
                     .as_ref()
                     .map(|s| to_upsert_media_kind(s.kind)),
             })
-            .await?;
+            .await
+            .check()?;
 
         // Create pending media record + enqueue per-file download task
         if let Some(ref summary) = msg.media_summary
@@ -198,7 +199,7 @@ pub async fn scan_chat_messages(
                     duration: summary.duration,
                 })
                 .await
-                .ok(); // best-effort — don't fail the scan for media
+                .warn_on_err("Failed to create pending media record");
         }
 
         msg_count += 1;
@@ -212,7 +213,7 @@ pub async fn scan_chat_messages(
                     scanPhase: None,
                 })
                 .await
-                .ok();
+                .warn_on_err("Failed to update sync progress");
         }
     }
 
@@ -228,14 +229,16 @@ pub async fn scan_chat_messages(
                 pinnedName: req.pinned_name.clone(),
                 lastMessageTimestamp: last_ts,
             })
-            .await?;
+            .await
+            .check()?;
     }
 
     convex
         .chats_mark_full_scanned(ChatsMarkFullScannedArgs {
             chatId: req.chat_id.clone(),
         })
-        .await?;
+        .await
+        .check()?;
 
     convex
         .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
@@ -245,7 +248,7 @@ pub async fn scan_chat_messages(
             scanPhase: Some(ChatsUpdateSyncProgressScanPhase::Listening),
         })
         .await
-        .ok();
+        .warn_on_err("Failed to update final sync progress");
 
     info!(chat_id = %req.chat_id, msg_count, "Chat fully scanned");
     Ok(())

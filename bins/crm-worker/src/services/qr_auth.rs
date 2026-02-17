@@ -22,6 +22,7 @@ use tracing::{error, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::config;
+use crate::ops::convex::ConvexResultExt as _;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Result type (serializable for Restate)
@@ -64,6 +65,7 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
                 authId: req.id.clone(),
             })
             .await
+            .check()
             .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
         // Step 2: Get or create Telegram client (using auth_id as session identifier)
@@ -85,6 +87,7 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
                     result: QrAuthWorkerCompleteQrAuthResult::AlreadyAuthorized { userId: user_id },
                 })
                 .await
+                .check()
                 .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
             self.pool.remove(&req.user_id, &req.id);
@@ -143,7 +146,7 @@ impl QrAuthWorkflowImpl {
                             },
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report QR timeout");
                     return Ok(Json(QrAuthResult {
                         success: false,
                         error: Some(msg.to_string()),
@@ -161,7 +164,7 @@ impl QrAuthWorkflowImpl {
                             },
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report QR stream ended");
                     return Ok(Json(QrAuthResult {
                         success: false,
                         error: Some(msg.to_string()),
@@ -177,7 +180,7 @@ impl QrAuthWorkflowImpl {
                             result: QrAuthWorkerCompleteQrAuthResult::Failed { error: msg.clone() },
                         })
                         .await
-                        .ok();
+                        .warn_on_err("Failed to report QR stream error");
                     return Ok(Json(QrAuthResult {
                         success: false,
                         error: Some(msg),
@@ -192,18 +195,14 @@ impl QrAuthWorkflowImpl {
                         info!(auth_id = %req.id, expires, "New QR token generated");
                         last_token_url = Some(url.clone());
 
-                        if let Err(e) = self
-                            .convex
+                        self.convex
                             .qr_auth_worker_update_qr_token(QrAuthWorkerUpdateQrTokenArgs {
                                 authId: req.id.clone(),
                                 url,
                                 expires: f64::from(expires),
                             })
                             .await
-                        {
-                            error!(auth_id = %req.id, error = %e, "Failed to update QR token");
-                            // Continue polling — the update failure might be transient
-                        }
+                            .warn_on_err("Failed to update QR token (transient, continuing)");
                     }
                     QrLoginToken::Success => {
                         info!(auth_id = %req.id, "QR login successful");
@@ -220,6 +219,7 @@ impl QrAuthWorkflowImpl {
                                 result: QrAuthWorkerCompleteQrAuthResult::Authorized { userId: user_id },
                             })
                             .await
+                            .check()
                             .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
                         return Ok(Json(QrAuthResult {

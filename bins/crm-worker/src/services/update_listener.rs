@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
 
@@ -265,7 +265,8 @@ async fn process_update(
                         .as_ref()
                         .map(|s| to_upsert_media_kind(s.kind)),
                 })
-                .await?;
+                .await
+                .check()?;
 
             // Real-time media download in background
             if matches!(update, Update::NewMessage(_))
@@ -315,7 +316,7 @@ async fn process_update(
                         externalId: ext_id.clone(),
                     })
                     .await
-                    .ok();
+                    .warn_on_err("Failed to mark message deleted");
             }
         }
 

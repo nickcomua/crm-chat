@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
 #[derive(Clone)]
@@ -72,12 +72,15 @@ impl DialogSync for DialogSyncImpl {
             .map_err(anyhow::Error::from)?;
 
         // Enqueue post-sync tasks (ChatScanner, ProfilePhotoSync)
-        self.convex
+        if let Err(e) = self
+            .convex
             .worker_tasks_enqueue_post_sync_tasks(WorkerTasksEnqueuePostSyncTasksArgs {
                 clientId: fields.client_id.clone(),
             })
             .await
-            .ok();
+        {
+            warn!(error = %e, "Failed to enqueue post-sync tasks");
+        }
 
         Ok(())
     }
@@ -117,7 +120,8 @@ pub async fn sync_dialogs(
                 pinnedName: dialog.name.clone(),
                 lastMessageTimestamp: 0.0,
             })
-            .await?;
+            .await
+            .check()?;
 
         count += 1;
     }
