@@ -5,6 +5,7 @@ import { env } from "@/env";
 export const convex = new ConvexReactClient(env.VITE_CONVEX_URL);
 
 export { api } from "../../../convex-backend/convex/_generated/api";
+export type { Doc, Id } from "../../../convex-backend/convex/_generated/dataModel";
 
 // ---------------------------------------------------------------------------
 // Result helpers — mirrors the Convex backend Result<T> pattern

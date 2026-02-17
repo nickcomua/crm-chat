@@ -1,25 +1,9 @@
 import { useMutation, useQuery } from "convex/react";
-import { api, onResultError } from "@/lib/convex";
+import { api, type Doc, onResultError } from "@/lib/convex";
 
-type QrAuthStep =
-  | "Pending"
-  | "Generating"
-  | "Token"
-  | "Authorized"
-  | "AlreadyAuthorized"
-  | "Failed"
-  | "Cancelled";
 
-interface QrAuthDoc {
-  _id: string;
-  _creationTime: number;
-  step: QrAuthStep;
-  qrUrl?: string;
-  qrExpires?: number;
-  error?: string;
-}
 
-function isTerminalStep(step: QrAuthStep): boolean {
+function isTerminalStep(step: Doc<'qrAuths'>['step']): boolean {
   return (
     step === "Authorized" ||
     step === "AlreadyAuthorized" ||
@@ -30,7 +14,7 @@ function isTerminalStep(step: QrAuthStep): boolean {
 
 interface UseQrAuthReturn {
   /** The current QR auth session (active or most recent terminal) */
-  auth: QrAuthDoc | null;
+  auth: Doc<'qrAuths'> | null;
   /** Start a new QR auth session */
   startQrAuth: () => void;
   /** Cancel the active QR auth session */
@@ -45,7 +29,7 @@ export function useQrAuth(): UseQrAuthReturn {
   const startQrAuthMutation = useMutation(api.qrAuth.start);
   const cancelQrAuthMutation = useMutation(api.qrAuth.cancel);
 
-  const authList: QrAuthDoc[] = qrAuths ?? [];
+  const authList = qrAuths ?? [];
 
   // Prefer an active (non-terminal) session; otherwise show the most recent
   const activeAuth = authList.find((a) => !isTerminalStep(a.step));

@@ -18,7 +18,10 @@ pub enum QrLoginToken {
         expires: i32,
     },
     /// The token was accepted on another device, login succeeded.
-    Success,
+    Success {
+        /// The numeric Telegram user ID of the authenticated user.
+        user_id: i64,
+    },
     /// The client needs to connect to a different DC to complete login.
     /// This is handled automatically by `login_with_qr`.
     MigrateTo { dc_id: i32 },
@@ -346,8 +349,8 @@ impl TelegramClient {
     ///             println!("Scan this QR code: {}", url);
     ///             println!("Expires at: {}", expires);
     ///         }
-    ///         QrLoginToken::Success => {
-    ///             println!("Login successful!");
+    ///         QrLoginToken::Success { user_id } => {
+    ///             println!("Login successful! User ID: {}", user_id);
     ///             break;
     ///         }
     ///         QrLoginToken::MigrateTo { dc_id } => {
@@ -444,8 +447,12 @@ impl TelegramClient {
                             tl::enums::auth::LoginToken::Success(success) => {
                                 info!("QR login successful after DC migration");
                                 match success.authorization {
-                                    tl::enums::auth::Authorization::Authorization(_) => {
-                                        yield Ok(QrLoginToken::Success);
+                                    tl::enums::auth::Authorization::Authorization(auth) => {
+                                        let user_id = match auth.user {
+                                            tl::enums::User::User(user) => user.id,
+                                            tl::enums::User::Empty(empty) => empty.id,
+                                        };
+                                        yield Ok(QrLoginToken::Success { user_id });
                                         return;
                                     }
                                     tl::enums::auth::Authorization::SignUpRequired(_) => {
@@ -466,8 +473,12 @@ impl TelegramClient {
                     tl::enums::auth::LoginToken::Success(success) => {
                         info!("QR login successful");
                         match success.authorization {
-                            tl::enums::auth::Authorization::Authorization(_) => {
-                                yield Ok(QrLoginToken::Success);
+                            tl::enums::auth::Authorization::Authorization(auth) => {
+                                let user_id = match auth.user {
+                                    tl::enums::User::User(user) => user.id,
+                                    tl::enums::User::Empty(empty) => empty.id,
+                                };
+                                yield Ok(QrLoginToken::Success { user_id });
                                 return;
                             }
                             tl::enums::auth::Authorization::SignUpRequired(_) => {

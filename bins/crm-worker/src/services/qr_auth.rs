@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::config;
-use crate::ops::convex::ConvexResultExt as _;
+use crate::ops::convex::{mark_task_complete, ConvexResultExt as _};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Result type (serializable for Restate)
@@ -57,8 +57,24 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
         req: Json<QrAuthsTable>,
     ) -> Result<Json<QrAuthResult>, HandlerError> {
         let req = req.into_inner();
+        let auth_id_for_complete = req.id.clone();
         info!(auth_id = %req.id, "QrAuthWorkflow started");
+        let result = self.run_inner(req).await;
+        mark_task_complete(&self.convex, "QrAuth:run", &auth_id_for_complete).await;
+        result
+    }
 
+    async fn cancel(&self, ctx: SharedWorkflowContext<'_>) -> Result<(), HandlerError> {
+        ctx.resolve_promise::<bool>("cancel", true);
+        Ok(())
+    }
+}
+
+impl QrAuthWorkflowImpl {
+    async fn run_inner(
+        &self,
+        req: QrAuthsTable,
+    ) -> Result<Json<QrAuthResult>, HandlerError> {
         // Step 1: Claim the auth session
         self.convex
             .qr_auth_worker_claim(QrAuthWorkerClaimArgs {
@@ -78,13 +94,17 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
         // Step 3: Check if already authorized
         if let Ok(true) = tg_client.is_authorized().await {
             info!(auth_id = %req.id, "Client already authorized");
-            let user_id = get_telegram_user_id(&tg_client).await;
+            let user_id = tg_client.get_user_id().await.unwrap_or(0);
+            let phone_number = tg_client.get_phone_number().await;
             config::copy_session_for_scanning(&req.id, &req.user_id, user_id);
 
             self.convex
                 .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
                     authId: req.id.clone(),
-                    result: QrAuthWorkerCompleteQrAuthResult::AlreadyAuthorized { userId: user_id },
+                    result: QrAuthWorkerCompleteQrAuthResult::AlreadyAuthorized {
+                        userId: user_id,
+                        phoneNumber: phone_number,
+                    },
                 })
                 .await
                 .check()
@@ -106,13 +126,6 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
         result
     }
 
-    async fn cancel(&self, ctx: SharedWorkflowContext<'_>) -> Result<(), HandlerError> {
-        ctx.resolve_promise::<bool>("cancel", true);
-        Ok(())
-    }
-}
-
-impl QrAuthWorkflowImpl {
     /// Run the QR login polling loop.
     ///
     /// Streams QR tokens from the Telegram client, posting each new token URL
@@ -204,9 +217,9 @@ impl QrAuthWorkflowImpl {
                             .await
                             .warn_on_err("Failed to update QR token (transient, continuing)");
                     }
-                    QrLoginToken::Success => {
-                        info!(auth_id = %req.id, "QR login successful");
-                        let user_id = get_telegram_user_id(&tg_client).await;
+                    QrLoginToken::Success { user_id } => {
+                        info!(auth_id = %req.id, user_id, "QR login successful");
+                        let phone_number = tg_client.get_phone_number().await;
                         config::copy_session_for_scanning(
                             &req.id,
                             &req.user_id,
@@ -216,7 +229,10 @@ impl QrAuthWorkflowImpl {
                         self.convex
                             .qr_auth_worker_complete_qr_auth(QrAuthWorkerCompleteQrAuthArgs {
                                 authId: req.id.clone(),
-                                result: QrAuthWorkerCompleteQrAuthResult::Authorized { userId: user_id },
+                                result: QrAuthWorkerCompleteQrAuthResult::Authorized {
+                                    userId: user_id,
+                                    phoneNumber: phone_number,
+                                },
                             })
                             .await
                             .check()
@@ -233,20 +249,6 @@ impl QrAuthWorkflowImpl {
                     }
                 },
             }
-        }
-    }
-}
-
-/// Get the Telegram user ID from an authorized client.
-async fn get_telegram_user_id(tg_client: &messanger_telegram::TelegramClient) -> i64 {
-    match tg_client.get_client_external_id().await {
-        Ok(id) => id
-            .strip_prefix("telegram:")
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(0),
-        Err(e) => {
-            warn!(error = %e, "Failed to get Telegram user_id");
-            0
         }
     }
 }

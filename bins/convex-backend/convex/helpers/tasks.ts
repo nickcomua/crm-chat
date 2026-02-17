@@ -9,7 +9,7 @@ type WorkerTask = Infer<typeof workerTask>;
  * Extract a deduplication key from a typed worker task.
  * Tasks with the same (type, dedupKey) are considered duplicates.
  */
-function getDeduplicationKey(task: WorkerTask): string {
+export function getDeduplicationKey(task: WorkerTask): string {
 	switch (task.type) {
 		case "PhoneAuth:run":
 		case "PhoneAuth:submitCode":

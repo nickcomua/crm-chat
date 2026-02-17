@@ -21,8 +21,8 @@ test.describe("Scroll to Message", () => {
     });
     const page = await context.newPage();
     await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
-    await page.waitForTimeout(3000);
+    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
+    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
     const robot = getRobotClient();
@@ -94,7 +94,7 @@ test.describe("Scroll to Message", () => {
 
     // The target message should become visible.
     const targetEl = page.locator(`[data-message-id="${firstPageTargetId}"]`);
-    await expect(targetEl).toBeVisible({ timeout: 20_000 });
+    await expect(targetEl).toBeVisible({ timeout: 10_000 });
     await expect(targetEl).toContainText("Test message number 60");
 
     // The highlight ring should be applied to the bubble.
@@ -111,7 +111,7 @@ test.describe("Scroll to Message", () => {
 
     // This message is beyond the first page — the component must loadMore to find it.
     const targetEl = page.locator(`[data-message-id="${deepTargetId}"]`);
-    await expect(targetEl).toBeVisible({ timeout: 30_000 });
+    await expect(targetEl).toBeVisible({ timeout: 10_000 });
     await expect(targetEl).toContainText("Test message number 10");
   });
 
@@ -124,7 +124,7 @@ test.describe("Scroll to Message", () => {
     const newestEl = page.locator(
       `[data-message-id="${clientId}:${chatId}:msg-70"]`
     );
-    await expect(newestEl).toBeVisible({ timeout: 20_000 });
+    await expect(newestEl).toBeVisible({ timeout: 10_000 });
     await expect(newestEl).toContainText("Test message number 70");
   });
 });

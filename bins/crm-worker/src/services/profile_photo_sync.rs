@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
 
 use super::dialog_sync::ClientTaskFields;
 
@@ -61,6 +61,8 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
         sync_profile_photos(&self.convex, &tg_client, &fields)
             .await
             .map_err(anyhow::Error::from)?;
+
+        mark_task_complete(&self.convex, "ProfilePhotoSync:sync", &fields.client_id).await;
         Ok(())
     }
 

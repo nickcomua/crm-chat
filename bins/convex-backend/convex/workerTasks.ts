@@ -3,7 +3,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { workerTaskDoc } from "./schema";
 import { requireWorker } from "./helpers/auth";
-import { enqueueTask } from "./helpers/tasks";
+import { enqueueTask, getDeduplicationKey } from "./helpers/tasks";
 
 /**
  * All pending tasks for the worker to dispatch. Worker-only.
@@ -130,7 +130,31 @@ export const resetDispatched = mutation({
 	},
 });
 
-const CLEANUP_AGE_MS = 60 * 60 * 1000; // 1 hour
+/**
+ * Delete a Dispatched task by type + dedup key. Worker-only.
+ *
+ * Called by Restate handlers when a task completes (success or failure).
+ * Frees the dedup slot so future enqueueTask() calls for the same key succeed.
+ */
+export const markComplete = mutation({
+	args: { taskType: v.string(), dedupKey: v.string() },
+	returns: v.null(),
+	handler: async (ctx, { taskType, dedupKey }) => {
+		await requireWorker(ctx);
+		const dispatched = await ctx.db
+			.query("workerTasks")
+			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
+			.collect();
+		for (const task of dispatched) {
+			if (task.task.type === taskType && getDeduplicationKey(task.task) === dedupKey) {
+				await ctx.db.delete(task._id);
+			}
+		}
+		return null;
+	},
+});
+
+const CLEANUP_AGE_MS = 5 * 60 * 1000; // 5 minutes
 const CLEANUP_BATCH = 200;
 
 /** Delete old Dispatched tasks. Self-scheduling. */
@@ -143,16 +167,14 @@ export const cleanup = internalMutation({
 			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
 			.take(CLEANUP_BATCH);
 
-		let deleted = 0;
 		for (const task of old) {
 			if (task.dispatchedAt && task.dispatchedAt < cutoff) {
 				await ctx.db.delete(task._id);
-				deleted++;
 			}
 		}
 
 		// Re-schedule if we hit the batch limit
-		if (deleted === CLEANUP_BATCH) {
+		if (old.length === CLEANUP_BATCH) {
 			await ctx.scheduler.runAfter(0, internal.workerTasks.cleanup, {});
 		}
 	},

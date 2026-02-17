@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
 #[derive(Clone)]
@@ -82,6 +82,7 @@ impl DialogSync for DialogSyncImpl {
             warn!(error = %e, "Failed to enqueue post-sync tasks");
         }
 
+        mark_task_complete(&self.convex, "DialogSync:sync", &fields.client_id).await;
         Ok(())
     }
 }

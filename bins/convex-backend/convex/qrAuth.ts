@@ -163,8 +163,16 @@ export const workerCompleteQrAuth = mutation({
   args: {
     authId: v.id("qrAuths"),
     result: v.union(
-      v.object({ type: v.literal("Authorized"), userId: v.int64() }),
-      v.object({ type: v.literal("AlreadyAuthorized"), userId: v.int64() }),
+      v.object({
+        type: v.literal("Authorized"),
+        userId: v.int64(),
+        phoneNumber: v.optional(v.string()),
+      }),
+      v.object({
+        type: v.literal("AlreadyAuthorized"),
+        userId: v.int64(),
+        phoneNumber: v.optional(v.string()),
+      }),
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
@@ -197,6 +205,7 @@ export const workerCompleteQrAuth = mutation({
       if (existing) {
         await ctx.db.patch(existing._id, {
           status: { type: "Connected" },
+          ...(qrResult.phoneNumber ? { phoneNumber: qrResult.phoneNumber } : {}),
         });
         clientId = existing._id;
       } else {
@@ -204,6 +213,7 @@ export const workerCompleteQrAuth = mutation({
           userId: auth.userId,
           kind: "Telegram",
           telegramId,
+          phoneNumber: qrResult.phoneNumber,
           scanningChatIds: [],
           status: { type: "Connected" },
         });

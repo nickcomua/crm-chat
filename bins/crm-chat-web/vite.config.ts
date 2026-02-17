@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import "dotenv/config";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
