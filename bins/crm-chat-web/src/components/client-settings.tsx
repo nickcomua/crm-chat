@@ -53,6 +53,7 @@ interface ChatDoc {
 interface ClientDoc {
   _id: string;
   telegramId: string;
+  phoneNumber?: string;
   mediaSettings?: MediaSettings;
 }
 
@@ -500,7 +501,9 @@ export function ClientSettings({
         </Button>
         <div>
           <h2 className="font-bold text-2xl tracking-tight">
-            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
+            {client.phoneNumber
+              ? `+${client.phoneNumber}`
+              : client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </h2>
           <p className="text-muted-foreground text-sm">
             {chats.length} chat{chats.length !== 1 ? "s" : ""} &middot;{" "}

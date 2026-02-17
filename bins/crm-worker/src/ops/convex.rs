@@ -13,7 +13,7 @@ pub use convex_backend::ConvexApiClient;
 
 use convex_backend::{
     ChatsListForWorkerArgs, ChatsTable, MediaMarkFailedArgs, MediaStartDownloadArgs,
-    MediaUpdateProgressArgs,
+    MediaUpdateProgressArgs, WorkerTasksMarkCompleteArgs,
 };
 use tracing::warn;
 
@@ -182,6 +182,18 @@ pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str,
         })
         .await
         .warn_on_err("Failed to mark media as failed");
+}
+
+/// Best-effort task completion: delete the Dispatched record so the dedup slot
+/// is freed for future enqueue calls.
+pub async fn mark_task_complete(convex: &ConvexApiClient, task_type: &str, dedup_key: &str) {
+    convex
+        .worker_tasks_mark_complete(WorkerTasksMarkCompleteArgs {
+            taskType: task_type.to_string(),
+            dedupKey: dedup_key.to_string(),
+        })
+        .await
+        .ok(); // best-effort cleanup
 }
 
 // ────────────────────────────────────────────────────────────────────────────

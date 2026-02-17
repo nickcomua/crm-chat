@@ -151,6 +151,7 @@ export const clientDoc = v.object({
 	userId: v.string(),
 	kind: clientKind,
 	telegramId: v.string(),
+	phoneNumber: v.optional(v.string()),
 	scanningChatIds: v.array(v.string()),
 	status: clientStatus,
 	mediaSettings: v.optional(mediaSettingsValidator),

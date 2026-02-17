@@ -70,24 +70,30 @@ export const workerRegisterConnected = mutation({
     userId: v.string(),
     telegramId: v.string(),
     kind: clientKind,
+    phoneNumber: v.optional(v.string()),
   },
   returns: result(v.id("clients")),
   handler: async (ctx, args) => {
     await requireWorker(ctx);
+    const { phoneNumber, ...lookupArgs } = args;
     const existing = await ctx.db
       .query("clients")
       .withIndex("by_userId_telegramId", (q) =>
-        q.eq("userId", args.userId).eq("telegramId", args.telegramId),
+        q.eq("userId", lookupArgs.userId).eq("telegramId", lookupArgs.telegramId),
       )
       .unique();
     if (existing) {
-      await ctx.db.patch(existing._id, { status: { type: "Connected" } });
+      await ctx.db.patch(existing._id, {
+        status: { type: "Connected" },
+        ...(phoneNumber ? { phoneNumber } : {}),
+      });
       const client = await ctx.db.get(existing._id);
       if (client) await enqueueClientStart(ctx, client);
       return ok(existing._id);
     }
     const id = await ctx.db.insert("clients", {
-      ...args,
+      ...lookupArgs,
+      phoneNumber,
       scanningChatIds: [],
       status: { type: "Connected" },
     });

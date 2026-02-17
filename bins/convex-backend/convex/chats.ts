@@ -152,16 +152,16 @@ export const updateScanEnabled = mutation({
       await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
       await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
     } else {
-      await ctx.db.patch(chat._id, { scanEnabled });
-      // Enqueue scan if not already fully scanned
-      if (!chat.fullScanned) {
-        await enqueueTask(ctx, {
-          type: "ChatScanner:scan",
-          chatId,
-          clientId: chat.clientId,
-          userId: chat.userId,
-        });
-      }
+      // Always reset fullScanned so the scanner re-runs from scratch.
+      // Without this, toggling OFF→ON on an already-scanned chat would
+      // read the stale `fullScanned: true` and skip the enqueue.
+      await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
+      await enqueueTask(ctx, {
+        type: "ChatScanner:scan",
+        chatId,
+        clientId: chat.clientId,
+        userId: chat.userId,
+      });
     }
     return ok(null);
   },

@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
 use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
 
@@ -76,6 +76,7 @@ impl UpdateListener for UpdateListenerImpl {
 
         let result = run_listener(&self.convex, &self.pool, &tg_client, &fields, &token).await;
         self.cancel_tokens.remove(ctx.key());
+        mark_task_complete(&self.convex, "UpdateListener:listen", &fields.client_id).await;
         result.map_err(anyhow::Error::from)?;
         Ok(())
     }

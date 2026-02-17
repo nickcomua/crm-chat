@@ -218,6 +218,22 @@ async fn stream_concurrent_download(
 }
 
 impl TelegramClient {
+    /// Get the numeric Telegram user ID for the authenticated client.
+    pub async fn get_user_id(&self) -> Result<i64, MessengerError> {
+        let client = self.client.lock().await;
+        let me = client.get_me().await.map_err(|e| {
+            MessengerError::Connection(format!("Failed to get user info: {}", e))
+        })?;
+        Ok(me.id().bare_id())
+    }
+
+    /// Get the phone number of the authenticated client, if available.
+    pub async fn get_phone_number(&self) -> Option<String> {
+        let client = self.client.lock().await;
+        let me = client.get_me().await.ok()?;
+        me.phone().map(|p| p.to_string())
+    }
+
     /// Download media bytes from Telegram.
     pub async fn download_media(
         &self,
@@ -436,18 +452,8 @@ impl MessengerClient for TelegramClient {
     #[instrument(skip(self))]
     async fn get_client_external_id(&self) -> Result<ExternalId, MessengerError> {
         debug!("Getting client external ID");
-        let client = self.client.lock().await;
-        let me = client.get_me().await.map_err(|e| {
-            error!(error = %e, "Failed to get user info");
-            MessengerError::Connection(format!("Failed to get user info: {}", e))
-        })?;
-
-        let phone = me.phone().ok_or_else(|| {
-            warn!("Phone number not available for client");
-            MessengerError::NotFound("Phone number not available".to_string())
-        })?;
-
-        let external_id = format!("telegram:{}", phone);
+        let id = self.get_user_id().await?;
+        let external_id = format!("telegram:{}", id);
         debug!(external_id = %external_id, "Got client external ID");
         Ok(external_id)
     }
