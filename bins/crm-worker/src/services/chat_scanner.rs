@@ -20,7 +20,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 
 /// Internal request used for direct `scan_chat_messages()` calls (e.g. from
@@ -101,9 +101,12 @@ impl ChatScanner for ChatScannerImpl {
             pinned_name: chat_record.and_then(|c| c.pinned_name.clone()),
         };
 
+        let chat_id_for_complete = scan_req.chat_id.clone();
         scan_chat_messages(&self.convex, &tg_client, &scan_req)
             .await
             .map_err(anyhow::Error::from)?;
+
+        mark_task_complete(&self.convex, "ChatScanner:scan", &chat_id_for_complete).await;
         Ok(())
     }
 }

@@ -17,11 +17,11 @@ test.describe("QR Code Authentication", () => {
   test.beforeEach(async ({ page }) => {
     // Auth is handled by storageState from auth.setup.ts
     await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
-    await page.waitForTimeout(2000);
+    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
+    await page.waitForTimeout(1000);
 
     // Navigate to settings
-    await page.locator('a[href="/#/settings"]').click({ timeout: 15_000 });
+    await page.locator('a[href="/#/settings"]').click({ timeout: 10_000 });
     await page.waitForURL(SETTINGS_URL_PATTERN);
     await page.waitForSelector("text=Telegram Clients", { timeout: 10_000 });
   });

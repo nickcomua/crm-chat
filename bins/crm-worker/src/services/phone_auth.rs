@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::client_pool::ClientPool;
-use crate::ops::convex::ConvexResultExt as _;
+use crate::ops::convex::{mark_task_complete, ConvexResultExt as _};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Result type (serializable for Restate)
@@ -60,14 +60,12 @@ pub struct PhoneAuthWorkflowImpl {
     pub pool: Arc<ClientPool>,
 }
 
-impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
-    async fn run(
+impl PhoneAuthWorkflowImpl {
+    async fn run_inner(
         &self,
         ctx: WorkflowContext<'_>,
-        req: Json<PhoneAuthsTable>,
+        req: PhoneAuthsTable,
     ) -> Result<Json<PhoneAuthResult>, HandlerError> {
-        let req = req.into_inner();
-        info!(auth_id = %req.id, phone = %req.phone, "PhoneAuthWorkflow started");
 
         // Step 1: Claim the auth session
         self.convex
@@ -362,6 +360,21 @@ impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
                 }
             },
         }
+    }
+}
+
+impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
+    async fn run(
+        &self,
+        ctx: WorkflowContext<'_>,
+        req: Json<PhoneAuthsTable>,
+    ) -> Result<Json<PhoneAuthResult>, HandlerError> {
+        let req = req.into_inner();
+        let auth_id_for_complete = req.id.clone();
+        info!(auth_id = %req.id, phone = %req.phone, "PhoneAuthWorkflow started");
+        let result = self.run_inner(ctx, req).await;
+        mark_task_complete(&self.convex, "PhoneAuth:run", &auth_id_for_complete).await;
+        result
     }
 
     async fn submit_code(

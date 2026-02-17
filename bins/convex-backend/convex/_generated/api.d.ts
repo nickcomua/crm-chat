@@ -10,6 +10,7 @@
 
 import type * as chats from "../chats.js";
 import type * as clients from "../clients.js";
+import type * as crons from "../crons.js";
 import type * as helpers_auth from "../helpers/auth.js";
 import type * as helpers_result from "../helpers/result.js";
 import type * as helpers_tasks from "../helpers/tasks.js";
@@ -29,6 +30,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   chats: typeof chats;
   clients: typeof clients;
+  crons: typeof crons;
   "helpers/auth": typeof helpers_auth;
   "helpers/result": typeof helpers_result;
   "helpers/tasks": typeof helpers_tasks;

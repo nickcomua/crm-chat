@@ -97,16 +97,16 @@ pub async fn run_orchestrator(
     info!("TaskOrchestrator: discovering sessions");
     discover_and_register_sessions(convex, config).await;
 
-    // // Reset stale Dispatched tasks from a previous run so they get re-dispatched.
-    // // Restate deduplicates by virtual-object key, so double-dispatch is harmless.
-    // match convex.worker_tasks_reset_dispatched().await {
-    //     Ok(n) => {
-    //         if n > 0.0 {
-    //             info!(count = n, "Reset stale dispatched tasks to Pending");
-    //         }
-    //     }
-    //     Err(e) => warn!(error = %e, "Failed to reset dispatched tasks"),
-    // }
+    // Reset stale Dispatched tasks from a previous run so they get re-dispatched.
+    // Restate deduplicates by virtual-object key, so double-dispatch is harmless.
+    match convex.worker_tasks_reset_dispatched().await {
+        Ok(n) => {
+            if n > 0.0 {
+                info!(count = n, "Reset stale dispatched tasks to Pending");
+            }
+        }
+        Err(e) => warn!(error = %e, "Failed to reset dispatched tasks"),
+    }
 
     let http = reqwest::Client::new();
 
@@ -315,11 +315,14 @@ async fn discover_and_register_sessions(client: &ConvexApiClient, config: &Worke
             }
         };
 
+        let phone_number = tg_client.get_phone_number().await;
+
         match client
             .clients_worker_register_connected(ClientsWorkerRegisterConnectedArgs {
                 userId: owner_id.clone(),
                 telegramId: external_id.clone(),
                 kind: "Telegram".to_string(),
+                phoneNumber: phone_number,
             })
             .await
             .check()

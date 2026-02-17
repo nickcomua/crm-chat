@@ -12,7 +12,7 @@ use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, mark_task_complete};
 use crate::ops::media::download_and_upload;
 use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
 
@@ -67,6 +67,7 @@ impl MediaDownloader for MediaDownloaderImpl {
                 let err = "Invalid media external ID format";
                 warn!(telegram_file_id = %telegramFileId, err);
                 cx::mark_media_failed(&self.convex, &telegramFileId, err).await;
+                mark_task_complete(&self.convex, "MediaDownloader:download", &telegramFileId).await;
                 return Ok(());
             }
         };
@@ -104,6 +105,7 @@ impl MediaDownloader for MediaDownloaderImpl {
             }
         }
 
+        mark_task_complete(&self.convex, "MediaDownloader:download", &telegramFileId).await;
         Ok(())
     }
 }
