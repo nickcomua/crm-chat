@@ -14,7 +14,7 @@ use messanger_telegram::TelegramClient;
 use tracing::info;
 
 use crate::error::WorkerError;
-use crate::ops::convex as cx;
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 use crate::ops::telegram::default_mime_for_kind;
 
 /// Download and upload media for a single message (used in real-time updates).
@@ -183,7 +183,7 @@ pub async fn download_and_upload(
             duration,
         })
         .await
-        .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
+        .check()?;
 
     info!(
         external_id,
