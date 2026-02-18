@@ -1,5 +1,5 @@
 import type { Infer } from "convex/values";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { workerTask } from "../schema";
 
@@ -11,25 +11,22 @@ type WorkerTask = Infer<typeof workerTask>;
  */
 export function getDeduplicationKey(task: WorkerTask): string {
 	switch (task.type) {
-		case "PhoneAuth:run":
-		case "PhoneAuth:submitCode":
-		case "PhoneAuth:submitPassword":
-		case "PhoneAuth:cancel":
-		case "QrAuth:run":
-		case "QrAuth:cancel":
+		case "PhoneAuth":
 			return task.authId;
 
-		case "DialogSync:sync":
-		case "UpdateListener:listen":
-		case "UpdateListener:stop":
-		case "ProfilePhotoSync:sync":
-		case "ProfilePhotoSync:stop":
+		// QrAuth is inserted directly — never goes through enqueueTask
+		case "QrAuth":
+			throw new Error("QrAuth tasks bypass enqueueTask");
+
+		case "DialogSync":
+		case "UpdateListener":
+		case "ProfilePhotoSync":
 			return task.clientId;
 
-		case "ChatScanner:scan":
+		case "ChatScanner":
 			return task.chatId;
 
-		case "MediaDownloader:download":
+		case "MediaDownloader":
 			return task.telegramFileId;
 	}
 }
@@ -37,11 +34,11 @@ export function getDeduplicationKey(task: WorkerTask): string {
 /**
  * Enqueue a typed worker task with deduplication.
  *
- * Checks for an existing Pending or Dispatched task with the same
+ * Checks for an existing Pending, Dispatched, or Running task with the same
  * (type, dedupKey) before inserting. If one already exists, this is a no-op.
  *
  * Uses `by_status` index + in-memory filtering since the workerTasks table
- * only contains active (Pending/Dispatched) rows — always small.
+ * only contains active (Pending/Dispatched/Running) rows — always small.
  */
 export async function enqueueTask(
 	ctx: MutationCtx,
@@ -49,22 +46,14 @@ export async function enqueueTask(
 ): Promise<void> {
 	const key = getDeduplicationKey(task);
 
-	// Dedup: check Pending tasks
-	const pending = await ctx.db
-		.query("workerTasks")
-		.withIndex("by_status", (q) => q.eq("status", "Pending"))
-		.collect();
-	if (pending.some((t) => t.task.type === task.type && getDeduplicationKey(t.task) === key)) {
-		return;
-	}
-
-	// Dedup: check Dispatched (in-flight) tasks
-	const dispatched = await ctx.db
-		.query("workerTasks")
-		.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
-		.collect();
-	if (dispatched.some((t) => t.task.type === task.type && getDeduplicationKey(t.task) === key)) {
-		return;
+	for (const status of ["Pending", "Dispatched", "Running"] as const) {
+		const tasks = await ctx.db
+			.query("workerTasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.collect();
+		if (tasks.some((t) => t.task.type === task.type && getDeduplicationKey(t.task) === key)) {
+			return;
+		}
 	}
 
 	await ctx.db.insert("workerTasks", {
@@ -75,30 +64,22 @@ export async function enqueueTask(
 }
 
 /**
- * Enqueue DialogSync + UpdateListener for a newly-Connected client.
- * Called whenever a client transitions to Connected status.
+ * Cancel all active tasks for a disconnecting client.
+ * Patches Pending/Dispatched/Running tasks with a matching clientId to Cancelled.
  */
-export async function enqueueClientStart(
-	ctx: MutationCtx,
-	client: Doc<"clients">,
-): Promise<void> {
-	const base = {
-		clientId: client._id,
-		userId: client.userId,
-		telegramId: client.telegramId,
-	};
-	await enqueueTask(ctx, { type: "DialogSync:sync", ...base });
-	await enqueueTask(ctx, { type: "UpdateListener:listen", ...base });
-}
-
-/**
- * Enqueue stop handlers for all services of a disconnecting client.
- * MediaDownloader has no stop — per-file downloads are short-lived.
- */
-export async function enqueueClientStop(
+export async function cancelClientTasks(
 	ctx: MutationCtx,
 	clientId: Id<"clients">,
 ): Promise<void> {
-	await enqueueTask(ctx, { type: "UpdateListener:stop", clientId });
-	await enqueueTask(ctx, { type: "ProfilePhotoSync:stop", clientId });
+	for (const status of ["Running", "Dispatched", "Pending"] as const) {
+		const tasks = await ctx.db
+			.query("workerTasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.collect();
+		for (const task of tasks) {
+			if ("clientId" in task.task && task.task.clientId === clientId) {
+				await ctx.db.patch(task._id, { status: "Cancelled" });
+			}
+		}
+	}
 }

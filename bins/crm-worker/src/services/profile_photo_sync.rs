@@ -1,11 +1,14 @@
 //! ProfilePhotoSync — Restate virtual object for syncing chat profile photos.
 //!
 //! Keyed by `client_id`. Downloads profile photos from Telegram and uploads
-//! them to Convex storage.
+//! them to Convex storage. Chat metadata is passed in the task args (no query needed).
 
 use std::sync::Arc;
 
-use convex_backend::{ChatsUpdatePhotoArgs, ConvexApi, ConvexApiClient, WorkerTasksTask as Task};
+use convex_backend::{
+    ConvexApi, ConvexApiClient, WorkerOpsUpdateChatPhotoArgs,
+    WorkerTasksTask as Task, WorkerTasksTaskProfilePhotoSyncChats,
+};
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
@@ -13,14 +16,11 @@ use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
-
-use super::dialog_sync::ClientTaskFields;
+use crate::ops::convex::{run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 
 #[restate_sdk::object]
 pub trait ProfilePhotoSync {
-    async fn sync(req: Json<Task>) -> Result<(), HandlerError>;
-    async fn stop() -> Result<(), HandlerError>;
+    async fn sync(req: Json<TaskPayload>) -> Result<(), HandlerError>;
 }
 
 pub struct ProfilePhotoSyncImpl {
@@ -32,53 +32,52 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
     async fn sync(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<Task>,
+        req: Json<TaskPayload>,
     ) -> Result<(), HandlerError> {
-        let task = req.into_inner();
-        let Task::ProfilePhotoSyncSync {
+        let payload = req.into_inner();
+        let Task::ProfilePhotoSync {
             clientId,
             userId,
             telegramId,
-        } = task
+            chats,
+        } = payload.task
         else {
-            return Err(anyhow::anyhow!("Expected ProfilePhotoSync:sync task").into());
+            return Err(anyhow::anyhow!("Expected ProfilePhotoSync task").into());
         };
 
-        let fields = ClientTaskFields {
-            client_id: clientId,
-            user_id: userId,
-            telegram_id: telegramId,
-        };
+        run_task(&self.convex, &payload.task_id).await;
 
-        info!(client_id = %fields.client_id, "ProfilePhotoSync: starting");
+        info!(client_id = %clientId, "ProfilePhotoSync: starting");
 
         let tg_client = self
             .pool
-            .get_or_create(&fields.user_id, &fields.telegram_id)
+            .get_or_create(&userId, &telegramId)
             .await
             .map_err(anyhow::Error::from)?;
 
-        sync_profile_photos(&self.convex, &tg_client, &fields)
-            .await
-            .map_err(anyhow::Error::from)?;
+        sync_profile_photos(
+            &self.convex,
+            &tg_client,
+            &clientId,
+            &chats,
+            &payload.task_id,
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
 
-        mark_task_complete(&self.convex, "ProfilePhotoSync:sync", &fields.client_id).await;
-        Ok(())
-    }
-
-    async fn stop(&self, _ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
-        info!("ProfilePhotoSync: stop requested");
+        worker_complete(&self.convex, &payload.task_id).await;
         Ok(())
     }
 }
 
-/// Sync profile photos for all chats of a client.
-pub async fn sync_profile_photos(
+/// Sync profile photos for all chats passed in task args.
+async fn sync_profile_photos(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
-    client: &ClientTaskFields,
+    client_id: &str,
+    chats: &[WorkerTasksTaskProfilePhotoSyncChats],
+    task_id: &str,
 ) -> Result<(), WorkerError> {
-    let chats = cx::list_worker_chats(convex, &client.client_id).await?;
     if chats.is_empty() {
         return Ok(());
     }
@@ -88,10 +87,10 @@ pub async fn sync_profile_photos(
     let mut skipped = 0u32;
     let mut failed = 0u32;
 
-    for chat in &chats {
+    for chat in chats {
         let chat_external_id = chat
             .chat_id
-            .strip_prefix(&format!("{}:", client.client_id))
+            .strip_prefix(&format!("{client_id}:"))
             .unwrap_or(&chat.chat_id);
 
         let tg_photo_id = match tg_client.get_chat_photo_id(chat_external_id).await {
@@ -129,7 +128,9 @@ pub async fn sync_profile_photos(
             }
         };
 
-        match upload_photo_to_convex(convex, &chat.chat_id, &tg_photo_id, &photo_bytes).await {
+        match upload_photo_to_convex(convex, &chat.chat_id, &tg_photo_id, &photo_bytes, task_id)
+            .await
+        {
             Ok(()) => {
                 synced += 1;
                 debug!(chat_id = %chat.chat_id, "Profile photo synced");
@@ -152,6 +153,7 @@ async fn upload_photo_to_convex(
     chat_id: &str,
     photo_external_id: &str,
     photo_bytes: &[u8],
+    task_id: &str,
 ) -> Result<(), WorkerError> {
     let upload_url = convex.media_generate_upload_url().await?;
 
@@ -182,7 +184,8 @@ async fn upload_photo_to_convex(
     })?;
 
     convex
-        .chats_update_photo(ChatsUpdatePhotoArgs {
+        .worker_ops_update_chat_photo(WorkerOpsUpdateChatPhotoArgs {
+            taskId: task_id.to_string(),
             chatId: chat_id.to_string(),
             storageId: storage_id.to_string(),
             photoExternalId: photo_external_id.to_string(),

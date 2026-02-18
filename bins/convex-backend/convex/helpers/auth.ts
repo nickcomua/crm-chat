@@ -1,7 +1,11 @@
+// todo delete this file
+import type { Id } from "../_generated/dataModel";
 import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
+
+
 
 const ROBOT_ISSUER = "https://crm-chat-robot.local";
 
@@ -15,6 +19,7 @@ export type CallerIdentity = {
 };
 
 /** Extract and validate the caller's identity. Throws if not authenticated. */
+// todo make default mutation/query in functions.ts to have auth
 export async function requireAuth(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
@@ -34,6 +39,7 @@ export function isWorkerCaller(caller: CallerIdentity): boolean {
 }
 
 /** Require the caller to be a human (Clerk-authenticated). */
+// todo create custom mutation/query in functions.ts
 export async function requireHuman(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
   if (isWorkerCaller(caller)) {
@@ -43,6 +49,7 @@ export async function requireHuman(ctx: QueryCtx | MutationCtx): Promise<CallerI
 }
 
 /** Require the caller to be a worker (custom JWT). */
+// todo create custom mutation/query in functions.ts
 export async function requireWorker(ctx: QueryCtx | MutationCtx): Promise<CallerIdentity> {
   const caller = await requireAuth(ctx);
   if (!isWorkerCaller(caller)) {
@@ -66,13 +73,29 @@ export function requireAssignedWorker(callerId: string, claimedByWorkerId: strin
 }
 
 /** Check if a phone auth step is terminal. */
+// todo remove this bs
 export function isPhoneAuthTerminal(step: string): boolean {
   return step === "Connected" || step === "Failed" || step === "Cancelled";
 }
 
 /** Check if a QR auth step is terminal. */
+// todo remove this bs
 export function isQrAuthTerminal(step: string): boolean {
   return step === "Authorized" || step === "AlreadyAuthorized" || step === "Failed" || step === "Cancelled";
+}
+
+/** Require the caller to be a worker with a Running task assigned to them. */
+export async function requireRunningTask(
+  ctx: MutationCtx,
+  taskId: Id<"workerTasks">,
+): Promise<CallerIdentity> {
+  const caller = await requireWorker(ctx);
+  const task = await ctx.db.get(taskId);
+  if (!task || task.status !== "Running") {
+    throw new Error("Task is not in Running state");
+  }
+  requireAssignedWorker(caller.id, task.claimedByWorkerId);
+  return caller;
 }
 
 /** Insert an error notification for a user. */

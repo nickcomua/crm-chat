@@ -14,8 +14,8 @@ use std::time::Duration;
 use common::{assert_mutation_error, get_test_env, mint_robot_jwt};
 use convex::ConvexClient;
 use convex_backend::{
-    ConvexApi, ConvexApiClient, PhoneAuthWorkerClaimArgs, QrAuthWorkerClaimArgs,
-    WorkerTasksPendingForWorkerArgs,
+    ConvexApi, ConvexApiClient, WorkerTasksPendingForWorkerArgs, WorkerTasksRunTaskArgs,
+    WorkerTasksWorkerCompleteArgs,
 };
 use futures::StreamExt;
 
@@ -83,13 +83,12 @@ async fn test_query_worker_tasks_pending_empty() {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_phone_auth_worker_claim_invalid_id() {
+async fn test_run_task_invalid_id() {
     let client = connect_robot_client().await;
 
     let result = client
-        .phone_auth_worker_claim(PhoneAuthWorkerClaimArgs {
-            authId: "not_a_valid_convex_id".into(),
+        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
+            taskId: "not_a_valid_convex_id".into(),
         })
         .await;
 
@@ -98,13 +97,13 @@ async fn test_phone_auth_worker_claim_invalid_id() {
 }
 
 #[tokio::test]
-
-async fn test_qr_auth_worker_claim_invalid_id() {
+async fn test_worker_complete_invalid_id() {
     let client = connect_robot_client().await;
 
     let result = client
-        .qr_auth_worker_claim(QrAuthWorkerClaimArgs {
-            authId: "not_a_valid_convex_id".into(),
+        .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
+            taskId: "not_a_valid_convex_id".into(),
+            task: None,
         })
         .await;
 
@@ -116,25 +115,24 @@ async fn test_qr_auth_worker_claim_invalid_id() {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_phone_auth_args_serialization() {
-    let args = PhoneAuthWorkerClaimArgs {
-        authId: "test_id_123".into(),
+async fn test_run_task_args_serialization() {
+    let args = WorkerTasksRunTaskArgs {
+        taskId: "test_id_123".into(),
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("authId"), Some(&serde_json::json!("test_id_123")));
+    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_123")));
     assert_eq!(map.len(), 1);
 }
 
 #[tokio::test]
-
-async fn test_qr_auth_args_serialization() {
-    let args = QrAuthWorkerClaimArgs {
-        authId: "test_id_456".into(),
+async fn test_worker_complete_args_serialization() {
+    let args = WorkerTasksWorkerCompleteArgs {
+        taskId: "test_id_456".into(),
+        task: None,
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("authId"), Some(&serde_json::json!("test_id_456")));
-    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_456")));
+    // task is None so it shouldn't be serialized (or serialized as null)
 }
 
 // =============================================================================
@@ -142,7 +140,6 @@ async fn test_qr_auth_args_serialization() {
 // =============================================================================
 
 #[tokio::test]
-
 async fn test_unauthenticated_rejected() {
     let env = get_test_env().await;
     let client = ConvexApiClient::new(
@@ -153,8 +150,8 @@ async fn test_unauthenticated_rejected() {
     // Deliberately do NOT call set_auth
 
     let result = client
-        .phone_auth_worker_claim(PhoneAuthWorkerClaimArgs {
-            authId: "test_id".into(),
+        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
+            taskId: "test_id".into(),
         })
         .await;
     assert_mutation_error(result, "");

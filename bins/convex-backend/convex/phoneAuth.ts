@@ -4,14 +4,13 @@ import { mutation, query } from "./_generated/server";
 import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
 import {
   isPhoneAuthTerminal,
-  requireAssignedWorker,
   requireHuman,
   requireOwner,
   requireWorker,
   sendError,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { enqueueClientStart, enqueueTask } from "./helpers/tasks";
+import { cancelClientTasks, enqueueTask } from "./helpers/tasks";
 
 // =============================================================================
 // Validation — returns error string or null
@@ -55,6 +54,19 @@ export const active = query({
     return all
       .filter((a) => !isPhoneAuthTerminal(a.step))
       .map(({ phoneCodeHash, loginCode, password, passwordToken, claimedByWorkerId, ...rest }) => rest);
+  },
+});
+
+/**
+ * Get a phoneAuth row by ID. Worker-only.
+ * The worker subscribes to this to detect step changes (e.g., WaitingCode → VerifyingCode).
+ */
+export const getForWorker = query({
+  args: { authId: v.id("phoneAuths") },
+  returns: v.union(phoneAuthDoc, v.null()),
+  handler: async (ctx, { authId }) => {
+    await requireWorker(ctx);
+    return await ctx.db.get(authId);
   },
 });
 
@@ -102,11 +114,8 @@ export const start = mutation({
       updatedAt: now,
     });
 
-    // Enqueue worker task
-    const auth = await ctx.db.get(authId);
-    if (auth) {
-      await enqueueTask(ctx, { type: "PhoneAuth:run", authId, doc: JSON.stringify(auth) });
-    }
+    // Enqueue worker task — worker subscribes to phoneAuths row for step changes
+    await enqueueTask(ctx, { type: "PhoneAuth", authId });
 
     return ok(null);
   },
@@ -128,14 +137,12 @@ export const submitCode = mutation({
     const codeErr = validateAuthCode(code);
     if (codeErr) return err(codeErr);
 
+    // Worker detects VerifyingCode step via subscription — no task enqueue needed
     await ctx.db.patch(authId, {
       loginCode: code,
       step: "VerifyingCode",
       updatedAt: Date.now(),
     });
-
-    // Enqueue worker task
-    await enqueueTask(ctx, { type: "PhoneAuth:submitCode", authId });
 
     return ok(null);
   },
@@ -157,20 +164,18 @@ export const submitPassword = mutation({
     const pwErr = validatePassword(password);
     if (pwErr) return err(pwErr);
 
+    // Worker detects VerifyingPassword step via subscription — no task enqueue needed
     await ctx.db.patch(authId, {
       password,
       step: "VerifyingPassword",
       updatedAt: Date.now(),
     });
 
-    // Enqueue worker task
-    await enqueueTask(ctx, { type: "PhoneAuth:submitPassword", authId });
-
     return ok(null);
   },
 });
 
-/** User cancels the phone auth flow. */
+/** User cancels the phone auth flow. Worker detects via task status + phoneAuth step. */
 export const cancel = mutation({
   args: { authId: v.id("phoneAuths") },
   returns: result(v.null()),
@@ -184,7 +189,8 @@ export const cancel = mutation({
       return err("Cannot cancel: auth is already in a terminal state");
     }
 
-    // Delete the associated client
+    // Delete the associated client and cancel its tasks
+    await cancelClientTasks(ctx, auth.clientId);
     await ctx.db.delete(auth.clientId);
 
     await ctx.db.patch(authId, {
@@ -192,8 +198,20 @@ export const cancel = mutation({
       updatedAt: Date.now(),
     });
 
-    // Enqueue worker task
-    await enqueueTask(ctx, { type: "PhoneAuth:cancel", authId });
+    // Cancel the PhoneAuth worker task — worker detects via status subscription
+    const tasks = await ctx.db
+      .query("workerTasks")
+      .withIndex("by_status")
+      .collect();
+    for (const task of tasks) {
+      if (
+        task.task.type === "PhoneAuth" &&
+        task.task.authId === authId &&
+        task.status !== "Cancelled"
+      ) {
+        await ctx.db.patch(task._id, { status: "Cancelled" as const });
+      }
+    }
 
     return ok(null);
   },
@@ -202,30 +220,6 @@ export const cancel = mutation({
 // =============================================================================
 // Worker Mutations
 // =============================================================================
-
-/** Worker claims a phone auth session. */
-export const workerClaim = mutation({
-  args: { authId: v.id("phoneAuths") },
-  returns: result(v.null()),
-  handler: async (ctx, { authId }) => {
-    const caller = await requireWorker(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
-
-    if (auth.step !== "SendingCode") {
-      return err(`Invalid step: expected SendingCode, got ${auth.step}`);
-    }
-    if (auth.claimedByWorkerId) {
-      return err("PhoneAuth is already claimed by a worker");
-    }
-
-    await ctx.db.patch(authId, {
-      claimedByWorkerId: caller.id,
-      updatedAt: Date.now(),
-    });
-    return ok(null);
-  },
-});
 
 /** Worker reports the result of sending the SMS code. */
 export const workerCompleteSendCode = mutation({
@@ -239,10 +233,10 @@ export const workerCompleteSendCode = mutation({
   },
   returns: result(v.null()),
   handler: async (ctx, { authId, result: sendCodeResult }) => {
-    const caller = await requireWorker(ctx);
+    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) return err("PhoneAuth not found");
-    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
+
 
     if (auth.step !== "SendingCode") {
       return err(`Invalid step: expected SendingCode, got ${auth.step}`);
@@ -265,9 +259,16 @@ export const workerCompleteSendCode = mutation({
         step: "Connected",
         updatedAt: now,
       });
-      // Enqueue client services
+      // Enqueue UpdateListener for the connected client
       const client = await ctx.db.get(auth.clientId);
-      if (client) await enqueueClientStart(ctx, client);
+      if (client) {
+        await enqueueTask(ctx, {
+          type: "UpdateListener",
+          clientId: client._id,
+          userId: client.userId,
+          telegramId: client.telegramId,
+        });
+      }
     } else {
       // Failed
       await ctx.db.delete(auth.clientId);
@@ -300,10 +301,10 @@ export const workerCompleteVerifyCode = mutation({
   },
   returns: result(v.null()),
   handler: async (ctx, { authId, result: verifyResult }) => {
-    const caller = await requireWorker(ctx);
+    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) return err("PhoneAuth not found");
-    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
+
 
     if (auth.step !== "VerifyingCode") {
       return err(`Invalid step: expected VerifyingCode, got ${auth.step}`);
@@ -379,10 +380,10 @@ export const workerCompleteVerifyPassword = mutation({
   },
   returns: result(v.null()),
   handler: async (ctx, { authId, result: pwResult }) => {
-    const caller = await requireWorker(ctx);
+    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) return err("PhoneAuth not found");
-    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
+
 
     if (auth.step !== "VerifyingPassword") {
       return err(`Invalid step: expected VerifyingPassword, got ${auth.step}`);
