@@ -15,7 +15,7 @@ fn main() {
             if name.ends_with(".ts")
                 && name != "schema.ts"
                 && name != "auth.config.ts"
-                && name != "crons.ts"
+                && name != "convex.config.ts"
                 && !name.starts_with('_')
             {
                 println!("cargo:rerun-if-changed=convex/{}", name);

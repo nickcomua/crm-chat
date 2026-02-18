@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { clientDoc, clientKind } from "./schema";
 import { requireHuman, requireOwner, requireWorker, isPhoneAuthTerminal } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { enqueueClientStart, enqueueClientStop } from "./helpers/tasks";
+import { cancelClientTasks, enqueueTask } from "./helpers/tasks";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -46,8 +46,8 @@ export const deleteClient = mutation({
       }
     }
 
-    // Enqueue stop tasks for all services of this client
-    await enqueueClientStop(ctx, clientId);
+    // Cancel all active worker tasks for this client
+    await cancelClientTasks(ctx, clientId);
 
     await ctx.db.delete(clientId);
     return ok(null);
@@ -87,8 +87,12 @@ export const workerRegisterConnected = mutation({
         status: { type: "Connected" },
         ...(phoneNumber ? { phoneNumber } : {}),
       });
-      const client = await ctx.db.get(existing._id);
-      if (client) await enqueueClientStart(ctx, client);
+      await enqueueTask(ctx, {
+        type: "UpdateListener",
+        clientId: existing._id,
+        userId: existing.userId,
+        telegramId: existing.telegramId,
+      });
       return ok(existing._id);
     }
     const id = await ctx.db.insert("clients", {
@@ -97,8 +101,32 @@ export const workerRegisterConnected = mutation({
       scanningChatIds: [],
       status: { type: "Connected" },
     });
-    const client = await ctx.db.get(id);
-    if (client) await enqueueClientStart(ctx, client);
+    await enqueueTask(ctx, {
+      type: "UpdateListener",
+      clientId: id,
+      userId: lookupArgs.userId,
+      telegramId: lookupArgs.telegramId,
+    });
     return ok(id);
+  },
+});
+
+/** Trigger a dialog sync for a connected client. Human-only. */
+export const triggerDialogSync = mutation({
+  args: { clientId: v.id("clients") },
+  returns: result(v.null()),
+  handler: async (ctx, { clientId }) => {
+    const caller = await requireHuman(ctx);
+    const client = await ctx.db.get(clientId);
+    if (!client) return err("Client not found");
+    requireOwner(caller.id, client.userId);
+    if (client.status.type !== "Connected") return err("Client not connected");
+    await enqueueTask(ctx, {
+      type: "DialogSync",
+      clientId: client._id,
+      userId: client.userId,
+      telegramId: client.telegramId,
+    });
+    return ok(null);
   },
 });

@@ -17,7 +17,6 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
 use restate_sdk::prelude::*;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -130,7 +129,6 @@ async fn main() -> anyhow::Result<()> {
             UpdateListenerImpl {
                 convex: convex_client.clone(),
                 pool: pool.clone(),
-                cancel_tokens: DashMap::new(),
             }
             .serve(),
         )

@@ -20,9 +20,20 @@ import { useState } from "react";
 import { NotificationsBellPanel } from "@/components/right-sidebar";
 import { SearchDialog } from "@/components/search-dialog";
 import { Button } from "@/components/ui/button";
+import { useAppPresence } from "@/hooks/use-presence";
 import { useTheme } from "@/hooks/use-theme";
 import { convex } from "@/lib/convex";
 import { cn } from "@/lib/utils";
+
+/** Mounts the presence heartbeat inside the Convex provider tree. */
+function PresenceProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactNode {
+  useAppPresence();
+  return children;
+}
 
 export const Route = createFileRoute("/_auth")({
   component: AuthLayout,
@@ -77,98 +88,100 @@ function AuthLayout(): React.ReactNode {
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <ConvexQueryCacheProvider>
-        <div className="flex h-screen flex-col">
-          <header className="sticky top-0 z-50 border-border/40 border-b bg-background/90 backdrop-blur-xl">
-            <div className="flex h-12 items-center justify-between px-4">
-              <div className="flex items-center gap-4">
-                <h1 className="font-display font-semibold text-base tracking-tight">
-                  CRM Chat
-                </h1>
-                <div className="hidden h-4 w-px bg-border sm:block" />
-                <nav className="flex items-center gap-0.5">
-                  <Link
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
-                      currentPath.startsWith("/chats")
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                    to="/chats"
+        <PresenceProvider>
+          <div className="flex h-screen flex-col">
+            <header className="sticky top-0 z-50 border-border/40 border-b bg-background/90 backdrop-blur-xl">
+              <div className="flex h-12 items-center justify-between px-4">
+                <div className="flex items-center gap-4">
+                  <h1 className="font-display font-semibold text-base tracking-tight">
+                    CRM Chat
+                  </h1>
+                  <div className="hidden h-4 w-px bg-border sm:block" />
+                  <nav className="flex items-center gap-0.5">
+                    <Link
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
+                        currentPath.startsWith("/chats")
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                      to="/chats"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Chats</span>
+                    </Link>
+                    <Link
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
+                        currentPath === "/downloads"
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                      to="/downloads"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Downloads</span>
+                    </Link>
+                    <Link
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
+                        currentPath === "/settings"
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                      to="/settings"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Settings</span>
+                    </Link>
+                  </nav>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    className="h-8 w-8"
+                    onClick={() => setSearchOpen(true)}
+                    size="icon"
+                    variant="ghost"
                   >
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Chats</span>
-                  </Link>
-                  <Link
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
-                      currentPath === "/downloads"
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                    to="/downloads"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Downloads</span>
-                  </Link>
-                  <Link
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
-                      currentPath === "/settings"
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                    to="/settings"
-                  >
-                    <Settings className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Settings</span>
-                  </Link>
-                </nav>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  className="h-8 w-8"
-                  onClick={() => setSearchOpen(true)}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  <span className="sr-only">Search messages</span>
-                </Button>
-                <NotificationsBellPanel
-                  onOpenChange={setNotificationsOpen}
-                  open={notificationsOpen}
-                />
-                <ThemeToggle />
-                <div className="ml-1.5 h-4 w-px bg-border" />
-                <div className="ml-1.5">
-                  <UserButton
-                    appearance={{
-                      elements: {
-                        avatarBox: "h-6 w-6",
-                      },
-                    }}
+                    <Search className="h-3.5 w-3.5" />
+                    <span className="sr-only">Search messages</span>
+                  </Button>
+                  <NotificationsBellPanel
+                    onOpenChange={setNotificationsOpen}
+                    open={notificationsOpen}
                   />
+                  <ThemeToggle />
+                  <div className="ml-1.5 h-4 w-px bg-border" />
+                  <div className="ml-1.5">
+                    <UserButton
+                      appearance={{
+                        elements: {
+                          avatarBox: "h-6 w-6",
+                        },
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
+              <div className="h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+            </header>
+            <div className="flex flex-1 overflow-hidden">
+              <main className="flex-1 overflow-hidden">
+                <Outlet />
+              </main>
             </div>
-            <div className="h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-          </header>
-          <div className="flex flex-1 overflow-hidden">
-            <main className="flex-1 overflow-hidden">
-              <Outlet />
-            </main>
           </div>
-        </div>
-        <SearchDialog
-          onOpenChange={setSearchOpen}
-          onSelectResult={(result) => {
-            navigate({
-              to: "/chats/$chatId",
-              params: { chatId: result.chatId },
-            });
-          }}
-          open={searchOpen}
-        />
+          <SearchDialog
+            onOpenChange={setSearchOpen}
+            onSelectResult={(result) => {
+              navigate({
+                to: "/chats/$chatId",
+                params: { chatId: result.chatId },
+              });
+            }}
+            open={searchOpen}
+          />
+        </PresenceProvider>
       </ConvexQueryCacheProvider>
     </ConvexProviderWithClerk>
   );

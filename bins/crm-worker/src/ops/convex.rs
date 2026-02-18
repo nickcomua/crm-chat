@@ -7,14 +7,16 @@
 //! - The `map_chat_type` helper
 //! - Best-effort (fire-and-forget) wrappers for operations where errors are ignored
 
-pub use convex_backend::ChatsUpsertChatType;
 pub use convex_backend::ConvexApi;
 pub use convex_backend::ConvexApiClient;
+pub use convex_backend::WorkerOpsUpsertChatChatType;
 
 use convex_backend::{
-    ChatsListForWorkerArgs, ChatsTable, MediaMarkFailedArgs, MediaStartDownloadArgs,
-    MediaUpdateProgressArgs, WorkerTasksMarkCompleteArgs,
+    ChatsScanEnabledChatIdsArgs, WorkerOpsMarkMediaFailedArgs, WorkerOpsStartMediaDownloadArgs,
+    WorkerOpsUpdateMediaProgressArgs, WorkerTasksRunTaskArgs, WorkerTasksTask as Task,
+    WorkerTasksWorkerCompleteArgs,
 };
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::error::WorkerError;
@@ -75,32 +77,29 @@ macro_rules! impl_convex_result_typed {
 }
 
 // Phone auth
-impl_convex_result_unit!(PhoneAuthWorkerClaimReturn);
 impl_convex_result_unit!(PhoneAuthWorkerCompleteSendCodeReturn);
 impl_convex_result_unit!(PhoneAuthWorkerCompleteVerifyCodeReturn);
 impl_convex_result_unit!(PhoneAuthWorkerCompleteVerifyPasswordReturn);
 
-// QR auth
-impl_convex_result_unit!(QrAuthWorkerClaimReturn);
-impl_convex_result_unit!(QrAuthWorkerCompleteQrAuthReturn);
-impl_convex_result_unit!(QrAuthWorkerUpdateQrTokenReturn);
+// Worker task updates
+impl_convex_result_unit!(WorkerTasksWorkerUpdateTaskReturn);
 
-// Chats
-impl_convex_result_unit!(ChatsUpsertReturn);
-impl_convex_result_unit!(ChatsMarkFullScannedReturn);
-impl_convex_result_unit!(ChatsUpdateSyncProgressReturn);
-impl_convex_result_unit!(ChatsUpdatePhotoReturn);
+// Worker tasks
+impl_convex_result_unit!(WorkerTasksRunTaskReturn);
+impl_convex_result_unit!(WorkerTasksWorkerCompleteReturn);
+impl_convex_result_unit!(WorkerTasksCancelTaskReturn);
 
-// Messages
-impl_convex_result_unit!(MessagesUpsertReturn);
-impl_convex_result_unit!(MessagesMarkDeletedReturn);
-
-// Media
-impl_convex_result_unit!(MediaCreatePendingReturn);
-impl_convex_result_unit!(MediaStartDownloadReturn);
-impl_convex_result_unit!(MediaUpdateProgressReturn);
-impl_convex_result_unit!(MediaMarkFailedReturn);
-impl_convex_result_unit!(MediaStoreMediaReturn);
+// WorkerOps — task-validated worker mutations
+impl_convex_result_unit!(WorkerOpsUpsertChatReturn);
+impl_convex_result_unit!(WorkerOpsUpsertMessageReturn);
+impl_convex_result_unit!(WorkerOpsMarkMessageDeletedReturn);
+impl_convex_result_unit!(WorkerOpsUpdateSyncProgressReturn);
+impl_convex_result_unit!(WorkerOpsUpdateChatPhotoReturn);
+impl_convex_result_unit!(WorkerOpsCreatePendingMediaReturn);
+impl_convex_result_unit!(WorkerOpsStartMediaDownloadReturn);
+impl_convex_result_unit!(WorkerOpsUpdateMediaProgressReturn);
+impl_convex_result_unit!(WorkerOpsStoreMediaReturn);
+impl_convex_result_unit!(WorkerOpsMarkMediaFailedReturn);
 
 // Clients
 impl_convex_result_typed!(ClientsWorkerRegisterConnectedReturn, String);
@@ -138,10 +137,10 @@ impl<T: ConvexResult> ConvexResultExt for Result<T, convex_backend::ConvexError>
 }
 
 /// Map a Telegram chat type string to a Convex ChatType enum.
-pub fn map_chat_type(chat_type: Option<&str>) -> ChatsUpsertChatType {
+pub fn map_chat_type(chat_type: Option<&str>) -> WorkerOpsUpsertChatChatType {
     match chat_type {
-        Some("user") => ChatsUpsertChatType::Dialog,
-        _ => ChatsUpsertChatType::Group,
+        Some("user") => WorkerOpsUpsertChatChatType::Dialog,
+        _ => WorkerOpsUpsertChatChatType::Group,
     }
 }
 
@@ -149,9 +148,10 @@ pub fn map_chat_type(chat_type: Option<&str>) -> ChatsUpsertChatType {
 // Best-effort wrappers (fire-and-forget, warnings on error)
 // ────────────────────────────────────────────────────────────────────────────
 
-pub async fn start_download(client: &ConvexApiClient, telegram_file_id: &str) {
+pub async fn start_download(client: &ConvexApiClient, task_id: &str, telegram_file_id: &str) {
     client
-        .media_start_download(MediaStartDownloadArgs {
+        .worker_ops_start_media_download(WorkerOpsStartMediaDownloadArgs {
+            taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
         })
         .await
@@ -160,12 +160,14 @@ pub async fn start_download(client: &ConvexApiClient, telegram_file_id: &str) {
 
 pub async fn update_download_progress(
     client: &ConvexApiClient,
+    task_id: &str,
     telegram_file_id: &str,
     bytes_downloaded: f64,
     file_size: Option<f64>,
 ) {
     client
-        .media_update_progress(MediaUpdateProgressArgs {
+        .worker_ops_update_media_progress(WorkerOpsUpdateMediaProgressArgs {
+            taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
             bytesDownloaded: bytes_downloaded,
             fileSize: file_size,
@@ -174,9 +176,15 @@ pub async fn update_download_progress(
         .warn_on_err("Failed to update download progress");
 }
 
-pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str, error: &str) {
+pub async fn mark_media_failed(
+    client: &ConvexApiClient,
+    task_id: &str,
+    telegram_file_id: &str,
+    error: &str,
+) {
     client
-        .media_mark_failed(MediaMarkFailedArgs {
+        .worker_ops_mark_media_failed(WorkerOpsMarkMediaFailedArgs {
+            taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
             error: error.into(),
         })
@@ -184,29 +192,53 @@ pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str,
         .warn_on_err("Failed to mark media as failed");
 }
 
-/// Best-effort task completion: delete the Dispatched record so the dedup slot
-/// is freed for future enqueue calls.
-pub async fn mark_task_complete(convex: &ConvexApiClient, task_type: &str, dedup_key: &str) {
+/// Mark a task as Running (Dispatched → Running). Called at handler start.
+pub async fn run_task(convex: &ConvexApiClient, task_id: &str) {
     convex
-        .worker_tasks_mark_complete(WorkerTasksMarkCompleteArgs {
-            taskType: task_type.to_string(),
-            dedupKey: dedup_key.to_string(),
+        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
+            taskId: task_id.to_string(),
         })
         .await
-        .ok(); // best-effort cleanup
+        .warn_on_err("Failed to mark task running");
+}
+
+/// Best-effort task completion: runs type-specific logic then deletes the task.
+/// Pass `None` for tasks with no completion data; pass `Some(task)` for types
+/// that carry final state (e.g. QrAuth with telegramUserId).
+pub async fn worker_complete(convex: &ConvexApiClient, task_id: &str) {
+    convex
+        .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
+            taskId: task_id.to_string(),
+            task: None,
+        })
+        .await
+        .warn_on_err("Failed to complete task");
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared payload type
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Wrapper around a Task variant with `task_id` injected by the orchestrator.
+/// All Restate handlers deserialize this instead of raw `Task`.
+#[derive(Serialize, Deserialize)]
+pub struct TaskPayload {
+    pub task_id: String,
+    #[serde(flatten)]
+    pub task: Task,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared query helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Query the list of chats for a worker's client.
-pub async fn list_worker_chats(
+/// Query scan-enabled chatIds for a client. Returns composite chatIds (e.g. "clientId:extId").
+pub async fn scan_enabled_chat_ids(
     convex: &ConvexApiClient,
     client_id: &str,
-) -> Result<Vec<ChatsTable>, WorkerError> {
+) -> Result<Vec<String>, WorkerError> {
     convex
-        .query_chats_list_for_worker(ChatsListForWorkerArgs {
+        .query_chats_scan_enabled_chat_ids(ChatsScanEnabledChatIdsArgs {
             clientId: client_id.to_string(),
         })
         .await

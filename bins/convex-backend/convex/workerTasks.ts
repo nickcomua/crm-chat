@@ -1,15 +1,23 @@
-import { internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { workerTaskDoc } from "./schema";
-import { requireWorker } from "./helpers/auth";
-import { enqueueTask, getDeduplicationKey } from "./helpers/tasks";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import {
+	isQrAuthTerminal,
+	requireAssignedWorker,
+	requireHuman,
+	requireWorker,
+} from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
+import { enqueueTask } from "./helpers/tasks";
+import { completeQrAuth } from "./qrAuth";
+import { workerTask, workerTaskDoc, workerTaskStatus } from "./schema";
 
 /**
  * All pending tasks for the worker to dispatch. Worker-only.
  *
  * When `maxMediaWorkflows` > 0, counts in-flight (Dispatched) MediaDownloader
- * tasks and excludes excess Pending MediaDownloader/download tasks so the
+ * tasks and excludes excess Pending MediaDownloader tasks so the
  * orchestrator never exceeds the parallel download limit.
  */
 export const pendingForWorker = query({
@@ -25,20 +33,23 @@ export const pendingForWorker = query({
 		const limit = maxMediaWorkflows ?? 0;
 		if (limit <= 0) return pending;
 
-		// Count in-flight MediaDownloader tasks
-		const dispatched = await ctx.db
-			.query("workerTasks")
-			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
-			.collect();
-		const activeMedia = dispatched.filter(
-			(t) => t.task.type === "MediaDownloader:download",
-		).length;
+		// Count in-flight MediaDownloader tasks (Dispatched + Running)
+		let activeMedia = 0;
+		for (const status of ["Dispatched", "Running"] as const) {
+			const tasks = await ctx.db
+				.query("workerTasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			activeMedia += tasks.filter(
+				(t) => t.task.type === "MediaDownloader",
+			).length;
+		}
 
 		const slotsAvailable = Math.max(0, limit - activeMedia);
 		let mediaAllowed = slotsAvailable;
 
 		return pending.filter((task) => {
-			if (task.task.type === "MediaDownloader:download") {
+			if (task.task.type === "MediaDownloader") {
 				if (mediaAllowed <= 0) return false;
 				mediaAllowed--;
 			}
@@ -47,135 +58,263 @@ export const pendingForWorker = query({
 	},
 });
 
-/** Mark a task as dispatched to Restate. Worker-only. */
+/**
+ * Get a task by ID for the current human user.
+ * Returns null if the task doesn't exist or belongs to another user.
+ */
+export const getTaskById = query({
+	args: { taskId: v.id("workerTasks") },
+	returns: v.union(v.null(), workerTaskDoc),
+	handler: async (ctx, { taskId }) => {
+		const caller = await requireHuman(ctx);
+		const task = await ctx.db.get(taskId);
+		if (!task || task.userId !== caller.id) return null;
+		return task;
+	},
+});
+
+/**
+ * Get task status by ID. Worker-only.
+ * Returns just the status string (or null if not found).
+ * Used by cancel watcher subscriptions.
+ */
+export const getTaskStatus = query({
+	args: { taskId: v.id("workerTasks") },
+	returns: v.union(v.null(), workerTaskStatus),
+	handler: async (ctx, { taskId }) => {
+		await requireWorker(ctx);
+		const task = await ctx.db.get(taskId);
+		return task?.status ?? null;
+	},
+});
+
+/**
+ * Cancel a task by ID. Human-only.
+ * Patches the task status to Cancelled. Worker detects this via subscription.
+ */
+export const cancelTask = mutation({
+	args: { taskId: v.id("workerTasks") },
+	returns: result(v.null()),
+	handler: async (ctx, { taskId }) => {
+		const caller = await requireHuman(ctx);
+		const task = await ctx.db.get(taskId);
+		if (!task || task.userId !== caller.id) return err("Not found");
+		if (task.status === "Cancelled") return ok(null);
+		await ctx.db.patch(taskId, { status: "Cancelled" });
+		return ok(null);
+	},
+});
+
+/**
+ * Mark a task as dispatched to Restate and claim it for this worker.
+ * Pending → Dispatched. Records `claimedByWorkerId` so subsequent
+ * mutations can verify the caller owns the task.
+ */
 export const markDispatched = mutation({
 	args: { taskId: v.id("workerTasks") },
 	returns: v.null(),
 	handler: async (ctx, { taskId }) => {
-		await requireWorker(ctx);
+		const caller = await requireWorker(ctx);
 		const task = await ctx.db.get(taskId);
 		if (!task || task.status !== "Pending") return null;
 		await ctx.db.patch(taskId, {
 			status: "Dispatched",
 			dispatchedAt: Date.now(),
+			claimedByWorkerId: caller.id,
 		});
 		return null;
 	},
 });
 
 /**
- * Enqueue post-DialogSync tasks for a client. Worker-only.
+ * Mark a task as running. Worker-only. Dispatched → Running.
  *
- * Called by the DialogSync Restate handler after sync_dialogs() completes.
- * Creates ProfilePhotoSync + ChatScanner tasks for unscanned chats.
+ * Called by every Restate handler at the start of execution.
+ * The gap between Dispatched and Running is time spent in Restate's queue.
  */
-export const enqueuePostSyncTasks = mutation({
-	args: { clientId: v.id("clients") },
-	returns: v.null(),
-	handler: async (ctx, { clientId }) => {
-		await requireWorker(ctx);
-		const client = await ctx.db.get(clientId);
-		if (!client) return null;
-
-		// ProfilePhotoSync
-		await enqueueTask(ctx, {
-			type: "ProfilePhotoSync:sync",
-			clientId: client._id,
-			userId: client.userId,
-			telegramId: client.telegramId,
-		});
-
-		// ChatScanner for each unscanned chat
-		const chats = await ctx.db
-			.query("chats")
-			.withIndex("by_clientId", (q) => q.eq("clientId", clientId))
-			.collect();
-		for (const chat of chats) {
-			if (chat.scanEnabled && !chat.fullScanned) {
-				await enqueueTask(ctx, {
-					type: "ChatScanner:scan",
-					chatId: chat.chatId,
-					clientId: client._id,
-					userId: client.userId,
-				});
-			}
+export const runTask = mutation({
+	args: { taskId: v.id("workerTasks") },
+	returns: result(v.null()),
+	handler: async (ctx, { taskId }) => {
+		const caller = await requireWorker(ctx);
+		const task = await ctx.db.get(taskId);
+		if (!task) return err("Task not found");
+		if (task.status !== "Dispatched") {
+			return err(`Expected Dispatched, got ${task.status}`);
 		}
-		return null;
+		requireAssignedWorker(caller.id, task.claimedByWorkerId);
+		await ctx.db.patch(taskId, { status: "Running" });
+		return ok(null);
 	},
 });
 
 /**
- * Reset all Dispatched tasks back to Pending. Worker-only.
+ * Universal mid-flight task update. Worker-only.
+ *
+ * The worker sends the full updated task variant. The handler validates
+ * the type matches and the task isn't in a terminal state, then patches.
+ */
+export const workerUpdateTask = mutation({
+	args: {
+		taskId: v.id("workerTasks"),
+		task: workerTask,
+	},
+	returns: result(v.null()),
+	handler: async (ctx, { taskId, task: newTask }) => {
+		const caller = await requireWorker(ctx);
+		const existing = await ctx.db.get(taskId);
+		if (!existing) return err("Task not found");
+		requireAssignedWorker(caller.id, existing.claimedByWorkerId);
+
+		if (newTask.type !== existing.task.type) {
+			return err(`Type mismatch: expected ${existing.task.type}, got ${newTask.type}`);
+		}
+
+		if (newTask.type === "QrAuth" && isQrAuthTerminal(newTask.step)) {
+			return err("Cannot update: auth is in a terminal state");
+		}
+
+		await ctx.db.patch(taskId, { task: newTask });
+		return ok(null);
+	},
+});
+
+// =============================================================================
+// Completion handlers — run atomically inside workerComplete
+// =============================================================================
+
+/** Enqueue ProfilePhotoSync + ChatScanner for unscanned chats after dialog sync. */
+async function completeDialogSync(
+	ctx: MutationCtx,
+	task: { clientId: Id<"clients">; userId: string; telegramId: string },
+): Promise<void> {
+	const client = await ctx.db.get(task.clientId);
+	if (!client) return;
+
+	const chats = await ctx.db
+		.query("chats")
+		.withIndex("by_clientId", (q) => q.eq("clientId", client._id))
+		.collect();
+
+	await enqueueTask(ctx, {
+		type: "ProfilePhotoSync",
+		clientId: client._id,
+		userId: client.userId,
+		telegramId: client.telegramId,
+		chats: chats.map((c) => ({
+			chatId: c.chatId,
+			photoExternalId: c.photoExternalId,
+		})),
+	});
+
+	for (const chat of chats) {
+		if (chat.scanEnabled && !chat.fullScanned) {
+			await enqueueTask(ctx, {
+				type: "ChatScanner",
+				chatId: chat.chatId,
+				clientId: client._id,
+				userId: client.userId,
+				isPinned: chat.isPinned,
+				pinnedName: chat.pinnedName,
+			});
+		}
+	}
+}
+
+/** Mark a chat as fully scanned and set scanPhase to Listening. */
+async function completeChatScanner(
+	ctx: MutationCtx,
+	task: { chatId: string },
+): Promise<void> {
+	const chat = await ctx.db
+		.query("chats")
+		.withIndex("by_chatId", (q) => q.eq("chatId", task.chatId))
+		.unique();
+	if (!chat) return;
+
+	await ctx.db.patch(chat._id, {
+		fullScanned: true,
+		scanPhase: "Listening" as const,
+	});
+}
+
+/**
+ * Reset all Dispatched and Running tasks back to Pending. Worker-only.
  *
  * Called once at worker startup so that tasks stranded by a previous crash or
  * restart cycle are re-dispatched. Restate's virtual-object keying guarantees
  * idempotency — duplicate dispatches to the same key are harmless.
  */
-export const resetDispatched = mutation({
+export const resetStale = mutation({
 	args: {},
 	returns: v.number(),
 	handler: async (ctx) => {
 		await requireWorker(ctx);
-		const dispatched = await ctx.db
-			.query("workerTasks")
-			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
-			.collect();
-		for (const task of dispatched) {
-			await ctx.db.patch(task._id, {
-				status: "Pending",
-				dispatchedAt: undefined,
-			});
+		let count = 0;
+		for (const status of ["Dispatched", "Running"] as const) {
+			const tasks = await ctx.db
+				.query("workerTasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			for (const task of tasks) {
+				await ctx.db.patch(task._id, {
+					status: "Pending",
+					dispatchedAt: undefined,
+				});
+			}
+			count += tasks.length;
 		}
-		return dispatched.length;
+		return count;
 	},
 });
 
 /**
- * Delete a Dispatched task by type + dedup key. Worker-only.
+ * Universal task completion. Worker-only.
  *
- * Called by Restate handlers when a task completes (success or failure).
- * Frees the dedup slot so future enqueueTask() calls for the same key succeed.
+ * Optionally accepts the final task state (required for types that carry
+ * completion data, e.g. QrAuth with telegramUserId). If provided the task
+ * variant is patched first, then type-specific side-effects run, and
+ * finally the row is deleted to free the dedup slot.
  */
-export const markComplete = mutation({
-	args: { taskType: v.string(), dedupKey: v.string() },
-	returns: v.null(),
-	handler: async (ctx, { taskType, dedupKey }) => {
-		await requireWorker(ctx);
-		const dispatched = await ctx.db
-			.query("workerTasks")
-			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
-			.collect();
-		for (const task of dispatched) {
-			if (task.task.type === taskType && getDeduplicationKey(task.task) === dedupKey) {
-				await ctx.db.delete(task._id);
+export const workerComplete = mutation({
+	args: {
+		taskId: v.id("workerTasks"),
+		task: v.optional(workerTask),
+	},
+	returns: result(v.null()),
+	handler: async (ctx, { taskId, task: finalTask }) => {
+		const caller = await requireWorker(ctx);
+		const row = await ctx.db.get(taskId);
+		if (!row) return err("Task not found");
+		requireAssignedWorker(caller.id, row.claimedByWorkerId);
+
+		// Patch final task state if provided
+		if (finalTask) {
+			if (finalTask.type !== row.task.type) {
+				return err(`Type mismatch: expected ${row.task.type}, got ${finalTask.type}`);
 			}
+			await ctx.db.patch(taskId, { task: finalTask });
 		}
-		return null;
+
+		const task = finalTask ?? row.task;
+
+		// ── Type-specific completion logic ──────────────────────────
+		switch (task.type) {
+			case "QrAuth":
+				await completeQrAuth(ctx, row.userId, task);
+				break;
+			case "DialogSync":
+				await completeDialogSync(ctx, task);
+				break;
+			case "ChatScanner":
+				await completeChatScanner(ctx, task);
+				break;
+		}
+
+		// ── Clean up — frees the dedup slot ────────────────────────
+		await ctx.db.delete(taskId);
+		return ok(null);
 	},
 });
 
-const CLEANUP_AGE_MS = 5 * 60 * 1000; // 5 minutes
-const CLEANUP_BATCH = 200;
 
-/** Delete old Dispatched tasks. Self-scheduling. */
-export const cleanup = internalMutation({
-	args: {},
-	handler: async (ctx) => {
-		const cutoff = Date.now() - CLEANUP_AGE_MS;
-		const old = await ctx.db
-			.query("workerTasks")
-			.withIndex("by_status", (q) => q.eq("status", "Dispatched"))
-			.take(CLEANUP_BATCH);
-
-		for (const task of old) {
-			if (task.dispatchedAt && task.dispatchedAt < cutoff) {
-				await ctx.db.delete(task._id);
-			}
-		}
-
-		// Re-schedule if we hit the batch limit
-		if (old.length === CLEANUP_BATCH) {
-			await ctx.scheduler.runAfter(0, internal.workerTasks.cleanup, {});
-		}
-	},
-});

@@ -1,242 +1,116 @@
 import { v } from "convex/values";
 
-import { mutation, query } from "./_generated/server";
-import { qrAuthDoc } from "./schema";
-import {
-  isQrAuthTerminal,
-  requireAssignedWorker,
-  requireHuman,
-  requireOwner,
-  requireWorker,
-  sendError,
-} from "./helpers/auth";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import { mutation } from "./_generated/server";
+import { isQrAuthTerminal, requireHuman, sendError } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { enqueueClientStart, enqueueTask } from "./helpers/tasks";
-
-// =============================================================================
-// Queries
-// =============================================================================
-
-/** Active QR auths + most recent terminal auth for the current user. */
-export const listForUser = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    const all = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
-      .collect();
-    const activeAuths = all.filter((a) => !isQrAuthTerminal(a.step));
-    const mostRecentTerminal = all
-      .filter((a) => isQrAuthTerminal(a.step))
-      .sort((a, b) => b._creationTime - a._creationTime)[0];
-    return mostRecentTerminal ? [...activeAuths, mostRecentTerminal] : activeAuths;
-  },
-});
-
-/** Active (non-terminal) QR auths for the current human user. */
-export const active = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    const all = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
-      .collect();
-    return all.filter((a) => !isQrAuthTerminal(a.step));
-  },
-});
+import { enqueueTask } from "./helpers/tasks";
 
 // =============================================================================
 // Human Mutations
 // =============================================================================
 
-/** Start QR code authentication. No client is created yet. */
+/** Start QR code authentication. Returns the task ID for subscription. */
 export const start = mutation({
   args: {},
-  returns: result(v.null()),
+  returns: result(v.id("workerTasks")),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
-    const authId = await ctx.db.insert("qrAuths", {
+    const taskId = await ctx.db.insert("workerTasks", {
+      task: {
+        type: "QrAuth" as const,
+        step: "Pending" as const,
+      },
+      status: "Pending" as const,
+      createdAt: Date.now(),
       userId: caller.id,
-      step: "Pending",
-      updatedAt: Date.now(),
     });
-
-    // Enqueue worker task
-    const auth = await ctx.db.get(authId);
-    if (auth) {
-      await enqueueTask(ctx, { type: "QrAuth:run", authId, doc: JSON.stringify(auth) });
-    }
-
-    return ok(null);
+    return ok(taskId);
   },
 });
 
-/** User cancels the QR auth flow. */
+/** User cancels the QR auth flow. Worker detects via status subscription. */
 export const cancel = mutation({
-  args: { authId: v.id("qrAuths") },
+  args: { taskId: v.id("workerTasks") },
   returns: result(v.null()),
-  handler: async (ctx, { authId }) => {
+  handler: async (ctx, { taskId }) => {
     const caller = await requireHuman(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) return err("QrAuth not found");
-    requireOwner(caller.id, auth.userId);
+    const task = await ctx.db.get(taskId);
+    if (!task) return err("Task not found");
+    if (task.userId !== caller.id) return err("Unauthorized");
+    if (task.task.type !== "QrAuth") return err("Not a QR auth task");
 
-    if (isQrAuthTerminal(auth.step)) {
+    if (isQrAuthTerminal(task.task.step)) {
       return err("Cannot cancel: auth is already in a terminal state");
     }
 
-    await ctx.db.patch(authId, {
-      step: "Cancelled",
-      updatedAt: Date.now(),
+    // Patch both the task step and the universal status — worker detects via subscription
+    await ctx.db.patch(taskId, {
+      task: { ...task.task, step: "Cancelled" as const },
+      status: "Cancelled" as const,
     });
-
-    // Enqueue worker task
-    await enqueueTask(ctx, { type: "QrAuth:cancel", authId });
 
     return ok(null);
   },
 });
 
 // =============================================================================
-// Worker Mutations
+// Completion logic (called from workerTasks.workerComplete)
 // =============================================================================
 
-/** Worker claims a QR auth session. */
-export const workerClaim = mutation({
-  args: { authId: v.id("qrAuths") },
-  returns: result(v.null()),
-  handler: async (ctx, { authId }) => {
-    const caller = await requireWorker(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) return err("QrAuth not found");
+interface QrAuthTask {
+	type: "QrAuth";
+	step: string;
+	telegramUserId?: bigint;
+	phoneNumber?: string;
+	error?: string;
+}
 
-    if (auth.step !== "Pending") {
-      return err(`Invalid step: expected Pending, got ${auth.step}`);
-    }
-    if (auth.claimedByWorkerId) {
-      return err("QrAuth is already claimed by a worker");
-    }
+export async function completeQrAuth(
+	ctx: MutationCtx,
+	ownerUserId: string | undefined,
+	task: QrAuthTask,
+): Promise<void> {
+	if (!ownerUserId) throw new Error("QrAuth task has no userId");
 
-    await ctx.db.patch(authId, {
-      claimedByWorkerId: caller.id,
-      step: "Generating",
-      updatedAt: Date.now(),
-    });
-    return ok(null);
-  },
-});
+	if (task.step === "Authorized" || task.step === "AlreadyAuthorized") {
+		if (!task.telegramUserId) throw new Error("QrAuth completion requires telegramUserId");
+		const telegramId = `telegram:${task.telegramUserId}`;
 
-/** Worker provides a new QR token for the user to scan. */
-export const workerUpdateQrToken = mutation({
-  args: {
-    authId: v.id("qrAuths"),
-    url: v.string(),
-    expires: v.number(),
-  },
-  returns: result(v.null()),
-  handler: async (ctx, { authId, url, expires }) => {
-    const caller = await requireWorker(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) return err("QrAuth not found");
-    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
+		const existing = await ctx.db
+			.query("clients")
+			.withIndex("by_userId_telegramId", (q) =>
+				q.eq("userId", ownerUserId).eq("telegramId", telegramId),
+			)
+			.unique();
 
-    if (isQrAuthTerminal(auth.step)) {
-      return err("Cannot update: auth is in a terminal state");
-    }
+		let clientId: Id<"clients">;
+		if (existing) {
+			await ctx.db.patch(existing._id, {
+				status: { type: "Connected" },
+				...(task.phoneNumber ? { phoneNumber: task.phoneNumber } : {}),
+			});
+			clientId = existing._id;
+		} else {
+			clientId = await ctx.db.insert("clients", {
+				userId: ownerUserId,
+				kind: "Telegram",
+				telegramId,
+				phoneNumber: task.phoneNumber,
+				scanningChatIds: [],
+				status: { type: "Connected" },
+			});
+		}
 
-    await ctx.db.patch(authId, {
-      qrUrl: url,
-      qrExpires: expires,
-      step: "Token",
-      updatedAt: Date.now(),
-    });
-    return ok(null);
-  },
-});
+		await enqueueTask(ctx, {
+			type: "UpdateListener",
+			clientId,
+			userId: ownerUserId,
+			telegramId,
+		});
+	} else if (task.step === "Failed") {
+		await sendError(ctx, ownerUserId, `QR code login failed: ${task.error ?? "unknown error"}`);
+	}
+}
 
-/** Worker reports the final result of QR authentication. */
-export const workerCompleteQrAuth = mutation({
-  args: {
-    authId: v.id("qrAuths"),
-    result: v.union(
-      v.object({
-        type: v.literal("Authorized"),
-        userId: v.int64(),
-        phoneNumber: v.optional(v.string()),
-      }),
-      v.object({
-        type: v.literal("AlreadyAuthorized"),
-        userId: v.int64(),
-        phoneNumber: v.optional(v.string()),
-      }),
-      v.object({ type: v.literal("Failed"), error: v.string() }),
-    ),
-  },
-  returns: result(v.null()),
-  handler: async (ctx, { authId, result: qrResult }) => {
-    const caller = await requireWorker(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) return err("QrAuth not found");
-    requireAssignedWorker(caller.id, auth.claimedByWorkerId);
-
-    if (isQrAuthTerminal(auth.step)) {
-      return err("Cannot complete: auth is already in a terminal state");
-    }
-
-    const now = Date.now();
-
-    if (qrResult.type === "Authorized" || qrResult.type === "AlreadyAuthorized") {
-      const telegramId = `telegram:${qrResult.userId}`;
-      const step = qrResult.type;
-
-      // Find or create the client
-      const existing = await ctx.db
-        .query("clients")
-        .withIndex("by_userId_telegramId", (q) =>
-          q.eq("userId", auth.userId).eq("telegramId", telegramId),
-        )
-        .unique();
-
-      let clientId;
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          status: { type: "Connected" },
-          ...(qrResult.phoneNumber ? { phoneNumber: qrResult.phoneNumber } : {}),
-        });
-        clientId = existing._id;
-      } else {
-        clientId = await ctx.db.insert("clients", {
-          userId: auth.userId,
-          kind: "Telegram",
-          telegramId,
-          phoneNumber: qrResult.phoneNumber,
-          scanningChatIds: [],
-          status: { type: "Connected" },
-        });
-      }
-
-      await ctx.db.patch(authId, {
-        telegramUserId: qrResult.userId,
-        step,
-        updatedAt: now,
-      });
-
-      // Enqueue client services
-      const client = await ctx.db.get(clientId);
-      if (client) await enqueueClientStart(ctx, client);
-    } else {
-      // Failed
-      await sendError(ctx, auth.userId, `QR code login failed: ${qrResult.error}`);
-      await ctx.db.patch(authId, {
-        step: "Failed",
-        error: qrResult.error,
-        updatedAt: now,
-      });
-    }
-    return ok(null);
-  },
-});

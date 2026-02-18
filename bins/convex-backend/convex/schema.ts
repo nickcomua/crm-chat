@@ -81,14 +81,14 @@ export const scanPhase = v.union(
 export const workerTaskStatus = v.union(
 	v.literal("Pending"),
 	v.literal("Dispatched"),
+	v.literal("Running"),
+	v.literal("Cancelled"),
 );
 
 // =============================================================================
-// Worker task discriminated union — fully typed, no payload strings
+// Worker task discriminated union — one variant per workflow
 // =============================================================================
 
-const authTaskBase = { authId: v.string() };
-const authTaskWithDoc = { ...authTaskBase, doc: v.string() };
 const clientTaskBase = {
 	clientId: v.id("clients" as const),
 	userId: v.string(),
@@ -96,38 +96,47 @@ const clientTaskBase = {
 };
 
 export const workerTask = v.union(
-	// Auth flows
-	v.object({ type: v.literal("PhoneAuth:run"), ...authTaskWithDoc }),
-	v.object({ type: v.literal("PhoneAuth:submitCode"), ...authTaskBase }),
-	v.object({ type: v.literal("PhoneAuth:submitPassword"), ...authTaskBase }),
-	v.object({ type: v.literal("PhoneAuth:cancel"), ...authTaskBase }),
-	v.object({ type: v.literal("QrAuth:run"), ...authTaskWithDoc }),
-	v.object({ type: v.literal("QrAuth:cancel"), authId: v.string() }),
+	// Auth — QR fields live directly on the variant
+	v.object({
+		type: v.literal("QrAuth"),
+		step: qrAuthStep,
+		qrUrl: v.optional(v.string()),
+		qrExpires: v.optional(v.number()),
+		telegramUserId: v.optional(v.int64()),
+		phoneNumber: v.optional(v.string()),
+		error: v.optional(v.string()),
+	}),
+	// Auth — phone auth references its phoneAuths row
+	v.object({
+		type: v.literal("PhoneAuth"),
+		authId: v.id("phoneAuths"),
+	}),
 
 	// Client lifecycle
-	v.object({ type: v.literal("DialogSync:sync"), ...clientTaskBase }),
-	v.object({ type: v.literal("UpdateListener:listen"), ...clientTaskBase }),
+	v.object({ type: v.literal("DialogSync"), ...clientTaskBase }),
+	v.object({ type: v.literal("UpdateListener"), ...clientTaskBase }),
 	v.object({
-		type: v.literal("UpdateListener:stop"),
-		clientId: v.id("clients"),
-	}),
-	v.object({ type: v.literal("ProfilePhotoSync:sync"), ...clientTaskBase }),
-	v.object({
-		type: v.literal("ProfilePhotoSync:stop"),
-		clientId: v.id("clients"),
+		type: v.literal("ProfilePhotoSync"),
+		...clientTaskBase,
+		chats: v.array(v.object({
+			chatId: v.string(),
+			photoExternalId: v.optional(v.string()),
+		})),
 	}),
 
 	// Chat scanning
 	v.object({
-		type: v.literal("ChatScanner:scan"),
+		type: v.literal("ChatScanner"),
 		chatId: v.string(),
 		clientId: v.id("clients"),
 		userId: v.string(),
+		isPinned: v.boolean(),
+		pinnedName: v.optional(v.string()),
 	}),
 
 	// Per-file media download
 	v.object({
-		type: v.literal("MediaDownloader:download"),
+		type: v.literal("MediaDownloader"),
 		telegramFileId: v.string(),
 		userId: v.string(),
 		clientId: v.id("clients"),
@@ -268,19 +277,6 @@ export const phoneAuthPublicDoc = v.object({
 	updatedAt: v.number(),
 });
 
-export const qrAuthDoc = v.object({
-	_id: v.id("qrAuths"),
-	_creationTime: v.number(),
-	userId: v.string(),
-	step: qrAuthStep,
-	qrUrl: v.optional(v.string()),
-	qrExpires: v.optional(v.number()),
-	telegramUserId: v.optional(v.int64()),
-	error: v.optional(v.string()),
-	claimedByWorkerId: v.optional(v.string()),
-	updatedAt: v.number(),
-});
-
 export const notificationDoc = v.object({
 	_id: v.id("notifications"),
 	_creationTime: v.number(),
@@ -297,6 +293,8 @@ export const workerTaskDoc = v.object({
 	status: workerTaskStatus,
 	createdAt: v.number(),
 	dispatchedAt: v.optional(v.number()),
+	claimedByWorkerId: v.optional(v.string()),
+	userId: v.optional(v.string()),
 });
 
 // =============================================================================
@@ -345,15 +343,18 @@ export default defineSchema({
 		.index("by_claimedByWorkerId", ["claimedByWorkerId"])
 		.index("by_clientId", ["clientId"]),
 
-	qrAuths: defineTable(qrAuthDoc.omit("_id", "_creationTime"))
-		.index("by_userId", ["userId"])
-		.index("by_step", ["step"])
-		.index("by_claimedByWorkerId", ["claimedByWorkerId"]),
-
 	notifications: defineTable(notificationDoc.omit("_id", "_creationTime"))
 		.index("by_userId", ["userId"])
 		.index("by_userId_dismissed", ["userId", "dismissed"]),
 
 	workerTasks: defineTable(workerTaskDoc.omit("_id", "_creationTime"))
-		.index("by_status", ["status"]),
+		.index("by_status", ["status"])
+		.index("by_userId", ["userId"]),
+
+	humans: defineTable({
+		userId: v.string(),
+		online: v.boolean(),
+		/** Scheduled `setOffline` — cancelled by each heartbeat, fires on timeout. */
+		timeoutId: v.optional(v.id("_scheduled_functions")),
+	}).index("by_userId", ["userId"]),
 });

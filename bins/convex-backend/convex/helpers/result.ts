@@ -21,6 +21,8 @@
  */
 import { type Validator, v } from "convex/values";
 
+// todo create some smart hack and support it with convex typegen
+// {Ok: O} | {Error: E}
 /** Validator for Result<T>: v.union(ok branch, err branch). */
 export function result<T extends Validator<any, "required", any>>(
   valueValidator: T,

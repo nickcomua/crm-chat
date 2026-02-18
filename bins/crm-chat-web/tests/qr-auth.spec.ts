@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
+import { api, getRobotClient } from "./helpers";
 
 // URL patterns for navigation
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -9,6 +10,29 @@ const TG_LOGIN_URL_PATTERN = /^tg:\/\/login\?token=.+/;
 
 // Telegram subscriber needs time to claim the auth and fetch the QR token
 const QR_CODE_TIMEOUT = 30_000;
+
+/**
+ * Poll until no QrAuth worker tasks remain (Pending, Dispatched, or Running).
+ * Uses the robot client to query the task list.
+ */
+async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
+  const robot = getRobotClient();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
+      maxMediaWorkflows: 0,
+    })) as Array<{ task: { type: string }; status: string }>;
+
+    const qrTasks = tasks.filter((t) => t.task.type === "QrAuth");
+    if (qrTasks.length === 0) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  throw new Error(`QrAuth tasks still exist after ${timeoutMs}ms`);
+}
 
 // Run tests sequentially — they share a single Clerk test account
 test.describe.configure({ mode: "serial" });
@@ -77,20 +101,43 @@ test.describe("QR Code Authentication", () => {
     ).toBeVisible();
   });
 
-  test("should be able to cancel QR auth", async ({ page }) => {
+  test("should cancel QR auth task when dialog is closed", async ({ page }) => {
     // Click Add Client button (already on settings page from beforeEach)
     await page.click('button:has-text("Add Client")');
 
     // Wait for dialog with QR auth content
     await page.waitForSelector('[role="dialog"]');
 
+    // Wait briefly so the task is created and potentially dispatched
+    await page.waitForTimeout(2000);
+
     // Close the dialog via the X close button
-    // This triggers QrAuth unmount → auto-cancel cleanup
+    // This triggers QrAuth unmount → auto-cancel via cancelQrAuth()
     await page.click('[role="dialog"] [data-slot="dialog-close"]');
 
     // Dialog should close
     await expect(page.locator('[role="dialog"]')).toBeHidden({
       timeout: 10_000,
     });
+
+    // Verify backend cleanup: no QrAuth tasks should remain
+    // The cancel mutation fires immediately on unmount, and the worker's
+    // cancel_watcher detects it and completes the task within seconds
+    await expectNoQrAuthTasks();
+  });
+
+  test("should cancel QR auth task on page navigation", async ({ page }) => {
+    // Start QR auth
+    await page.click('button:has-text("Add Client")');
+    await page.waitForSelector('[role="dialog"]');
+    await page.waitForTimeout(2000);
+
+    // Navigate away (simulates leaving the page)
+    // The beforeunload handler fires sendBeacon to cancel the task
+    await page.goto("/");
+    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
+
+    // Verify backend cleanup
+    await expectNoQrAuthTasks();
   });
 });

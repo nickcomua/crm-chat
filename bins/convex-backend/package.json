@@ -6,7 +6,9 @@
     "deploy": "convex deploy"
   },
   "dependencies": {
-    "convex": "^1.25.4"
+    "@convex-dev/presence": "^0.3.0",
+    "convex": "^1.25.4",
+    "convex-helpers": "^0.1.112"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

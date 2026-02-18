@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use convex_backend::{ConvexApi, ConvexApiClient, MediaStoreMediaArgs};
+use convex_backend::{ConvexApi, ConvexApiClient, WorkerOpsStoreMediaArgs};
 use futures::StreamExt;
 use messanger_interface::media::MediaSummary;
 use messanger_telegram::TelegramClient;
@@ -25,6 +25,7 @@ pub async fn download_and_upload_media(
     msg_external_id: &str,
     media_external_id: &str,
     summary: &MediaSummary,
+    task_id: &str,
 ) -> Result<(), WorkerError> {
     let msg_id: i32 = msg_external_id.parse().map_err(|_| {
         WorkerError::MutationFailed(format!("Invalid message ID: {msg_external_id}"))
@@ -48,6 +49,7 @@ pub async fn download_and_upload_media(
         summary.height.map(|h| h as f64),
         summary.duration,
         summary.file_size,
+        task_id,
     )
     .await
 }
@@ -69,9 +71,10 @@ pub async fn download_and_upload(
     height: Option<f64>,
     duration: Option<f64>,
     known_file_size: Option<usize>,
+    task_id: &str,
 ) -> Result<(), WorkerError> {
     // Step 0: Transition to "downloading" status
-    cx::start_download(convex, external_id).await;
+    cx::start_download(convex, task_id, external_id).await;
 
     // Step 1: Get a presigned upload URL
     let upload_url = convex
@@ -106,6 +109,7 @@ pub async fn download_and_upload(
 
     // Progress reporter
     let progress_convex = convex.clone();
+    let progress_task_id = task_id.to_string();
     let progress_ext_id = external_id.to_string();
     let progress_bytes = bytes_counter.clone();
     let progress_handle = tokio::spawn(async move {
@@ -116,6 +120,7 @@ pub async fn download_and_upload(
             let current = progress_bytes.load(Ordering::Relaxed);
             cx::update_download_progress(
                 &progress_convex,
+                &progress_task_id,
                 &progress_ext_id,
                 current as f64,
                 file_size.map(|s| s as f64),
@@ -172,7 +177,8 @@ pub async fn download_and_upload(
     // Step 5: Store the media record
     let final_size = file_size.unwrap_or(total_bytes);
     convex
-        .media_store_media(MediaStoreMediaArgs {
+        .worker_ops_store_media(WorkerOpsStoreMediaArgs {
+            taskId: task_id.to_string(),
             telegramFileId: external_id.to_string(),
             storageId: storage_id.to_string(),
             mimeType: mime_type.map(String::from),
