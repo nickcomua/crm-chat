@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsMarkFullScannedArgs, ChatsUpdateSyncProgressArgs, ChatsUpdateSyncProgressScanPhase,
-    ChatsUpsertArgs, ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MediaCreatePendingArgs,
-    MessagesUpsertArgs, WorkerTasksTask as Task,
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, WorkerOpsCreatePendingMediaArgs,
+    WorkerOpsUpdateSyncProgressArgs, WorkerOpsUpdateSyncProgressScanPhase,
+    WorkerOpsUpsertChatArgs, WorkerOpsUpsertMessageArgs, WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -20,7 +20,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 
 /// Internal request used for direct `scan_chat_messages()` calls (e.g. from
@@ -39,7 +39,7 @@ pub struct ChatScanRequest {
 
 #[restate_sdk::object]
 pub trait ChatScanner {
-    async fn scan(req: Json<Task>) -> Result<(), HandlerError>;
+    async fn scan(req: Json<TaskPayload>) -> Result<(), HandlerError>;
 }
 
 pub struct ChatScannerImpl {
@@ -51,18 +51,21 @@ impl ChatScanner for ChatScannerImpl {
     async fn scan(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<Task>,
+        req: Json<TaskPayload>,
     ) -> Result<(), HandlerError> {
-        let task = req.into_inner();
-        let Task::ChatScannerScan {
+        let payload = req.into_inner();
+        let Task::ChatScanner {
             chatId,
             clientId,
             userId,
-        } = task
+            isPinned,
+            pinnedName,
+        } = payload.task
         else {
-            return Err(anyhow::anyhow!("Expected ChatScanner:scan task").into());
+            return Err(anyhow::anyhow!("Expected ChatScanner task").into());
         };
 
+        run_task(&self.convex, &payload.task_id).await;
         info!(chat_id = %chatId, "ChatScanner: starting scan");
 
         // Resolve telegram_id from the client record
@@ -81,11 +84,6 @@ impl ChatScanner for ChatScannerImpl {
             .await
             .map_err(anyhow::Error::from)?;
 
-        // Look up the full chat record for is_pinned/pinned_name
-        let chats = cx::list_worker_chats(&self.convex, &clientId).await
-            .map_err(anyhow::Error::from)?;
-        let chat_record = chats.iter().find(|c| c.chat_id == chatId);
-
         let chat_external_id = chatId
             .strip_prefix(&format!("{}:", clientId))
             .unwrap_or(&chatId)
@@ -97,16 +95,16 @@ impl ChatScanner for ChatScannerImpl {
             external_id: client.telegram_id,
             chat_id: chatId,
             chat_external_id,
-            is_pinned: chat_record.map(|c| c.is_pinned).unwrap_or(false),
-            pinned_name: chat_record.and_then(|c| c.pinned_name.clone()),
+            is_pinned: isPinned,
+            pinned_name: pinnedName,
         };
 
-        let chat_id_for_complete = scan_req.chat_id.clone();
-        scan_chat_messages(&self.convex, &tg_client, &scan_req)
+        scan_chat_messages(&self.convex, &tg_client, &scan_req, &payload.task_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        mark_task_complete(&self.convex, "ChatScanner:scan", &chat_id_for_complete).await;
+        // Completion handler (completeChatScanner) sets fullScanned + scanPhase atomically
+        worker_complete(&self.convex, &payload.task_id).await;
         Ok(())
     }
 }
@@ -116,6 +114,7 @@ pub async fn scan_chat_messages(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
     req: &ChatScanRequest,
+    task_id: &str,
 ) -> Result<(), WorkerError> {
     info!(chat_id = %req.chat_id, chat_external_id = %req.chat_external_id, "Scanning messages");
 
@@ -125,11 +124,13 @@ pub async fn scan_chat_messages(
         .unwrap_or(0);
 
     convex
-        .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+        .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
+            taskId: task_id.to_string(),
             chatId: req.chat_id.clone(),
             totalMessages: Some(total_messages as f64),
             syncedMessages: Some(0.0),
-            scanPhase: Some(ChatsUpdateSyncProgressScanPhase::ScanningMessages),
+            scanPhase: Some(WorkerOpsUpdateSyncProgressScanPhase::ScanningMessages),
+            fullScanned: None,
         })
         .await
         .warn_on_err("Failed to update initial sync progress");
@@ -162,7 +163,8 @@ pub async fn scan_chat_messages(
 
         let message_id_clone = message_id.clone();
         convex
-            .messages_upsert(MessagesUpsertArgs {
+            .worker_ops_upsert_message(WorkerOpsUpsertMessageArgs {
+                taskId: task_id.to_string(),
                 messageId: message_id,
                 externalId: msg.external_id,
                 userId: req.user_id.clone(),
@@ -187,7 +189,8 @@ pub async fn scan_chat_messages(
             && let Some(ref media_ext_id) = msg.media_external_id
         {
             convex
-                .media_create_pending(MediaCreatePendingArgs {
+                .worker_ops_create_pending_media(WorkerOpsCreatePendingMediaArgs {
+                    taskId: task_id.to_string(),
                     telegramFileId: media_ext_id.clone(),
                     userId: req.user_id.clone(),
                     clientId: req.client_id.clone(),
@@ -209,11 +212,13 @@ pub async fn scan_chat_messages(
 
         if msg_count.is_multiple_of(100) {
             convex
-                .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+                .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
+                    taskId: task_id.to_string(),
                     chatId: req.chat_id.clone(),
                     totalMessages: None,
                     syncedMessages: Some(msg_count as f64),
                     scanPhase: None,
+                    fullScanned: None,
                 })
                 .await
                 .warn_on_err("Failed to update sync progress");
@@ -223,7 +228,8 @@ pub async fn scan_chat_messages(
     // Update lastMessageTs
     if last_ts > 0.0 {
         convex
-            .chats_upsert(ChatsUpsertArgs {
+            .worker_ops_upsert_chat(WorkerOpsUpsertChatArgs {
+                taskId: task_id.to_string(),
                 chatId: req.chat_id.clone(),
                 userId: req.user_id.clone(),
                 clientId: req.client_id.clone(),
@@ -236,19 +242,15 @@ pub async fn scan_chat_messages(
             .check()?;
     }
 
+    // Mark scan complete with final progress
     convex
-        .chats_mark_full_scanned(ChatsMarkFullScannedArgs {
-            chatId: req.chat_id.clone(),
-        })
-        .await
-        .check()?;
-
-    convex
-        .chats_update_sync_progress(ChatsUpdateSyncProgressArgs {
+        .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
+            taskId: task_id.to_string(),
             chatId: req.chat_id.clone(),
             totalMessages: None,
             syncedMessages: Some(msg_count as f64),
-            scanPhase: Some(ChatsUpdateSyncProgressScanPhase::Listening),
+            scanPhase: Some(WorkerOpsUpdateSyncProgressScanPhase::Listening),
+            fullScanned: Some(true),
         })
         .await
         .warn_on_err("Failed to update final sync progress");

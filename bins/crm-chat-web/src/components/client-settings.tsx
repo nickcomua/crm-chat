@@ -54,6 +54,7 @@ interface ClientDoc {
   _id: string;
   telegramId: string;
   phoneNumber?: string;
+  status: { type: string };
   mediaSettings?: MediaSettings;
 }
 
@@ -457,6 +458,7 @@ export function ClientSettings({
     | undefined;
   const clients = useQuery(api.clients.list);
   const navigate = useNavigate();
+  const triggerSync = useMutation(api.clients.triggerDialogSync);
 
   if (chats === undefined || clients === undefined) {
     return (
@@ -477,6 +479,8 @@ export function ClientSettings({
       </div>
     );
   }
+
+  const isConnected = client.status.type === "Connected";
 
   const sortedChats = [...chats].sort((a, b) => {
     if (a.isPinned && !b.isPinned) {
@@ -499,7 +503,7 @@ export function ClientSettings({
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div>
+        <div className="flex-1">
           <h2 className="font-bold text-2xl tracking-tight">
             {client.phoneNumber
               ? `+${client.phoneNumber}`
@@ -510,6 +514,18 @@ export function ClientSettings({
             {chats.filter((c) => c.scanEnabled).length} scan-enabled
           </p>
         </div>
+        {isConnected && (
+          <Button
+            onClick={() =>
+              triggerSync({ clientId: client._id }).then(onResultError)
+            }
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            Sync Dialogs
+          </Button>
+        )}
       </div>
 
       {sortedChats.length === 0 ? (
@@ -517,8 +533,8 @@ export function ClientSettings({
           <CardContent className="flex flex-col items-center justify-center py-12">
             <MessageSquare className="mb-4 h-12 w-12 text-muted-foreground" />
             <p className="text-muted-foreground">
-              No chats synced yet. The subscriber will sync dialogs
-              automatically.
+              No chats synced yet. Click &ldquo;Sync Dialogs&rdquo; to fetch
+              your conversations.
             </p>
           </CardContent>
         </Card>

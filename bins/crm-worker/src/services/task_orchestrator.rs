@@ -59,30 +59,6 @@ async fn restate_send_raw(
     }
 }
 
-/// Fire-and-forget dispatch to a Restate handler that takes no arguments.
-async fn restate_send_empty(
-    http: &reqwest::Client,
-    ingress_url: &str,
-    service: &str,
-    key: &str,
-    handler: &str,
-) {
-    let url = format!("{ingress_url}/{service}/{key}/{handler}/send");
-    match http.post(&url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            debug!(service, key, handler, "Dispatched to Restate (no args)");
-        }
-        Ok(resp) => {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            warn!(service, key, handler, %status, body = %text, "Restate dispatch failed");
-        }
-        Err(e) => {
-            warn!(service, key, handler, error = %e, "Restate dispatch error");
-        }
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Main orchestration loop (plain async — NOT a Restate handler)
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,15 +73,15 @@ pub async fn run_orchestrator(
     info!("TaskOrchestrator: discovering sessions");
     discover_and_register_sessions(convex, config).await;
 
-    // Reset stale Dispatched tasks from a previous run so they get re-dispatched.
+    // Reset stale Dispatched/Running tasks from a previous run so they get re-dispatched.
     // Restate deduplicates by virtual-object key, so double-dispatch is harmless.
-    match convex.worker_tasks_reset_dispatched().await {
+    match convex.worker_tasks_reset_stale().await {
         Ok(n) => {
             if n > 0.0 {
-                info!(count = n, "Reset stale dispatched tasks to Pending");
+                info!(count = n, "Reset stale tasks to Pending");
             }
         }
-        Err(e) => warn!(error = %e, "Failed to reset dispatched tasks"),
+        Err(e) => warn!(error = %e, "Failed to reset stale tasks"),
     }
 
     let http = reqwest::Client::new();
@@ -165,13 +141,9 @@ pub async fn run_orchestrator(
                         warn!(error = %e, "Failed to mark task dispatched");
                     }
 
-                    let (service, key, handler, payload) = dispatch_info(&row.task);
+                    let (service, key, handler, payload) = dispatch_info(row);
 
-                    if let Some(json) = payload {
-                        restate_send_raw(&http, ingress_url, service, &key, handler, &json).await;
-                    } else {
-                        restate_send_empty(&http, ingress_url, service, &key, handler).await;
-                    }
+                    restate_send_raw(&http, ingress_url, service, &key, handler, &payload).await;
 
                     info!(service, handler, key, "Task dispatched");
                 }
@@ -184,82 +156,88 @@ pub async fn run_orchestrator(
 // Typed task → Restate dispatch routing
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Derive `(service, key, handler, payload)` from a typed task variant.
+/// Derive `(service, key, handler, payload)` from a worker task row.
 ///
-/// Returns: `(service_name, restate_key, handler_name, optional_json_payload)`.
-/// Payload is `None` for handlers that take no arguments (stop, cancel-without-doc, etc.).
+/// Returns: `(service_name, restate_key, handler_name, json_payload)`.
 ///
-/// For tasks with payloads, the typed `Task` variant is serialized directly.
-/// Since `Task` uses `#[serde(tag = "type")]`, the JSON includes a `"type"` key
-/// alongside the variant's data fields — Restate handlers simply ignore the extra key.
-fn dispatch_info(task: &Task) -> (&'static str, String, &'static str, Option<String>) {
-    match task {
+/// Every payload includes `task_id` so handlers can call `runTask` and
+/// `workerComplete`. For most tasks, the Task variant is serialized and
+/// `task_id` is injected alongside. Auth flows build custom payloads.
+fn dispatch_info(row: &WorkerTasksTable) -> (&'static str, String, &'static str, String) {
+    match &row.task {
         // ── Auth flows ───────────────────────────────────────────────
-        Task::PhoneAuthRun { authId, doc } => {
-            ("PhoneAuthWorkflow", authId.clone(), "run", Some(doc.clone()))
+        Task::PhoneAuth { authId } => {
+            let payload = serde_json::json!({
+                "task_id": row.id,
+                "auth_id": authId,
+            });
+            (
+                "PhoneAuthWorkflow",
+                authId.clone(),
+                "run",
+                payload.to_string(),
+            )
         }
-        Task::PhoneAuthSubmitCode { authId } => {
-            ("PhoneAuthWorkflow", authId.clone(), "submitCode", None)
-        }
-        Task::PhoneAuthSubmitPassword { authId } => {
-            ("PhoneAuthWorkflow", authId.clone(), "submitPassword", None)
-        }
-        Task::PhoneAuthCancel { authId } => {
-            ("PhoneAuthWorkflow", authId.clone(), "cancel", None)
-        }
-        Task::QrAuthRun { authId, doc } => {
-            ("QrAuthWorkflow", authId.clone(), "run", Some(doc.clone()))
-        }
-        Task::QrAuthCancel { authId } => {
-            ("QrAuthWorkflow", authId.clone(), "cancel", None)
+        Task::QrAuth { .. } => {
+            let payload = serde_json::json!({
+                "task_id": row.id,
+                "user_id": row.user_id.as_deref().unwrap_or(""),
+            });
+            (
+                "QrAuthWorkflow",
+                row.id.clone(),
+                "run",
+                payload.to_string(),
+            )
         }
 
         // ── Client lifecycle ─────────────────────────────────────────
-        // Serialize the full Task variant — handlers pick their fields,
-        // ignoring the extra "type" key that serde adds.
-        task @ Task::DialogSyncSync { clientId, .. } => (
+        Task::DialogSync { clientId, .. } => (
             "DialogSync",
             clientId.clone(),
             "sync",
-            Some(serde_json::to_string(task).unwrap()),
+            task_payload(row),
         ),
-        task @ Task::UpdateListenerListen { clientId, .. } => (
+        Task::UpdateListener { clientId, .. } => (
             "UpdateListener",
             clientId.clone(),
             "listen",
-            Some(serde_json::to_string(task).unwrap()),
+            task_payload(row),
         ),
-        Task::UpdateListenerStop { clientId } => {
-            ("UpdateListener", clientId.clone(), "stop", None)
-        }
-        task @ Task::ProfilePhotoSyncSync { clientId, .. } => (
+        Task::ProfilePhotoSync { clientId, .. } => (
             "ProfilePhotoSync",
             clientId.clone(),
             "sync",
-            Some(serde_json::to_string(task).unwrap()),
+            task_payload(row),
         ),
-        Task::ProfilePhotoSyncStop { clientId } => {
-            ("ProfilePhotoSync", clientId.clone(), "stop", None)
-        }
 
         // ── Chat scanning ────────────────────────────────────────────
-        task @ Task::ChatScannerScan { chatId, .. } => (
+        Task::ChatScanner { chatId, .. } => (
             "ChatScanner",
             chatId.clone(),
             "scan",
-            Some(serde_json::to_string(task).unwrap()),
+            task_payload(row),
         ),
 
         // ── Per-file media download ──────────────────────────────────
-        task @ Task::MediaDownloaderDownload {
+        Task::MediaDownloader {
             telegramFileId, ..
         } => (
             "MediaDownloader",
             telegramFileId.clone(),
             "download",
-            Some(serde_json::to_string(task).unwrap()),
+            task_payload(row),
         ),
     }
+}
+
+/// Serialize a task variant with `task_id` injected alongside the variant fields.
+fn task_payload(row: &WorkerTasksTable) -> String {
+    let mut obj = serde_json::to_value(&row.task).unwrap();
+    obj.as_object_mut()
+        .unwrap()
+        .insert("task_id".to_string(), serde_json::json!(row.id));
+    obj.to_string()
 }
 
 // ────────────────────────────────────────────────────────────────────────────

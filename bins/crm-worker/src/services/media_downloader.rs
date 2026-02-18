@@ -12,13 +12,13 @@ use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
-use crate::ops::convex::{self as cx, mark_task_complete};
+use crate::ops::convex::{self as cx, run_task, worker_complete, TaskPayload};
 use crate::ops::media::download_and_upload;
 use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
 
 #[restate_sdk::object]
 pub trait MediaDownloader {
-    async fn download(req: Json<Task>) -> Result<(), HandlerError>;
+    async fn download(req: Json<TaskPayload>) -> Result<(), HandlerError>;
 }
 
 pub struct MediaDownloaderImpl {
@@ -30,10 +30,10 @@ impl MediaDownloader for MediaDownloaderImpl {
     async fn download(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<Task>,
+        req: Json<TaskPayload>,
     ) -> Result<(), HandlerError> {
-        let task = req.into_inner();
-        let Task::MediaDownloaderDownload {
+        let payload = req.into_inner();
+        let Task::MediaDownloader {
             telegramFileId,
             userId,
             clientId: _,
@@ -42,10 +42,12 @@ impl MediaDownloader for MediaDownloaderImpl {
             kind,
             mimeType,
             fileSize,
-        } = task
+        } = payload.task
         else {
-            return Err(anyhow::anyhow!("Expected MediaDownloader:download task").into());
+            return Err(anyhow::anyhow!("Expected MediaDownloader task").into());
         };
+
+        run_task(&self.convex, &payload.task_id).await;
 
         let kind_str = media_kind_to_str(&kind);
         info!(
@@ -66,8 +68,8 @@ impl MediaDownloader for MediaDownloaderImpl {
             None => {
                 let err = "Invalid media external ID format";
                 warn!(telegram_file_id = %telegramFileId, err);
-                cx::mark_media_failed(&self.convex, &telegramFileId, err).await;
-                mark_task_complete(&self.convex, "MediaDownloader:download", &telegramFileId).await;
+                cx::mark_media_failed(&self.convex, &payload.task_id, &telegramFileId, err).await;
+                worker_complete(&self.convex, &payload.task_id).await;
                 return Ok(());
             }
         };
@@ -89,6 +91,7 @@ impl MediaDownloader for MediaDownloaderImpl {
             None, // height
             None, // duration
             fileSize.map(|s| s as usize),
+            &payload.task_id,
         )
         .await
         {
@@ -101,11 +104,11 @@ impl MediaDownloader for MediaDownloaderImpl {
                     error = %e,
                     "Failed to download file"
                 );
-                cx::mark_media_failed(&self.convex, &telegramFileId, &e.to_string()).await;
+                cx::mark_media_failed(&self.convex, &payload.task_id, &telegramFileId, &e.to_string()).await;
             }
         }
 
-        mark_task_complete(&self.convex, "MediaDownloader:download", &telegramFileId).await;
+        worker_complete(&self.convex, &payload.task_id).await;
         Ok(())
     }
 }

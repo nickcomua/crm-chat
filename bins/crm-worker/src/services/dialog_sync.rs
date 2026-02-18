@@ -5,8 +5,7 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsUpsertArgs, ConvexApi, ConvexApiClient, WorkerTasksEnqueuePostSyncTasksArgs,
-    WorkerTasksTask as Task,
+    ConvexApi, ConvexApiClient, WorkerOpsUpsertChatArgs, WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -17,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, mark_task_complete, ConvexResultExt as _};
+use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
 #[derive(Clone)]
@@ -29,7 +28,7 @@ pub struct ClientTaskFields {
 
 #[restate_sdk::object]
 pub trait DialogSync {
-    async fn sync(req: Json<Task>) -> Result<(), HandlerError>;
+    async fn sync(req: Json<TaskPayload>) -> Result<(), HandlerError>;
 }
 
 pub struct DialogSyncImpl {
@@ -41,18 +40,19 @@ impl DialogSync for DialogSyncImpl {
     async fn sync(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<Task>,
+        req: Json<TaskPayload>,
     ) -> Result<(), HandlerError> {
-        let task = req.into_inner();
-        let Task::DialogSyncSync {
+        let payload = req.into_inner();
+        let Task::DialogSync {
             clientId,
             userId,
             telegramId,
-        } = task
+        } = payload.task
         else {
-            return Err(anyhow::anyhow!("Expected DialogSync:sync task").into());
+            return Err(anyhow::anyhow!("Expected DialogSync task").into());
         };
 
+        run_task(&self.convex, &payload.task_id).await;
         info!(client_id = %clientId, "DialogSync: syncing dialogs");
 
         let fields = ClientTaskFields {
@@ -67,22 +67,12 @@ impl DialogSync for DialogSyncImpl {
             .await
             .map_err(anyhow::Error::from)?;
 
-        sync_dialogs(&self.convex, &tg_client, &fields)
+        sync_dialogs(&self.convex, &tg_client, &fields, &payload.task_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        // Enqueue post-sync tasks (ChatScanner, ProfilePhotoSync)
-        if let Err(e) = self
-            .convex
-            .worker_tasks_enqueue_post_sync_tasks(WorkerTasksEnqueuePostSyncTasksArgs {
-                clientId: fields.client_id.clone(),
-            })
-            .await
-        {
-            warn!(error = %e, "Failed to enqueue post-sync tasks");
-        }
-
-        mark_task_complete(&self.convex, "DialogSync:sync", &fields.client_id).await;
+        // Completion handler (completeDialogSync) enqueues ProfilePhotoSync + ChatScanner
+        worker_complete(&self.convex, &payload.task_id).await;
         Ok(())
     }
 }
@@ -92,6 +82,7 @@ pub async fn sync_dialogs(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
     client: &ClientTaskFields,
+    task_id: &str,
 ) -> Result<(), WorkerError> {
     let mut stream = tg_client
         .iter_dialogs()
@@ -112,7 +103,8 @@ pub async fn sync_dialogs(
         let chat_type = cx::map_chat_type(dialog.chat_type.as_deref());
 
         convex
-            .chats_upsert(ChatsUpsertArgs {
+            .worker_ops_upsert_chat(WorkerOpsUpsertChatArgs {
+                taskId: task_id.to_string(),
                 chatId: chat_id,
                 userId: client.user_id.clone(),
                 clientId: client.client_id.clone(),

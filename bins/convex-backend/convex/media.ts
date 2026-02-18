@@ -1,14 +1,14 @@
-import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { mediaKind, mediaStatus } from "./schema";
+import { mutation, query } from "./_generated/server";
 import {
-	isWorkerCaller,
 	requireAuth,
 	requireHuman,
 	requireOwner,
+	requireWorker,
 } from "./helpers/auth";
-import { err, ok, result } from "./helpers/result";
+import { ok, result } from "./helpers/result";
 import { enqueueTask } from "./helpers/tasks";
+import { mediaKind, mediaStatus } from "./schema";
 
 /** Generate a short-lived upload URL for Convex file storage. */
 export const generateUploadUrl = mutation({
@@ -17,141 +17,6 @@ export const generateUploadUrl = mutation({
 	handler: async (ctx) => {
 		await requireAuth(ctx);
 		return await ctx.storage.generateUploadUrl();
-	},
-});
-
-/** Create a pending media record (called when a message with media is upserted). */
-export const createPending = mutation({
-	args: {
-		telegramFileId: v.string(),
-		userId: v.string(),
-		clientId: v.id("clients"),
-		chatId: v.string(),
-		messageId: v.string(),
-		kind: mediaKind,
-		mimeType: v.optional(v.string()),
-		fileName: v.optional(v.string()),
-		fileSize: v.optional(v.number()),
-		width: v.optional(v.number()),
-		height: v.optional(v.number()),
-		duration: v.optional(v.number()),
-	},
-	returns: result(v.null()),
-	handler: async (ctx, args) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can create media records");
-		}
-
-		// Check if media record already exists for this telegramFileId
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", args.telegramFileId))
-			.unique();
-
-		if (existing) {
-			return ok(null);
-		}
-
-		await ctx.db.insert("media", {
-			...args,
-			status: "Pending" as const,
-		});
-
-		// Enqueue per-file download task (dedup by telegramFileId)
-		const client = await ctx.db.get(args.clientId);
-		if (client) {
-			await enqueueTask(ctx, {
-				type: "MediaDownloader:download",
-				telegramFileId: args.telegramFileId,
-				userId: args.userId,
-				clientId: args.clientId,
-				telegramId: client.telegramId,
-				chatId: args.chatId,
-				kind: args.kind,
-				mimeType: args.mimeType,
-				fileSize: args.fileSize,
-			});
-		}
-
-		return ok(null);
-	},
-});
-
-/** Store media file after successful upload. Patches existing pending record. */
-export const storeMedia = mutation({
-	args: {
-		telegramFileId: v.string(),
-		storageId: v.id("_storage"),
-		mimeType: v.optional(v.string()),
-		fileName: v.optional(v.string()),
-		fileSize: v.optional(v.number()),
-		width: v.optional(v.number()),
-		height: v.optional(v.number()),
-		duration: v.optional(v.number()),
-	},
-	returns: result(v.null()),
-	handler: async (ctx, args) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can store media");
-		}
-
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", args.telegramFileId))
-			.unique();
-
-		if (!existing) {
-			// Record may have been deleted by purgeChatData — clean up orphaned storage
-			await ctx.storage.delete(args.storageId);
-			return ok(null);
-		}
-
-		// Guard: if the user cancelled (skipped) while we were uploading, don't overwrite
-		if (existing.status !== "Downloading" && existing.status !== "Pending") {
-			await ctx.storage.delete(args.storageId);
-			return ok(null);
-		}
-
-		const { telegramFileId: _, ...updates } = args;
-		await ctx.db.patch(existing._id, {
-			...updates,
-			status: "Stored" as const,
-			downloadedAt: Date.now(),
-		});
-		return ok(null);
-	},
-});
-
-/** Mark a media record as failed. */
-export const markFailed = mutation({
-	args: {
-		telegramFileId: v.string(),
-		error: v.string(),
-	},
-	returns: result(v.null()),
-	handler: async (ctx, { telegramFileId, error: errorMsg }) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can mark media as failed");
-		}
-
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
-			.unique();
-
-		if (!existing) {
-			// Record may have been deleted by purgeChatData — nothing to mark
-			return ok(null);
-		}
-
-		await ctx.db.patch(existing._id, {
-			status: "Failed" as const,
-			error: errorMsg,
-		});
-		return ok(null);
 	},
 });
 
@@ -164,7 +29,9 @@ export const retryDownload = mutation({
 
 		const existing = await ctx.db
 			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
+			.withIndex("by_telegramFileId", (q) =>
+				q.eq("telegramFileId", telegramFileId),
+			)
 			.unique();
 
 		if (!existing || existing.status !== "Failed") {
@@ -177,11 +44,10 @@ export const retryDownload = mutation({
 			bytesDownloaded: undefined,
 		});
 
-		// Enqueue per-file download task (dedup by telegramFileId)
 		const client = await ctx.db.get(existing.clientId);
 		if (client) {
 			await enqueueTask(ctx, {
-				type: "MediaDownloader:download",
+				type: "MediaDownloader",
 				telegramFileId: existing.telegramFileId,
 				userId: existing.userId,
 				clientId: existing.clientId,
@@ -197,89 +63,74 @@ export const retryDownload = mutation({
 	},
 });
 
-/** Mark a media record as skipped (filtered by settings). */
-export const markSkipped = mutation({
-	args: {
-		telegramFileId: v.string(),
-	},
+/** Cancel a pending or downloading media record (human-callable). */
+export const cancelDownload = mutation({
+	args: { telegramFileId: v.string() },
 	returns: result(v.null()),
 	handler: async (ctx, { telegramFileId }) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can skip media");
-		}
+		const caller = await requireHuman(ctx);
 
 		const existing = await ctx.db
 			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
+			.withIndex("by_telegramFileId", (q) =>
+				q.eq("telegramFileId", telegramFileId),
+			)
 			.unique();
 
-		if (!existing) {
-			return err(`Media record not found: ${telegramFileId}`);
+		if (!existing) return ok(null);
+		requireOwner(caller.id, existing.userId);
+
+		if (existing.status !== "Pending" && existing.status !== "Downloading") {
+			return ok(null);
 		}
 
 		await ctx.db.patch(existing._id, {
 			status: "Skipped" as const,
+			bytesDownloaded: undefined,
+			error: undefined,
 		});
 		return ok(null);
 	},
 });
 
-/** Transition a media record to "Downloading" status. Called at download start. */
-export const startDownload = mutation({
+/** Request download for a skipped media record (human-callable). */
+export const requestDownload = mutation({
 	args: { telegramFileId: v.string() },
 	returns: result(v.null()),
 	handler: async (ctx, { telegramFileId }) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can start downloads");
-		}
+		const caller = await requireHuman(ctx);
 
 		const existing = await ctx.db
 			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
+			.withIndex("by_telegramFileId", (q) =>
+				q.eq("telegramFileId", telegramFileId),
+			)
 			.unique();
 
-		if (!existing || existing.status !== "Pending") {
-			return ok(null);
-		}
+		if (!existing) return ok(null);
+		requireOwner(caller.id, existing.userId);
+
+		if (existing.status !== "Skipped") return ok(null);
 
 		await ctx.db.patch(existing._id, {
-			status: "Downloading" as const,
-			bytesDownloaded: 0,
+			status: "Pending" as const,
 		});
-		return ok(null);
-	},
-});
 
-/** Update download progress (bytes downloaded so far, and optionally total size). */
-export const updateProgress = mutation({
-	args: {
-		telegramFileId: v.string(),
-		bytesDownloaded: v.number(),
-		fileSize: v.optional(v.number()),
-	},
-	returns: result(v.null()),
-	handler: async (ctx, { telegramFileId, bytesDownloaded, fileSize }) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			return err("Unauthorized: only workers can update progress");
+		const client = await ctx.db.get(existing.clientId);
+		if (client) {
+			await enqueueTask(ctx, {
+				type: "MediaDownloader",
+				telegramFileId: existing.telegramFileId,
+				userId: existing.userId,
+				clientId: existing.clientId,
+				telegramId: client.telegramId,
+				chatId: existing.chatId,
+				kind: existing.kind,
+				mimeType: existing.mimeType,
+				fileSize: existing.fileSize,
+			});
 		}
 
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
-			.unique();
-
-		if (!existing || existing.status !== "Downloading") {
-			return ok(null);
-		}
-
-		const patch: Record<string, number> = { bytesDownloaded };
-		if (fileSize !== undefined && fileSize > 0) {
-			patch.fileSize = fileSize;
-		}
-		await ctx.db.patch(existing._id, patch);
 		return ok(null);
 	},
 });
@@ -341,9 +192,7 @@ export const getForMessages = query({
 	},
 });
 
-/** Get all media records for a chat in a single indexed scan.
- *  Much more efficient than getForMessages when loading many messages,
- *  as it avoids per-messageId reads that can exceed the 4096 read limit. */
+/** Get all media records for a chat in a single indexed scan. */
 export const getForChat = query({
 	args: { chatId: v.string() },
 	returns: v.array(
@@ -398,8 +247,7 @@ export const getForChat = query({
 	},
 });
 
-/** List pending + downloading media records for a client (for background download task).
- *  Includes "Downloading" so interrupted downloads are retried on restart. */
+/** List pending + downloading media records for a client. Worker-only. */
 export const listPendingForClient = query({
 	args: { clientId: v.id("clients") },
 	returns: v.array(
@@ -412,14 +260,8 @@ export const listPendingForClient = query({
 		}),
 	),
 	handler: async (ctx, { clientId }) => {
-		const caller = await requireAuth(ctx);
-		if (!isWorkerCaller(caller)) {
-			throw new Error("Unauthorized: only workers can list pending media");
-		}
+		await requireWorker(ctx);
 
-		// Prioritize interrupted downloads, then pending. Batch to stay under
-		// Convex's 8192 array-length return limit — the subscriber processes
-		// these sequentially, so it will fetch the next batch on the next call.
 		const downloading = await ctx.db
 			.query("media")
 			.withIndex("by_clientId_status", (q) =>
@@ -467,7 +309,6 @@ export const listByStatus = query({
 	handler: async (ctx, { statuses }) => {
 		const caller = await requireHuman(ctx);
 
-		// Build a small cache so we don't re-query the same chat for every record.
 		const chatNameCache = new Map<string, string | undefined>();
 		async function getChatName(chatId: string): Promise<string | undefined> {
 			if (chatNameCache.has(chatId)) return chatNameCache.get(chatId);
@@ -486,9 +327,7 @@ export const listByStatus = query({
 
 			const records =
 				status === "Stored"
-					? // Composite index: userId + status + downloadedAt — gets most recently
-						// *downloaded* items without in-memory filtering.
-						await ctx.db
+					? await ctx.db
 							.query("media")
 							.withIndex("by_userId_status_downloadedAt", (q) =>
 								q.eq("userId", caller.id).eq("status", "Stored"),
@@ -500,8 +339,6 @@ export const listByStatus = query({
 							.withIndex("by_userId_status", (q) =>
 								q.eq("userId", caller.id).eq("status", status),
 							)
-							// Pending/downloading: oldest first (matches download order).
-							// Failed: newest first.
 							.order(
 								status === "Pending" || status === "Downloading"
 									? "asc"
@@ -510,7 +347,6 @@ export const listByStatus = query({
 							.take(limit);
 
 			for (const m of records) {
-				// Look up the message timestamp from the messages table.
 				const message = await ctx.db
 					.query("messages")
 					.withIndex("by_messageId", (q) => q.eq("messageId", m.messageId))
@@ -535,75 +371,6 @@ export const listByStatus = query({
 		}
 
 		return results;
-	},
-});
-
-/** Cancel a pending or downloading media record (human-callable). */
-export const cancelDownload = mutation({
-	args: { telegramFileId: v.string() },
-	returns: result(v.null()),
-	handler: async (ctx, { telegramFileId }) => {
-		const caller = await requireHuman(ctx);
-
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
-			.unique();
-
-		if (!existing) return ok(null);
-		requireOwner(caller.id, existing.userId);
-
-		if (existing.status !== "Pending" && existing.status !== "Downloading") {
-			return ok(null);
-		}
-
-		await ctx.db.patch(existing._id, {
-			status: "Skipped" as const,
-			bytesDownloaded: undefined,
-			error: undefined,
-		});
-		return ok(null);
-	},
-});
-
-/** Request download for a skipped media record (human-callable). */
-export const requestDownload = mutation({
-	args: { telegramFileId: v.string() },
-	returns: result(v.null()),
-	handler: async (ctx, { telegramFileId }) => {
-		const caller = await requireHuman(ctx);
-
-		const existing = await ctx.db
-			.query("media")
-			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", telegramFileId))
-			.unique();
-
-		if (!existing) return ok(null);
-		requireOwner(caller.id, existing.userId);
-
-		if (existing.status !== "Skipped") return ok(null);
-
-		await ctx.db.patch(existing._id, {
-			status: "Pending" as const,
-		});
-
-		// Enqueue per-file download task (dedup by telegramFileId)
-		const client = await ctx.db.get(existing.clientId);
-		if (client) {
-			await enqueueTask(ctx, {
-				type: "MediaDownloader:download",
-				telegramFileId: existing.telegramFileId,
-				userId: existing.userId,
-				clientId: existing.clientId,
-				telegramId: client.telegramId,
-				chatId: existing.chatId,
-				kind: existing.kind,
-				mimeType: existing.mimeType,
-				fileSize: existing.fileSize,
-			});
-		}
-
-		return ok(null);
 	},
 });
 
