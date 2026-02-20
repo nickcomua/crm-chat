@@ -1,48 +1,47 @@
 /**
- * Result<T> — Rust-inspired discriminated union for mutation return types.
+ * Result<T, E> — Rust-compatible discriminated union for mutation return types.
  *
- * Instead of throwing errors that produce opaque "Server Error" on the client,
- * mutations return `{ ok: true, value: T }` or `{ ok: false, error: string }`.
+ * Wire format: `{ Ok: T }` or `{ Err: E }` — matches serde's native
+ * `Result<T, E>` externally-tagged enum serialization, so convex-typegen
+ * can emit `Result<T, E>` directly in Rust with zero boilerplate.
  *
- * Usage in a mutation:
- *   returns: result(v.null()),
+ * Usage in a mutation (typed error):
+ *   returns: result(v.null(), v.literal("Chat not found")),
  *   handler: async (ctx, args) => {
  *     if (!chat) return err("Chat not found");
- *     // ... do work
  *     return ok(null);
  *   }
  *
- * Usage for mutations that return data on success:
- *   returns: result(v.id("clients")),
- *   handler: async (ctx, args) => {
- *     const id = await ctx.db.insert(...);
- *     return ok(id);
- *   }
+ * Usage with multiple error literals:
+ *   returns: result(v.null(), v.union(v.literal("Not found"), v.literal("Unauthorized"))),
+ *
+ * Usage with dynamic errors:
+ *   returns: result(v.null(), v.string()),
  */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/** biome-ignore-all lint/suspicious/noExplicitAny: safe generics */
 import { type Validator, v } from "convex/values";
 
-// todo create some smart hack and support it with convex typegen
-// {Ok: O} | {Error: E}
-/** Validator for Result<T>: v.union(ok branch, err branch). */
-export function result<T extends Validator<any, "required", any>>(
-  valueValidator: T,
-): Validator<
-  { ok: true; value: T["type"] } | { ok: false; error: string },
-  "required",
-  string
-> {
+/** Validator for Result<T, E>: v.union(ok branch, err branch). */
+export function result<
+  T extends Validator<any, "required", any>,
+  E extends Validator<any, "required", any>,
+>(
+  okValidator: T,
+  errValidator: E,
+): Validator<{ Ok: T["type"] } | { Err: E["type"] }, "required", string> {
   return v.union(
-    v.object({ ok: v.literal(true), value: valueValidator }),
-    v.object({ ok: v.literal(false), error: v.string() }),
+    v.object({ Ok: okValidator }),
+    v.object({ Err: errValidator }),
   ) as any;
 }
 
 /** Construct a success result. */
-export function ok<T>(value: T): { ok: true; value: T } {
-  return { ok: true as const, value };
+export function ok<const T>(value: T): { Ok: T } {
+  return { Ok: value };
 }
 
 /** Construct an error result. */
-export function err(error: string): { ok: false; error: string } {
-  return { ok: false as const, error };
+export function err<const E>(error: E): { Err: E } {
+  return { Err: error };
 }

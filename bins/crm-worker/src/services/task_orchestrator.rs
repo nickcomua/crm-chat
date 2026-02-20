@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::auth::mint_worker_jwt;
 use crate::config::{WorkerConfig, discover_session_files};
-use crate::ops::convex::ConvexResultExt as _;
+use crate::error::WorkerError;
 
 /// Fire-and-forget dispatch to a Restate service handler via HTTP ingress.
 ///
@@ -303,7 +303,7 @@ async fn discover_and_register_sessions(client: &ConvexApiClient, config: &Worke
                 phoneNumber: phone_number,
             })
             .await
-            .check()
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))
         {
             Ok(client_id) => {
                 registered += 1;

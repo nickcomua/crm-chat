@@ -212,7 +212,7 @@ async fn process_update(
                         .map(|s| to_upsert_media_kind(s.kind)),
                 })
                 .await
-                .check()?;
+                .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
             // Real-time media download in background
             if matches!(update, Update::NewMessage(_))
