@@ -1,7 +1,8 @@
 import { asyncMap } from "convex-helpers";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import {
 	requireHuman,
 	requireOwner,
@@ -119,7 +120,7 @@ export const upsert = mutation({
 		mediaExternalId: v.optional(v.string()),
 		mediaKind: v.optional(mediaKind),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		const caller = await requireHuman(ctx);
 		requireOwner(caller.id, args.userId);
@@ -181,14 +182,14 @@ export const upsert = mutation({
 				});
 			}
 		}
-		return ok(null);
+		return null;
 	},
 });
 
 /** Soft-delete a message by external ID. Human-only (workers use workerOps.markMessageDeleted). */
 export const markDeleted = mutation({
 	args: { externalId: v.string() },
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Message not found or ambiguous (multiple matches)")),
 	handler: async (ctx, { externalId }) => {
 		const caller = await requireHuman(ctx);
 

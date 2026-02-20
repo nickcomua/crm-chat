@@ -12,11 +12,11 @@ use messanger_interface::MessengerClient;
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
+use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
 #[derive(Clone)]
@@ -98,7 +98,6 @@ pub async fn sync_dialogs(
                 continue;
             }
         };
-
         let chat_id = format!("{}:{}", client.client_id, dialog.external_id);
         let chat_type = cx::map_chat_type(dialog.chat_type.as_deref());
 
@@ -114,7 +113,7 @@ pub async fn sync_dialogs(
                 lastMessageTimestamp: 0.0,
             })
             .await
-            .check()?;
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
         count += 1;
     }

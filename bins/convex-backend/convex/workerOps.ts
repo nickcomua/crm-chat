@@ -6,7 +6,7 @@
  * go through the task system.
  */
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation } from "./functions";
 import { requireRunningTask } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
 import { enqueueTask } from "./helpers/tasks";
@@ -28,7 +28,7 @@ export const upsertChat = mutation({
 		pinnedName: v.optional(v.string()),
 		lastMessageTimestamp: v.number(),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, ...args }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -50,7 +50,7 @@ export const upsertChat = mutation({
 				scanEnabled: args.isPinned,
 			});
 		}
-		return ok(null);
+		return null;
 	},
 });
 
@@ -64,7 +64,7 @@ export const updateSyncProgress = mutation({
 		scanPhase: v.optional(scanPhase),
 		fullScanned: v.optional(v.boolean()),
 	},
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Chat not found")),
 	handler: async (ctx, { taskId, chatId, ...updates }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -95,7 +95,7 @@ export const updateChatPhoto = mutation({
 		storageId: v.id("_storage"),
 		photoExternalId: v.string(),
 	},
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Chat not found")),
 	handler: async (ctx, { taskId, chatId, storageId, photoExternalId }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -139,7 +139,7 @@ export const upsertMessage = mutation({
 		mediaExternalId: v.optional(v.string()),
 		mediaKind: v.optional(mediaKind),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, ...args }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -160,7 +160,7 @@ export const upsertMessage = mutation({
 		} else {
 			await ctx.db.insert("messages", args);
 		}
-		return ok(null);
+		return null;
 	},
 });
 
@@ -170,7 +170,7 @@ export const markMessageDeleted = mutation({
 		taskId: v.id("workerTasks"),
 		externalId: v.string(),
 	},
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Message not found or ambiguous (multiple matches)")),
 	handler: async (ctx, { taskId, externalId }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -210,7 +210,7 @@ export const createPendingMedia = mutation({
 		height: v.optional(v.number()),
 		duration: v.optional(v.number()),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, ...args }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -222,7 +222,7 @@ export const createPendingMedia = mutation({
 			.unique();
 
 		if (existing) {
-			return ok(null);
+			return null;
 		}
 
 		await ctx.db.insert("media", {
@@ -245,7 +245,7 @@ export const createPendingMedia = mutation({
 			});
 		}
 
-		return ok(null);
+		return null;
 	},
 });
 
@@ -255,7 +255,7 @@ export const startMediaDownload = mutation({
 		taskId: v.id("workerTasks"),
 		telegramFileId: v.string(),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, telegramFileId }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -267,14 +267,14 @@ export const startMediaDownload = mutation({
 			.unique();
 
 		if (!existing || existing.status !== "Pending") {
-			return ok(null);
+			return null;
 		}
 
 		await ctx.db.patch(existing._id, {
 			status: "Downloading" as const,
 			bytesDownloaded: 0,
 		});
-		return ok(null);
+		return null;
 	},
 });
 
@@ -286,7 +286,7 @@ export const updateMediaProgress = mutation({
 		bytesDownloaded: v.number(),
 		fileSize: v.optional(v.number()),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, telegramFileId, bytesDownloaded, fileSize }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -298,7 +298,7 @@ export const updateMediaProgress = mutation({
 			.unique();
 
 		if (!existing || existing.status !== "Downloading") {
-			return ok(null);
+			return null;
 		}
 
 		const patch: Record<string, number> = { bytesDownloaded };
@@ -306,7 +306,7 @@ export const updateMediaProgress = mutation({
 			patch.fileSize = fileSize;
 		}
 		await ctx.db.patch(existing._id, patch);
-		return ok(null);
+		return null;
 	},
 });
 
@@ -323,7 +323,7 @@ export const storeMedia = mutation({
 		height: v.optional(v.number()),
 		duration: v.optional(v.number()),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, ...args }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -336,12 +336,12 @@ export const storeMedia = mutation({
 
 		if (!existing) {
 			await ctx.storage.delete(args.storageId);
-			return ok(null);
+			return null;
 		}
 
 		if (existing.status !== "Downloading" && existing.status !== "Pending") {
 			await ctx.storage.delete(args.storageId);
-			return ok(null);
+			return null;
 		}
 
 		const { telegramFileId: _, ...updates } = args;
@@ -350,7 +350,7 @@ export const storeMedia = mutation({
 			status: "Stored" as const,
 			downloadedAt: Date.now(),
 		});
-		return ok(null);
+		return null;
 	},
 });
 
@@ -361,7 +361,7 @@ export const markMediaFailed = mutation({
 		telegramFileId: v.string(),
 		error: v.string(),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { taskId, telegramFileId, error: errorMsg }) => {
 		await requireRunningTask(ctx, taskId);
 
@@ -373,13 +373,13 @@ export const markMediaFailed = mutation({
 			.unique();
 
 		if (!existing) {
-			return ok(null);
+			return null;
 		}
 
 		await ctx.db.patch(existing._id, {
 			status: "Failed" as const,
 			error: errorMsg,
 		});
-		return ok(null);
+		return null;
 	},
 });

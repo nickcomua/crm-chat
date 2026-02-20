@@ -3,7 +3,7 @@
 //! The generated `ConvexApi` trait on `ConvexApiClient` provides typed methods
 //! for all Convex functions. This module provides:
 //! - Re-exports of commonly used generated types
-//! - [`ConvexResult`] trait for unwrapping the inner `ok/error` envelope
+//! - [`ConvexResultExt`] for collapsing transport + business-logic errors
 //! - The `map_chat_type` helper
 //! - Best-effort (fire-and-forget) wrappers for operations where errors are ignored
 
@@ -22,110 +22,35 @@ use tracing::warn;
 use crate::error::WorkerError;
 
 // ────────────────────────────────────────────────────────────────────────────
-// ConvexResult — unwrap the ok/error envelope from mutation returns
+// ConvexResultExt — collapse transport + business-logic errors
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Trait for converting generated Convex mutation return enums into `Result`.
+/// Extension trait on `Result<Result<T, E>, ConvexError>`.
 ///
-/// Convex mutations that use the `result()` helper return JSON like:
-///   `{ ok: true, value: T }` or `{ ok: false, error: "..." }`
+/// Convex mutations using the `result()` helper return `{Ok: T}` or `{Err: E}`.
+/// convex-typegen maps this to `Result<T, E>` via serde's externally-tagged
+/// enum deserialization. The outer `Result` wraps the transport-level `ConvexError`.
 ///
-/// The generated Rust types model this as an untagged enum:
-///   `Object(V0 { ok, value })` | `Object2(V1 { ok, error })`
-///
-/// This trait provides `.into_result()` to collapse both layers into
-/// a standard `Result<T, String>`.
-pub trait ConvexResult {
-    type Value;
-    fn into_result(self) -> Result<Self::Value, String>;
-}
-
-/// Implement `ConvexResult` for a generated return enum with `value: ()`.
-macro_rules! impl_convex_result_unit {
-    ($return_ty:ident) => {
-        impl ConvexResult for convex_backend::$return_ty {
-            type Value = ();
-            fn into_result(self) -> Result<(), String> {
-                match self {
-                    Self::Object(v) if v.ok => Ok(()),
-                    Self::Object(_) => {
-                        Err("mutation returned ok=false without error details".into())
-                    }
-                    Self::Object2(v) => Err(v.error),
-                }
-            }
-        }
-    };
-}
-
-/// Implement `ConvexResult` for a generated return enum with a typed `value`.
-macro_rules! impl_convex_result_typed {
-    ($return_ty:ident, $value_ty:ty) => {
-        impl ConvexResult for convex_backend::$return_ty {
-            type Value = $value_ty;
-            fn into_result(self) -> Result<$value_ty, String> {
-                match self {
-                    Self::Object(v) if v.ok => Ok(v.value),
-                    Self::Object(_) => {
-                        Err("mutation returned ok=false without error details".into())
-                    }
-                    Self::Object2(v) => Err(v.error),
-                }
-            }
-        }
-    };
-}
-
-// Phone auth
-impl_convex_result_unit!(PhoneAuthWorkerCompleteSendCodeReturn);
-impl_convex_result_unit!(PhoneAuthWorkerCompleteVerifyCodeReturn);
-impl_convex_result_unit!(PhoneAuthWorkerCompleteVerifyPasswordReturn);
-
-// Worker task updates
-impl_convex_result_unit!(WorkerTasksWorkerUpdateTaskReturn);
-
-// Worker tasks
-impl_convex_result_unit!(WorkerTasksRunTaskReturn);
-impl_convex_result_unit!(WorkerTasksWorkerCompleteReturn);
-impl_convex_result_unit!(WorkerTasksCancelTaskReturn);
-
-// WorkerOps — task-validated worker mutations
-impl_convex_result_unit!(WorkerOpsUpsertChatReturn);
-impl_convex_result_unit!(WorkerOpsUpsertMessageReturn);
-impl_convex_result_unit!(WorkerOpsMarkMessageDeletedReturn);
-impl_convex_result_unit!(WorkerOpsUpdateSyncProgressReturn);
-impl_convex_result_unit!(WorkerOpsUpdateChatPhotoReturn);
-impl_convex_result_unit!(WorkerOpsCreatePendingMediaReturn);
-impl_convex_result_unit!(WorkerOpsStartMediaDownloadReturn);
-impl_convex_result_unit!(WorkerOpsUpdateMediaProgressReturn);
-impl_convex_result_unit!(WorkerOpsStoreMediaReturn);
-impl_convex_result_unit!(WorkerOpsMarkMediaFailedReturn);
-
-// Clients
-impl_convex_result_typed!(ClientsWorkerRegisterConnectedReturn, String);
-
-/// Extension trait on `Result<T, ConvexError>` where `T: ConvexResult`.
-///
-/// Collapses both the transport-level `ConvexError` and the business-logic
-/// `{ ok: false, error }` into a single `Result<T::Value, WorkerError>`.
+/// This trait collapses both layers into a single `Result<T, WorkerError>`.
 pub trait ConvexResultExt {
     type Value;
-    /// Unwrap both the outer `ConvexError` and inner `ok/error` envelope.
+    /// Unwrap both the outer `ConvexError` and inner `Result<T, E>`.
     fn check(self) -> Result<Self::Value, WorkerError>;
     /// Like `check`, but only logs a warning on error instead of propagating.
     fn warn_on_err(self, context: &str) -> Option<Self::Value>;
 }
 
-impl<T: ConvexResult> ConvexResultExt for Result<T, convex_backend::ConvexError> {
-    type Value = T::Value;
+impl<T, E: std::fmt::Display> ConvexResultExt
+    for Result<Result<T, E>, convex_backend::ConvexError>
+{
+    type Value = T;
 
-    fn check(self) -> Result<T::Value, WorkerError> {
+    fn check(self) -> Result<T, WorkerError> {
         self.map_err(|e| WorkerError::MutationFailed(e.to_string()))?
-            .into_result()
-            .map_err(WorkerError::MutationFailed)
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))
     }
 
-    fn warn_on_err(self, context: &str) -> Option<T::Value> {
+    fn warn_on_err(self, context: &str) -> Option<T> {
         match self.check() {
             Ok(v) => Some(v),
             Err(e) => {
@@ -149,13 +74,15 @@ pub fn map_chat_type(chat_type: Option<&str>) -> WorkerOpsUpsertChatChatType {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub async fn start_download(client: &ConvexApiClient, task_id: &str, telegram_file_id: &str) {
-    client
+    if let Err(e) = client
         .worker_ops_start_media_download(WorkerOpsStartMediaDownloadArgs {
             taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
         })
         .await
-        .warn_on_err("Failed to transition media to downloading");
+    {
+        warn!(error = %e, "Failed to transition media to downloading");
+    }
 }
 
 pub async fn update_download_progress(
@@ -165,7 +92,7 @@ pub async fn update_download_progress(
     bytes_downloaded: f64,
     file_size: Option<f64>,
 ) {
-    client
+    if let Err(e) = client
         .worker_ops_update_media_progress(WorkerOpsUpdateMediaProgressArgs {
             taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
@@ -173,7 +100,9 @@ pub async fn update_download_progress(
             fileSize: file_size,
         })
         .await
-        .warn_on_err("Failed to update download progress");
+    {
+        warn!(error = %e, "Failed to update download progress");
+    }
 }
 
 pub async fn mark_media_failed(
@@ -182,14 +111,16 @@ pub async fn mark_media_failed(
     telegram_file_id: &str,
     error: &str,
 ) {
-    client
+    if let Err(e) = client
         .worker_ops_mark_media_failed(WorkerOpsMarkMediaFailedArgs {
             taskId: task_id.into(),
             telegramFileId: telegram_file_id.into(),
             error: error.into(),
         })
         .await
-        .warn_on_err("Failed to mark media as failed");
+    {
+        warn!(error = %e, "Failed to mark media as failed");
+    }
 }
 
 /// Mark a task as Running (Dispatched → Running). Called at handler start.

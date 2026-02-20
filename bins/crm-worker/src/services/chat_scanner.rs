@@ -182,13 +182,12 @@ pub async fn scan_chat_messages(
                     .map(|s| to_upsert_media_kind(s.kind)),
             })
             .await
-            .check()?;
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
         // Create pending media record + enqueue per-file download task
         if let Some(ref summary) = msg.media_summary
             && let Some(ref media_ext_id) = msg.media_external_id
-        {
-            convex
+            && let Err(e) = convex
                 .worker_ops_create_pending_media(WorkerOpsCreatePendingMediaArgs {
                     taskId: task_id.to_string(),
                     telegramFileId: media_ext_id.clone(),
@@ -205,7 +204,8 @@ pub async fn scan_chat_messages(
                     duration: summary.duration,
                 })
                 .await
-                .warn_on_err("Failed to create pending media record");
+        {
+            warn!(error = %e, "Failed to create pending media record");
         }
 
         msg_count += 1;
@@ -239,7 +239,7 @@ pub async fn scan_chat_messages(
                 lastMessageTimestamp: last_ts,
             })
             .await
-            .check()?;
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
     }
 
     // Mark scan complete with final progress

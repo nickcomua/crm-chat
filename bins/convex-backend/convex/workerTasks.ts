@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import {
 	isQrAuthTerminal,
 	requireAssignedWorker,
@@ -94,7 +95,7 @@ export const getTaskStatus = query({
  */
 export const cancelTask = mutation({
 	args: { taskId: v.id("workerTasks") },
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Not found")),
 	handler: async (ctx, { taskId }) => {
 		const caller = await requireHuman(ctx);
 		const task = await ctx.db.get(taskId);
@@ -134,7 +135,7 @@ export const markDispatched = mutation({
  */
 export const runTask = mutation({
 	args: { taskId: v.id("workerTasks") },
-	returns: result(v.null()),
+	returns: result(v.null(), v.string()),
 	handler: async (ctx, { taskId }) => {
 		const caller = await requireWorker(ctx);
 		const task = await ctx.db.get(taskId);
@@ -159,7 +160,7 @@ export const workerUpdateTask = mutation({
 		taskId: v.id("workerTasks"),
 		task: workerTask,
 	},
-	returns: result(v.null()),
+	returns: result(v.null(), v.string()),
 	handler: async (ctx, { taskId, task: newTask }) => {
 		const caller = await requireWorker(ctx);
 		const existing = await ctx.db.get(taskId);
@@ -281,7 +282,7 @@ export const workerComplete = mutation({
 		taskId: v.id("workerTasks"),
 		task: v.optional(workerTask),
 	},
-	returns: result(v.null()),
+	returns: result(v.null(), v.string()),
 	handler: async (ctx, { taskId, task: finalTask }) => {
 		const caller = await requireWorker(ctx);
 		const row = await ctx.db.get(taskId);
