@@ -85,10 +85,10 @@ export function useQrAuth(): UseQrAuthReturn {
   const startQrAuth = (): void => {
     setTaskId(null);
     startMutation({}).then((r: Result<Id<"workerTasks">>) => {
-      if (r.ok) {
-        setTaskId(r.value);
+      if ("Ok" in r) {
+        setTaskId(r.Ok);
       } else {
-        console.error("[qrAuth.start]", r.error);
+        console.error("[qrAuth.start]", r.Err);
       }
     });
   };
@@ -96,8 +96,8 @@ export function useQrAuth(): UseQrAuthReturn {
   const cancelQrAuth = (): void => {
     if (taskId && progress && !isTerminalStep(progress.step)) {
       cancelMutation({ taskId }).then((r: Result<null>) => {
-        if (!r.ok) {
-          console.error("[qrAuth.cancel]", r.error);
+        if ("Err" in r) {
+          console.error("[qrAuth.cancel]", r.Err);
         }
       });
     }

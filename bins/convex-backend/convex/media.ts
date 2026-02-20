@@ -1,12 +1,12 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import {
 	requireAuth,
 	requireHuman,
 	requireOwner,
 	requireWorker,
 } from "./helpers/auth";
-import { ok, result } from "./helpers/result";
 import { enqueueTask } from "./helpers/tasks";
 import { mediaKind, mediaStatus } from "./schema";
 
@@ -23,7 +23,7 @@ export const generateUploadUrl = mutation({
 /** Reset a failed media record back to pending so the worker retries it. */
 export const retryDownload = mutation({
 	args: { telegramFileId: v.string() },
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { telegramFileId }) => {
 		await requireHuman(ctx);
 
@@ -35,7 +35,7 @@ export const retryDownload = mutation({
 			.unique();
 
 		if (!existing || existing.status !== "Failed") {
-			return ok(null);
+			return null;
 		}
 
 		await ctx.db.patch(existing._id, {
@@ -59,14 +59,14 @@ export const retryDownload = mutation({
 			});
 		}
 
-		return ok(null);
+		return null;
 	},
 });
 
 /** Cancel a pending or downloading media record (human-callable). */
 export const cancelDownload = mutation({
 	args: { telegramFileId: v.string() },
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { telegramFileId }) => {
 		const caller = await requireHuman(ctx);
 
@@ -77,11 +77,11 @@ export const cancelDownload = mutation({
 			)
 			.unique();
 
-		if (!existing) return ok(null);
+		if (!existing) return null;
 		requireOwner(caller.id, existing.userId);
 
 		if (existing.status !== "Pending" && existing.status !== "Downloading") {
-			return ok(null);
+			return null;
 		}
 
 		await ctx.db.patch(existing._id, {
@@ -89,14 +89,14 @@ export const cancelDownload = mutation({
 			bytesDownloaded: undefined,
 			error: undefined,
 		});
-		return ok(null);
+		return null;
 	},
 });
 
 /** Request download for a skipped media record (human-callable). */
 export const requestDownload = mutation({
 	args: { telegramFileId: v.string() },
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { telegramFileId }) => {
 		const caller = await requireHuman(ctx);
 
@@ -107,10 +107,10 @@ export const requestDownload = mutation({
 			)
 			.unique();
 
-		if (!existing) return ok(null);
+		if (!existing) return null;
 		requireOwner(caller.id, existing.userId);
 
-		if (existing.status !== "Skipped") return ok(null);
+		if (existing.status !== "Skipped") return null;
 
 		await ctx.db.patch(existing._id, {
 			status: "Pending" as const,
@@ -131,7 +131,7 @@ export const requestDownload = mutation({
 			});
 		}
 
-		return ok(null);
+		return null;
 	},
 });
 

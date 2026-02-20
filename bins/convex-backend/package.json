@@ -1,9 +1,11 @@
 {
   "name": "crm-chat-convex-backend",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "convex dev",
-    "deploy": "convex deploy"
+    "deploy": "convex deploy",
+    "lint": "eslint convex/"
   },
   "dependencies": {
     "@convex-dev/presence": "^0.3.0",
@@ -11,7 +13,9 @@
     "convex-helpers": "^0.1.112"
   },
   "devDependencies": {
+    "@convex-dev/eslint-plugin": "^1.1.1",
     "@types/node": "^25.2.3",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.56.0"
   }
 }

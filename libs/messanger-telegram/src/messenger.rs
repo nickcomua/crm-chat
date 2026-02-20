@@ -221,9 +221,10 @@ impl TelegramClient {
     /// Get the numeric Telegram user ID for the authenticated client.
     pub async fn get_user_id(&self) -> Result<i64, MessengerError> {
         let client = self.client.lock().await;
-        let me = client.get_me().await.map_err(|e| {
-            MessengerError::Connection(format!("Failed to get user info: {}", e))
-        })?;
+        let me = client
+            .get_me()
+            .await
+            .map_err(|e| MessengerError::Connection(format!("Failed to get user info: {}", e)))?;
         Ok(me.id().bare_id())
     }
 
@@ -461,6 +462,9 @@ impl MessengerClient for TelegramClient {
     #[instrument(skip(self))]
     async fn iter_dialogs(&self) -> Result<DialogStream, MessengerError> {
         info!("Starting dialog iteration");
+        if !self.is_authorized().await? {
+            return Err(MessengerError::Authentication("dont have auth".to_string()));
+        }
         let client_arc = self.client.clone();
         let (sender, receiver) = tokio::sync::mpsc::channel(10);
         let data_stream = tokio_stream_wrappers::wrappers::ReceiverStream::new(receiver);

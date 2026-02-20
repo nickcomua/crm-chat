@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
 import {
   isPhoneAuthTerminal,
@@ -53,6 +54,7 @@ export const active = query({
       .collect();
     return all
       .filter((a) => !isPhoneAuthTerminal(a.step))
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       .map(({ phoneCodeHash, loginCode, password, passwordToken, claimedByWorkerId, ...rest }) => rest);
   },
 });
@@ -77,7 +79,7 @@ export const getForWorker = query({
 /** Start phone-based authentication. Creates a Client and PhoneAuth row. */
 export const start = mutation({
   args: { phone: v.string() },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { phone }) => {
     const caller = await requireHuman(ctx);
     const phoneErr = validatePhone(phone);
@@ -124,7 +126,7 @@ export const start = mutation({
 /** User submits the SMS code. */
 export const submitCode = mutation({
   args: { authId: v.id("phoneAuths"), code: v.string() },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, code }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -151,7 +153,7 @@ export const submitCode = mutation({
 /** User submits 2FA password. */
 export const submitPassword = mutation({
   args: { authId: v.id("phoneAuths"), password: v.string() },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, password }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -178,7 +180,7 @@ export const submitPassword = mutation({
 /** User cancels the phone auth flow. Worker detects via task status + phoneAuth step. */
 export const cancel = mutation({
   args: { authId: v.id("phoneAuths") },
-  returns: result(v.null()),
+  returns: result(v.null(), v.union(v.literal("PhoneAuth not found"), v.literal("Cannot cancel: auth is already in a terminal state"))),
   handler: async (ctx, { authId }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
@@ -231,7 +233,7 @@ export const workerCompleteSendCode = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: sendCodeResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
@@ -299,7 +301,7 @@ export const workerCompleteVerifyCode = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: verifyResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
@@ -378,7 +380,7 @@ export const workerCompleteVerifyPassword = mutation({
       v.object({ type: v.literal("Failed"), error: v.string() }),
     ),
   },
-  returns: result(v.null()),
+  returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: pwResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);

@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { asyncMap } from "convex-helpers";
 import { internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { internalMutation, mutation } from "./functions";
 import {
 	requireHuman,
 	requireOwner,
@@ -52,7 +53,7 @@ export const upsert = mutation({
 		pinnedName: v.optional(v.string()),
 		lastMessageTimestamp: v.number(),
 	},
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		const caller = await requireHuman(ctx);
 		requireOwner(caller.id, args.userId);
@@ -75,14 +76,14 @@ export const upsert = mutation({
 				scanEnabled: args.isPinned,
 			});
 		}
-		return ok(null);
+		return null;
 	},
 });
 
 /** Delete a chat by its chatId. Human-only. */
 export const deleteChat = mutation({
 	args: { chatId: v.string() },
-	returns: result(v.null()),
+	returns: v.null(),
 	handler: async (ctx, { chatId }) => {
 		const caller = await requireHuman(ctx);
 
@@ -95,7 +96,7 @@ export const deleteChat = mutation({
 			requireOwner(caller.id, existing.userId);
 			await ctx.db.delete(existing._id);
 		}
-		return ok(null);
+		return null;
 	},
 });
 
@@ -117,7 +118,7 @@ export const listByClient = query({
 /** Update a chat's custom display name. Human-only. */
 export const updatePinnedName = mutation({
 	args: { chatId: v.string(), pinnedName: v.optional(v.string()) },
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Chat not found")),
 	handler: async (ctx, { chatId, pinnedName }) => {
 		const caller = await requireHuman(ctx);
 		const chat = await ctx.db
@@ -136,7 +137,7 @@ export const updatePinnedName = mutation({
  *  Turning ON triggers a fresh rescan since fullScanned is already false. */
 export const updateScanEnabled = mutation({
 	args: { chatId: v.string(), scanEnabled: v.boolean() },
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Chat not found")),
 	handler: async (ctx, { chatId, scanEnabled }) => {
 		const caller = await requireHuman(ctx);
 		const chat = await ctx.db
@@ -236,7 +237,7 @@ export const scanEnabledChatIds = query({
 /** Update per-chat media download settings. Human-only. */
 export const updateMediaSettings = mutation({
 	args: { chatId: v.string(), mediaSettings: mediaSettingsValidator },
-	returns: result(v.null()),
+	returns: result(v.null(), v.literal("Chat not found")),
 	handler: async (ctx, { chatId, mediaSettings }) => {
 		const caller = await requireHuman(ctx);
 		const chat = await ctx.db
@@ -254,7 +255,7 @@ export const updateMediaSettings = mutation({
  *  Resets fullScanned so the worker picks it up on the next refresh cycle. */
 export const rescan = mutation({
 	args: { chatId: v.string() },
-	returns: result(v.null()),
+	returns: result(v.null(), v.union(v.literal("Chat not found"), v.literal("Chat scanning is not enabled"))),
 	handler: async (ctx, { chatId }) => {
 		const caller = await requireHuman(ctx);
 		const chat = await ctx.db

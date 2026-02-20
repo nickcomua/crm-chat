@@ -1,4 +1,5 @@
-import { mutation, query } from "./_generated/server";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import { v } from "convex/values";
 import { notificationDoc } from "./schema";
 import { requireHuman, requireOwner } from "./helpers/auth";
@@ -22,7 +23,7 @@ export const list = query({
 /** Dismiss a notification. Only the owner can dismiss. */
 export const dismiss = mutation({
   args: { notificationId: v.id("notifications") },
-  returns: result(v.null()),
+  returns: result(v.null(), v.union(v.literal("Notification not found"), v.literal("Notification is already dismissed"))),
   handler: async (ctx, { notificationId }) => {
     const caller = await requireHuman(ctx);
     const notif = await ctx.db.get(notificationId);
