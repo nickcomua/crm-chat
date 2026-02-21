@@ -86,11 +86,13 @@ export const start = mutation({
     if (phoneErr) return err(phoneErr);
     const now = Date.now();
 
+    const telegramId = `telegram:${phone}`;
+
     // Check if client already exists for this user+phone
     const existing = await ctx.db
       .query("clients")
       .withIndex("by_userId_telegramId", (q) =>
-        q.eq("userId", caller.id).eq("telegramId", phone),
+        q.eq("userId", caller.id).eq("telegramId", telegramId),
       )
       .unique();
 
@@ -102,7 +104,7 @@ export const start = mutation({
     const clientId = await ctx.db.insert("clients", {
       userId: caller.id,
       kind: "Telegram",
-      telegramId: phone,
+      telegramId,
       scanningChatIds: [],
       status: { type: "Authenticating" },
     });
@@ -316,11 +318,21 @@ export const workerCompleteVerifyCode = mutation({
 
     switch (verifyResult.type) {
       case "Success": {
-        await ctx.db.patch(auth.clientId, { status: { type: "Connected" } });
+        await ctx.db.patch(auth.clientId, {
+          status: { type: "Connected" },
+          externalId: verifyResult.userId.toString(),
+        });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
         // Enqueue client services
         const client = await ctx.db.get(auth.clientId);
-        if (client) await enqueueClientStart(ctx, client);
+        if (client) {
+          await enqueueTask(ctx, {
+            type: "UpdateListener",
+            clientId: client._id,
+            userId: client.userId,
+            telegramId: client.telegramId,
+          });
+        }
         break;
       }
 
@@ -395,11 +407,21 @@ export const workerCompleteVerifyPassword = mutation({
 
     switch (pwResult.type) {
       case "Success": {
-        await ctx.db.patch(auth.clientId, { status: { type: "Connected" } });
+        await ctx.db.patch(auth.clientId, {
+          status: { type: "Connected" },
+          externalId: pwResult.userId.toString(),
+        });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
         // Enqueue client services
         const client = await ctx.db.get(auth.clientId);
-        if (client) await enqueueClientStart(ctx, client);
+        if (client) {
+          await enqueueTask(ctx, {
+            type: "UpdateListener",
+            clientId: client._id,
+            userId: client.userId,
+            telegramId: client.telegramId,
+          });
+        }
         break;
       }
 

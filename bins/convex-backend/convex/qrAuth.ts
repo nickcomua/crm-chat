@@ -76,7 +76,17 @@ export async function completeQrAuth(
 
 	if (task.step === "Authorized" || task.step === "AlreadyAuthorized") {
 		if (!task.telegramUserId) throw new Error("QrAuth completion requires telegramUserId");
-		const telegramId = `telegram:${task.telegramUserId}`;
+
+		const numericId = task.telegramUserId.toString();
+		// Normalize phone: Telegram API returns without +, we always store with +
+		const phone = task.phoneNumber;
+		const normalizedPhone = phone
+			? phone.startsWith("+") ? phone : `+${phone}`
+			: null;
+		// Canonical telegramId: prefer phone, fall back to numeric ID
+		const telegramId = normalizedPhone
+			? `telegram:${normalizedPhone}`
+			: `telegram:${numericId}`;
 
 		const existing = await ctx.db
 			.query("clients")
@@ -89,7 +99,8 @@ export async function completeQrAuth(
 		if (existing) {
 			await ctx.db.patch(existing._id, {
 				status: { type: "Connected" },
-				...(task.phoneNumber ? { phoneNumber: task.phoneNumber } : {}),
+				externalId: numericId,
+				...(normalizedPhone ? { phoneNumber: normalizedPhone } : {}),
 			});
 			clientId = existing._id;
 		} else {
@@ -97,7 +108,8 @@ export async function completeQrAuth(
 				userId: ownerUserId,
 				kind: "Telegram",
 				telegramId,
-				phoneNumber: task.phoneNumber,
+				externalId: numericId,
+				phoneNumber: normalizedPhone ?? undefined,
 				scanningChatIds: [],
 				status: { type: "Connected" },
 			});

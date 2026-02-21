@@ -18,8 +18,8 @@ use restate_sdk::serde::Json;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 
@@ -44,7 +44,7 @@ pub trait ChatScanner {
 
 pub struct ChatScannerImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl ChatScanner for ChatScannerImpl {
@@ -79,8 +79,8 @@ impl ChatScanner for ChatScannerImpl {
             .ok_or_else(|| anyhow::anyhow!("Client {} not found", clientId))?;
 
         let tg_client = self
-            .pool
-            .get_or_create(&userId, &client.telegram_id)
+            .sessions
+            .get_for_telegram_id(&userId, &client.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 

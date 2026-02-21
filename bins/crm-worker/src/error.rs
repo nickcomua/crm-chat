@@ -19,7 +19,7 @@ pub enum WorkerError {
 
     /// Session not found on disk.
     #[error("session not found: {0}")]
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     SessionNotFound(String),
 }
 

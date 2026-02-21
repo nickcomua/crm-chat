@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::ops::cancel_watcher::spawn_cancel_watcher;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{run_task, worker_complete, ConvexResultExt as _};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ pub trait PhoneAuthWorkflow {
 
 pub struct PhoneAuthWorkflowImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl PhoneAuthWorkflow for PhoneAuthWorkflowImpl {
@@ -100,8 +100,8 @@ impl PhoneAuthWorkflowImpl {
 
         // Step 2: Get or create Telegram client
         let tg_client = self
-            .pool
-            .get_or_create(&auth.user_id, &auth.phone)
+            .sessions
+            .get_or_create_for_phone(&auth.user_id, &auth.phone)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
