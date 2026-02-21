@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::ops::cancel_watcher::spawn_cancel_watcher;
+use crate::ops::convex::{ConvexResultExt, run_task};
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
-use crate::ops::convex::{run_task, ConvexResultExt as _};
 
 // ────────────────────────────────────────────────────────────────────────────
 // Input / result types
@@ -70,10 +70,7 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
 }
 
 impl QrAuthWorkflowImpl {
-    async fn run_inner(
-        &self,
-        req: QrAuthRunRequest,
-    ) -> Result<Json<QrAuthResult>, HandlerError> {
+    async fn run_inner(&self, req: QrAuthRunRequest) -> Result<Json<QrAuthResult>, HandlerError> {
         // Step 1: Mark task as Running
         run_task(&self.convex, &req.task_id).await;
 
