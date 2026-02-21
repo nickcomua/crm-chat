@@ -22,8 +22,8 @@ use restate_sdk::serde::Json;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::cancel_watcher::spawn_cancel_watcher;
 use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 use crate::ops::media::download_and_upload_media;
@@ -38,7 +38,7 @@ pub trait UpdateListener {
 
 pub struct UpdateListenerImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl UpdateListener for UpdateListenerImpl {
@@ -71,8 +71,8 @@ impl UpdateListener for UpdateListenerImpl {
         info!(client_id = %fields.client_id, "UpdateListener: starting");
 
         let tg_client = self
-            .pool
-            .get_or_create(&fields.user_id, &fields.telegram_id)
+            .sessions
+            .get_for_telegram_id(&fields.user_id, &fields.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 

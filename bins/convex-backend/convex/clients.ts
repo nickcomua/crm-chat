@@ -77,11 +77,12 @@ export const workerRegisterConnected = mutation({
 		telegramId: v.string(),
 		kind: clientKind,
 		phoneNumber: v.optional(v.string()),
+		externalId: v.optional(v.string()),
 	},
 	returns: v.id("clients"),
 	handler: async (ctx, args) => {
 		await requireWorker(ctx);
-		const { phoneNumber, ...lookupArgs } = args;
+		const { phoneNumber, externalId, ...lookupArgs } = args;
 		const existing = await ctx.db
 			.query("clients")
 			.withIndex("by_userId_telegramId", (q) =>
@@ -94,6 +95,7 @@ export const workerRegisterConnected = mutation({
 			await ctx.db.patch(existing._id, {
 				status: { type: "Connected" },
 				...(phoneNumber ? { phoneNumber } : {}),
+				...(externalId ? { externalId } : {}),
 			});
 			await enqueueTask(ctx, {
 				type: "UpdateListener",
@@ -106,6 +108,7 @@ export const workerRegisterConnected = mutation({
 		const id = await ctx.db.insert("clients", {
 			...lookupArgs,
 			phoneNumber,
+			externalId,
 			scanningChatIds: [],
 			status: { type: "Connected" },
 		});

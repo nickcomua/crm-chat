@@ -7,10 +7,10 @@
 //! noise.
 
 mod auth;
-mod client_pool;
 mod config;
 mod error;
 mod ops;
+pub mod session_manager;
 mod services;
 
 use std::env;
@@ -23,8 +23,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-use crate::client_pool::ClientPool;
 use crate::config::WorkerConfig;
+use crate::session_manager::TelegramSessionManager;
 use crate::services::chat_scanner::{ChatScanner, ChatScannerImpl};
 use crate::services::dialog_sync::{DialogSync, DialogSyncImpl};
 use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
@@ -71,8 +71,11 @@ async fn main() -> anyhow::Result<()> {
 
     let config = WorkerConfig::from_env()?;
 
-    // Shared Telegram client pool — process-local cache of TCP connections
-    let pool = Arc::new(ClientPool::new(config.api_id, config.api_hash.clone()));
+    // Unified session manager — handles session files, client caching, discovery
+    let sessions = Arc::new(TelegramSessionManager::new(
+        config.api_id,
+        config.api_hash.clone(),
+    ));
 
     // Mint JWT and create Convex client for Restate handlers
     let token = auth::mint_worker_jwt(&config.private_key, &config.robot_id, &config.robot_kid)?;
@@ -86,49 +89,49 @@ async fn main() -> anyhow::Result<()> {
         .bind(
             PhoneAuthWorkflowImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             QrAuthWorkflowImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             DialogSyncImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             ProfilePhotoSyncImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             ChatScannerImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             MediaDownloaderImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
         .bind(
             UpdateListenerImpl {
                 convex: convex_client.clone(),
-                pool: pool.clone(),
+                sessions: sessions.clone(),
             }
             .serve(),
         )
@@ -157,11 +160,13 @@ async fn main() -> anyhow::Result<()> {
     // leaf services via HTTP ingress, zero journal entries
     let orch_convex = convex_client.clone();
     let orch_config = config.clone();
+    let orch_sessions = sessions.clone();
     let orch_ingress = ingress_url.clone();
     let orch_cancel = CancellationToken::new();
     let orchestrator_handle = tokio::spawn(async move {
-        if let Err(e) = run_orchestrator(&orch_convex, &orch_config, &orch_ingress, &orch_cancel)
-            .await
+        if let Err(e) =
+            run_orchestrator(&orch_convex, &orch_config, &orch_sessions, &orch_ingress, &orch_cancel)
+                .await
         {
             tracing::error!(error = %e, "TaskOrchestrator exited with error");
         }

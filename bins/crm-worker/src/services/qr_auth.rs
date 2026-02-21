@@ -22,9 +22,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::client_pool::ClientPool;
-use crate::config;
 use crate::ops::cancel_watcher::spawn_cancel_watcher;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{run_task, ConvexResultExt as _};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -54,7 +53,7 @@ pub trait QrAuthWorkflow {
 
 pub struct QrAuthWorkflowImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl QrAuthWorkflow for QrAuthWorkflowImpl {
@@ -82,10 +81,10 @@ impl QrAuthWorkflowImpl {
         let cancel_token = CancellationToken::new();
         let _watcher = spawn_cancel_watcher(&self.convex, &req.task_id, cancel_token.clone());
 
-        // Step 2: Get or create Telegram client (using task_id as session identifier)
+        // Step 2: Get or create Telegram client (temp session for QR auth)
         let tg_client = self
-            .pool
-            .get_or_create(&req.user_id, &req.task_id)
+            .sessions
+            .get_or_create_for_qr(&req.user_id, &req.task_id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
@@ -94,7 +93,12 @@ impl QrAuthWorkflowImpl {
             info!(task_id = %req.task_id, "Client already authorized");
             let user_id = tg_client.get_user_id().await.unwrap_or(0);
             let phone_number = tg_client.get_phone_number().await;
-            config::copy_session_for_scanning(&req.task_id, &req.user_id, user_id);
+            self.sessions.promote_qr_session(
+                &req.user_id,
+                &req.task_id,
+                phone_number.as_deref(),
+                user_id as i64,
+            );
 
             self.convex
                 .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
@@ -112,7 +116,7 @@ impl QrAuthWorkflowImpl {
                 .check()
                 .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
-            self.pool.remove(&req.user_id, &req.task_id);
+            self.sessions.remove_temp(&req.user_id, &req.task_id);
             return Ok(Json(QrAuthResult {
                 success: true,
                 error: None,
@@ -122,8 +126,8 @@ impl QrAuthWorkflowImpl {
         // Step 4: Run QR login polling loop
         let result = self.qr_polling_loop(&req, &cancel_token).await;
 
-        // Clean up client from pool regardless of outcome
-        self.pool.remove(&req.user_id, &req.task_id);
+        // Clean up temp session from cache regardless of outcome
+        self.sessions.remove_temp(&req.user_id, &req.task_id);
 
         result
     }
@@ -138,8 +142,8 @@ impl QrAuthWorkflowImpl {
         cancel_token: &CancellationToken,
     ) -> Result<Json<QrAuthResult>, HandlerError> {
         let tg_client = self
-            .pool
-            .get_or_create(&req.user_id, &req.task_id)
+            .sessions
+            .get_or_create_for_qr(&req.user_id, &req.task_id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
@@ -261,9 +265,10 @@ impl QrAuthWorkflowImpl {
                             QrLoginToken::Success { user_id } => {
                                 info!(task_id = %req.task_id, user_id, "QR login successful");
                                 let phone_number = tg_client.get_phone_number().await;
-                                config::copy_session_for_scanning(
-                                    &req.task_id,
+                                self.sessions.promote_qr_session(
                                     &req.user_id,
+                                    &req.task_id,
+                                    phone_number.as_deref(),
                                     user_id,
                                 );
 

@@ -160,6 +160,7 @@ export const clientDoc = v.object({
 	userId: v.string(),
 	kind: clientKind,
 	telegramId: v.string(),
+	externalId: v.optional(v.string()),
 	phoneNumber: v.optional(v.string()),
 	scanningChatIds: v.array(v.string()),
 	status: clientStatus,
@@ -304,7 +305,8 @@ export const workerTaskDoc = v.object({
 export default defineSchema({
 	clients: defineTable(clientDoc.omit("_id", "_creationTime"))
 		.index("by_userId", ["userId"])
-		.index("by_userId_telegramId", ["userId", "telegramId"]),
+		.index("by_userId_telegramId", ["userId", "telegramId"])
+		.index("by_userId_externalId", ["userId", "externalId"]),
 
 	chats: defineTable(chatDoc.omit("_id", "_creationTime"))
 		.index("by_chatId", ["chatId"])

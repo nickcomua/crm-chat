@@ -22,8 +22,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::auth::mint_worker_jwt;
-use crate::config::{WorkerConfig, discover_session_files};
+use crate::config::WorkerConfig;
 use crate::error::WorkerError;
+use crate::session_manager::{SessionManager, TelegramSessionManager};
 
 /// Fire-and-forget dispatch to a Restate service handler via HTTP ingress.
 ///
@@ -67,11 +68,15 @@ async fn restate_send_raw(
 pub async fn run_orchestrator(
     convex: &ConvexApiClient,
     config: &WorkerConfig,
+    sessions: &TelegramSessionManager,
     ingress_url: &str,
     token: &CancellationToken,
 ) -> Result<(), anyhow::Error> {
+    info!("TaskOrchestrator: cleaning up orphaned temp sessions");
+    sessions.cleanup_temp_sessions();
+
     info!("TaskOrchestrator: discovering sessions");
-    discover_and_register_sessions(convex, config).await;
+    discover_and_register_sessions(convex, config, sessions).await;
 
     // Reset stale Dispatched/Running tasks from a previous run so they get re-dispatched.
     // Restate deduplicates by virtual-object key, so double-dispatch is harmless.
@@ -244,20 +249,24 @@ fn task_payload(row: &WorkerTasksTable) -> String {
 // Session discovery (runs once at startup)
 // ────────────────────────────────────────────────────────────────────────────
 
-async fn discover_and_register_sessions(client: &ConvexApiClient, config: &WorkerConfig) {
-    let sessions = discover_session_files();
-    if sessions.is_empty() {
+async fn discover_and_register_sessions(
+    client: &ConvexApiClient,
+    config: &WorkerConfig,
+    sessions: &TelegramSessionManager,
+) {
+    let discovered = sessions.discover_sessions();
+    if discovered.is_empty() {
         info!("No existing session files found");
         return;
     }
 
-    info!(count = sessions.len(), "Found session files, checking authorization");
+    info!(count = discovered.len(), "Found session files, checking authorization");
 
     let mut registered = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
 
-    for (owner_id, session_path) in &sessions {
+    for (owner_id, session_path) in &discovered {
         let path_str = session_path.to_string_lossy().to_string();
 
         let tg_client =
@@ -293,12 +302,14 @@ async fn discover_and_register_sessions(client: &ConvexApiClient, config: &Worke
             }
         };
 
+        let numeric_id = tg_client.get_numeric_external_id().await.ok();
         let phone_number = tg_client.get_phone_number().await;
 
         match client
             .clients_worker_register_connected(ClientsWorkerRegisterConnectedArgs {
                 userId: owner_id.clone(),
                 telegramId: external_id.clone(),
+                externalId: numeric_id,
                 kind: "Telegram".to_string(),
                 phoneNumber: phone_number,
             })

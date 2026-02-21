@@ -11,10 +11,10 @@ use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::ops::convex::{self as cx, run_task, worker_complete, TaskPayload};
 use crate::ops::media::download_and_upload;
 use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 #[restate_sdk::object]
 pub trait MediaDownloader {
@@ -23,7 +23,7 @@ pub trait MediaDownloader {
 
 pub struct MediaDownloaderImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl MediaDownloader for MediaDownloaderImpl {
@@ -58,8 +58,8 @@ impl MediaDownloader for MediaDownloaderImpl {
         );
 
         let tg_client = self
-            .pool
-            .get_or_create(&userId, &telegramId)
+            .sessions
+            .get_for_telegram_id(&userId, &telegramId)
             .await
             .map_err(anyhow::Error::from)?;
 
