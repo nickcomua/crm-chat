@@ -12,10 +12,10 @@ use messanger_interface::MessengerClient;
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
@@ -33,7 +33,7 @@ pub trait DialogSync {
 
 pub struct DialogSyncImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl DialogSync for DialogSyncImpl {
@@ -62,8 +62,8 @@ impl DialogSync for DialogSyncImpl {
         };
 
         let tg_client = self
-            .pool
-            .get_or_create(&fields.user_id, &fields.telegram_id)
+            .sessions
+            .get_for_telegram_id(&fields.user_id, &fields.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 

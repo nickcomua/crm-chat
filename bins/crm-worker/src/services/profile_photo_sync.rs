@@ -14,8 +14,8 @@ use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use tracing::{debug, info, warn};
 
-use crate::client_pool::ClientPool;
 use crate::error::WorkerError;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 
 #[restate_sdk::object]
@@ -25,7 +25,7 @@ pub trait ProfilePhotoSync {
 
 pub struct ProfilePhotoSyncImpl {
     pub convex: ConvexApiClient,
-    pub pool: Arc<ClientPool>,
+    pub sessions: Arc<TelegramSessionManager>,
 }
 
 impl ProfilePhotoSync for ProfilePhotoSyncImpl {
@@ -50,8 +50,8 @@ impl ProfilePhotoSync for ProfilePhotoSyncImpl {
         info!(client_id = %clientId, "ProfilePhotoSync: starting");
 
         let tg_client = self
-            .pool
-            .get_or_create(&userId, &telegramId)
+            .sessions
+            .get_for_telegram_id(&userId, &telegramId)
             .await
             .map_err(anyhow::Error::from)?;
 
