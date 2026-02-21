@@ -1,24 +1,17 @@
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { api, type Id, type Result } from "@/lib/convex";
+import { api, type Doc, type Id } from "@/lib/convex";
 
-type QrAuthStep =
-  | "Pending"
-  | "Generating"
-  | "Token"
-  | "Authorized"
-  | "AlreadyAuthorized"
-  | "Failed"
-  | "Cancelled";
+type QrAuthTask = Extract<Doc<"workerTasks">["task"], { type: "QrAuth" }>;
 
 export interface QrAuthProgress {
-  step: QrAuthStep;
-  qrUrl?: string;
-  qrExpires?: number;
-  error?: string;
+  step: QrAuthTask["step"];
+  qrUrl: string | undefined;
+  qrExpires: number | undefined;
+  error: string | undefined;
 }
 
-function isTerminalStep(step: QrAuthStep): boolean {
+function isTerminalStep(step: QrAuthTask["step"]): boolean {
   return (
     step === "Authorized" ||
     step === "AlreadyAuthorized" ||
@@ -43,20 +36,16 @@ interface UseQrAuthReturn {
  * Returns null if the task is not a QrAuth task.
  */
 function extractProgress(
-  task: Record<string, unknown> | null
+  task: Doc<"workerTasks"> | null | undefined
 ): QrAuthProgress | null {
-  if (!task) {
-    return null;
-  }
-  const inner = task.task as Record<string, unknown> | undefined;
-  if (!inner || inner.type !== "QrAuth") {
+  if (!task || task.task.type !== "QrAuth") {
     return null;
   }
   return {
-    step: inner.step as QrAuthStep,
-    qrUrl: inner.qrUrl as string | undefined,
-    qrExpires: inner.qrExpires as number | undefined,
-    error: inner.error as string | undefined,
+    step: task.task.step,
+    qrUrl: task.task.qrUrl,
+    qrExpires: task.task.qrExpires,
+    error: task.task.error,
   };
 }
 
@@ -74,9 +63,7 @@ export function useQrAuth(): UseQrAuthReturn {
     taskId ? { taskId } : "skip"
   );
 
-  const progress = extractProgress(
-    (queryResult as Record<string, unknown> | null | undefined) ?? null
-  );
+  const progress = extractProgress(queryResult);
 
   // isDone = we started a task (taskId set) AND the query returned null
   // (not undefined/loading, but explicitly null = task deleted)
@@ -84,18 +71,15 @@ export function useQrAuth(): UseQrAuthReturn {
 
   const startQrAuth = (): void => {
     setTaskId(null);
-    startMutation({}).then((r: Result<Id<"workerTasks">>) => {
-      if ("Ok" in r) {
-        setTaskId(r.Ok);
-      } else {
-        console.error("[qrAuth.start]", r.Err);
-      }
-    });
+    startMutation({}).then(
+      (id) => setTaskId(id),
+      (error) => console.error("[qrAuth.start]", error)
+    );
   };
 
   const cancelQrAuth = (): void => {
     if (taskId && progress && !isTerminalStep(progress.step)) {
-      cancelMutation({ taskId }).then((r: Result<null>) => {
+      cancelMutation({ taskId }).then((r) => {
         if ("Err" in r) {
           console.error("[qrAuth.cancel]", r.Err);
         }
@@ -107,7 +91,10 @@ export function useQrAuth(): UseQrAuthReturn {
   // Presence cron is the safety net if this doesn't fire.
   const convex = useConvex();
   const taskIdRef = useRef(taskId);
-  taskIdRef.current = taskId;
+
+  useEffect(() => {
+    taskIdRef.current = taskId;
+  }, [taskId]);
 
   useEffect(() => {
     const handleBeforeUnload = (): void => {

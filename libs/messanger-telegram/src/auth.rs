@@ -4,6 +4,7 @@
 //! and implements phone-based and QR code login flows.
 
 use grammers_client::{client::PasswordToken, SignInError};
+use grammers_session::Session as _;
 use messanger_interface::MessengerError;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -540,6 +541,12 @@ impl TelegramClient {
                         match import_result {
                             tl::enums::auth::LoginToken::Success(success) => {
                                 info!("QR login successful after DC migration");
+
+                                // invoke_in_dc() saved DC4's auth key but left home_dc
+                                // pointing at DC1. Redirect all future invoke() calls to
+                                // the DC where we're actually authorized.
+                                self.session.set_home_dc_id(migrate.dc_id);
+
                                 match success.authorization {
                                     tl::enums::auth::Authorization::Authorization(auth) => {
                                         let user_id = match auth.user {

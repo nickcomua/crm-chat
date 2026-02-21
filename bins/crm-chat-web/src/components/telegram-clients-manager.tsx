@@ -195,9 +195,7 @@ function ClientCard({
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
         <div className="space-y-1">
           <CardTitle className="font-medium text-sm">
-            {client.phoneNumber
-              ? `+${client.phoneNumber}`
-              : client.telegramId || `Client ${client._id.slice(0, 8)}`}
+            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </CardTitle>
           <CardDescription className="text-xs">
             {client.scanningChatIds.length} active chat
