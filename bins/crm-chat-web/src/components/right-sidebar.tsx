@@ -6,8 +6,8 @@ import { NotificationsPanel } from "./notifications-panel";
 import { Button } from "./ui/button";
 
 interface NotificationsBellPanelProps {
-  open: boolean;
   onOpenChange: (open: boolean) => void;
+  open: boolean;
 }
 
 export function NotificationsBellPanel({

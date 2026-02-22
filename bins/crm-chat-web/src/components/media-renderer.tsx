@@ -18,23 +18,23 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
 type MediaStatus = "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
 
 export interface MediaInfo {
-  telegramFileId: string;
-  messageId: string;
-  kind: MediaKind;
-  status: MediaStatus;
-  url?: string;
-  mimeType?: string;
+  bytesDownloaded?: number;
+  duration?: number;
   fileName?: string;
   fileSize?: number;
-  bytesDownloaded?: number;
-  width?: number;
   height?: number;
-  duration?: number;
+  kind: MediaKind;
+  messageId: string;
+  mimeType?: string;
+  status: MediaStatus;
+  telegramFileId: string;
+  url?: string;
+  width?: number;
 }
 
 interface MediaRendererProps {
-  media: MediaInfo;
   isOutgoing: boolean;
+  media: MediaInfo;
 }
 
 function formatFileSize(bytes: number): string {

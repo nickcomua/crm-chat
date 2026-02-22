@@ -14,8 +14,8 @@ interface Client {
 }
 
 interface ChatListProps {
-  selectedChatId: string | null;
   onSelectChat: (chatId: string) => void;
+  selectedChatId: string | null;
 }
 
 function formatTimestamp(ts: number): string {

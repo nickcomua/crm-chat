@@ -5,10 +5,10 @@ import { api, type Doc, type Id } from "@/lib/convex";
 type QrAuthTask = Extract<Doc<"workerTasks">["task"], { type: "QrAuth" }>;
 
 export interface QrAuthProgress {
-  step: QrAuthTask["step"];
-  qrUrl: string | undefined;
-  qrExpires: number | undefined;
   error: string | undefined;
+  qrExpires: number | undefined;
+  qrUrl: string | undefined;
+  step: QrAuthTask["step"];
 }
 
 function isTerminalStep(step: QrAuthTask["step"]): boolean {
@@ -21,14 +21,14 @@ function isTerminalStep(step: QrAuthTask["step"]): boolean {
 }
 
 interface UseQrAuthReturn {
-  /** Current progress, or null if task doesn't exist / was deleted */
-  progress: QrAuthProgress | null;
-  /** True when the task existed but was deleted (auth flow finished) */
-  isDone: boolean;
-  /** Start a new QR auth session */
-  startQrAuth: () => void;
   /** Cancel the active QR auth session */
   cancelQrAuth: () => void;
+  /** True when the task existed but was deleted (auth flow finished) */
+  isDone: boolean;
+  /** Current progress, or null if task doesn't exist / was deleted */
+  progress: QrAuthProgress | null;
+  /** Start a new QR auth session */
+  startQrAuth: () => void;
 }
 
 /**

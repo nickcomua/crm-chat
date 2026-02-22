@@ -67,14 +67,14 @@ function getClientDisplayName(
 
 interface MessageDoc {
   _id: string;
-  messageId: string;
-  text?: string;
-  outgoing: boolean;
+  chatId: string;
   deleted: boolean;
-  timestamp: number;
   mediaExternalId?: string;
   mediaKind?: string;
-  chatId: string;
+  messageId: string;
+  outgoing: boolean;
+  text?: string;
+  timestamp: number;
 }
 
 function shouldShowDateHeader(

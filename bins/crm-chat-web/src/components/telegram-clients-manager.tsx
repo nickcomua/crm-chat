@@ -22,17 +22,17 @@ import {
 } from "./ui/dialog";
 
 interface ClientStatus {
-  type: "Authenticating" | "Connected" | "Error";
   message?: string;
+  type: "Authenticating" | "Connected" | "Error";
 }
 
 interface ClientDoc {
   _id: Id<"clients">;
-  kind: string;
-  telegramId: string;
   externalId?: string;
+  kind: string;
   scanningChatIds: string[];
   status: ClientStatus;
+  telegramId: string;
 }
 
 function isClientConnected(client: ClientDoc): boolean {

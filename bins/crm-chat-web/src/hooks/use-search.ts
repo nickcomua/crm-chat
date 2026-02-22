@@ -8,23 +8,23 @@ export type SearchResponse = components["schemas"]["SearchResponse"];
 
 /** Message document source fields returned from Elasticsearch */
 export interface MessageSource {
-  id?: string;
-  external_id?: string;
   chat_id?: string;
   client_id?: number;
-  sender_id?: string;
   content?: string | null;
-  out?: boolean;
   created_at?: number;
+  external_id?: string;
+  id?: string;
+  out?: boolean;
+  sender_id?: string;
 }
 
 interface UseSearchOptions {
+  enabled?: boolean;
+  from?: number;
   q: string;
   scope?: SearchScope;
   semantic?: boolean;
   size?: number;
-  from?: number;
-  enabled?: boolean;
 }
 
 function getStoredToken(): string | null {
