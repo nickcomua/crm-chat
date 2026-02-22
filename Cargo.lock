@@ -270,9 +270,6 @@ name = "bitflags"
 version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bitmaps"
@@ -395,9 +392,6 @@ name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
-dependencies = [
- "allocator-api2",
-]
 
 [[package]]
 name = "bytes"
@@ -572,6 +566,7 @@ dependencies = [
 [[package]]
 name = "convex-typegen"
 version = "0.2.0"
+source = "git+https://github.com/nickcomua/convex-typegen.git#01e914591d36999008ea2b394f49dd01e1536755"
 dependencies = [
  "convex",
  "flate2",
@@ -1533,11 +1528,10 @@ dependencies = [
 name = "hack"
 version = "0.1.0"
 dependencies = [
- "allocator-api2",
  "axum",
  "axum-core",
  "bitflags",
- "bumpalo",
+ "cc",
  "deranged",
  "digest 0.10.7",
  "either",
@@ -1547,10 +1541,13 @@ dependencies = [
  "futures-sink",
  "futures-task",
  "futures-util",
+ "generic-array",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.1",
+ "hashbrown 0.14.5",
  "hashbrown 0.16.1",
+ "hmac",
  "hyper",
  "hyper-rustls",
  "hyper-util",
@@ -1561,25 +1558,28 @@ dependencies = [
  "native-tls",
  "num-bigint",
  "num-integer",
+ "num-iter",
  "num-traits",
  "openssl",
  "openssl-sys",
  "percent-encoding",
  "rand 0.8.5",
- "rand_core 0.6.4",
  "regex",
  "regex-automata",
  "regex-syntax",
  "reqwest 0.12.28",
  "ring",
+ "rustix",
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",
  "serde",
  "serde_core",
  "serde_json",
+ "sha2 0.10.9",
  "simd-adler32",
  "smallvec",
+ "subtle",
  "syn",
  "sync_wrapper",
  "thiserror 2.0.18",
@@ -1593,7 +1593,9 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-core",
+ "typenum",
  "url",
+ "zeroize",
 ]
 
 [[package]]
