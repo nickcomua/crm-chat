@@ -18,6 +18,11 @@
       flake = false;
     };
 
+    bun2nix = {
+      url = "github:nix-community/bun2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Swagger UI fetched below via pkgs.fetchurl to preserve zip format
 
     # sccache = {
@@ -53,6 +58,7 @@
     flake-utils,
     fenix,
     advisory-db,
+    bun2nix,
     # sccache,
     crm-chat-web-app,
     ...
@@ -61,6 +67,7 @@
       system: let
         pkgs = import nixpkgs {
           inherit system;
+          overlays = [ bun2nix.overlays.default ];
         #   config.allowUnfree = true;
         #   # overlays = [ sccache.overlays.default ];
         };
@@ -93,12 +100,38 @@
         ];
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        # Include standard Cargo sources plus .ts files needed by convex-backend build.rs
+
+        # Pre-fetch convex-backend node_modules (needed by convex-typegen build.rs
+        # to resolve npm imports like convex-helpers when parsing TypeScript)
+        convexBackendNodeModules = pkgs.stdenv.mkDerivation {
+          pname = "convex-backend-node-modules";
+          version = "0.0.0";
+          src = pkgs.runCommand "convex-backend-pkg-src" {} ''
+            mkdir -p $out
+            cp ${./bins/convex-backend/package.json} $out/package.json
+            cp ${./bins/convex-backend/bun.lock} $out/bun.lock
+          '';
+          nativeBuildInputs = [ pkgs.bun2nix.hook ];
+          bunDeps = pkgs.bun2nix.fetchBunDeps {
+            bunNix = ./bins/convex-backend/bun.nix;
+          };
+          dontUseBunBuild = true;
+          bunInstallFlags =
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then [ "--backend=copyfile" ]
+            else [];
+          installPhase = ''
+            mkdir -p $out
+            cp -r node_modules $out/
+          '';
+        };
+
+        # Include standard Cargo sources plus .ts/.js files needed by convex-backend build.rs
         src = lib.fileset.toSource {
           root = ./.;
           fileset = lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./.)
-            (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
+            (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
           ];
         };
 
@@ -113,6 +146,9 @@
             cp ${swaggerUiZip}/v5.17.14.zip $SWAGGER_UI_ZIP_DIR/
             chmod 644 $SWAGGER_UI_ZIP_DIR/v5.17.14.zip
             export SWAGGER_UI_DOWNLOAD_URL="file://$SWAGGER_UI_ZIP_DIR/v5.17.14.zip"
+
+            # Link node_modules for convex-backend (convex-typegen build.rs resolves npm imports)
+            ln -s ${convexBackendNodeModules}/node_modules bins/convex-backend/node_modules
           '';
 
           nativeBuildInputs = [
@@ -121,6 +157,7 @@
             pkgs.pkg-config
             pkgs.perl # Required by openssl-sys vendored build
             pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
+            pkgs.bun # Required by convex-typegen build.rs to parse TypeScript
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
           #   pkgs.llvmPackages.libclang
@@ -171,8 +208,8 @@
 
               (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./bins/convex-backend)
-              # Include .ts files needed by convex-backend build.rs (convex-typegen)
-              (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
+              # Include .ts/.js files needed by convex-backend build.rs (convex-typegen)
+              (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
