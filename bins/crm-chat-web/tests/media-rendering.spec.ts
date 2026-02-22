@@ -190,10 +190,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     test.setTimeout(30_000);
 
     const chatWithVideo = await findChatWith(page, "video:not([autoplay])");
-    if (!chatWithVideo) {
-      test.skip(true, "No video media found in synced chats");
-      return;
-    }
+    expect(chatWithVideo, "No video media found in synced chats").toBeTruthy();
 
     // Find videos (non-autoplay = Video/VideoNote, not Animation)
     const videos = page.locator("video:not([autoplay])");
@@ -238,10 +235,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     test.setTimeout(30_000);
 
     const chatWithAudio = await findChatWith(page, "audio[controls]");
-    if (!chatWithAudio) {
-      test.skip(true, "No audio media found in synced chats");
-      return;
-    }
+    expect(chatWithAudio, "No audio media found in synced chats").toBeTruthy();
 
     const audios = page.locator("audio[controls]");
     const first = audios.first();
@@ -283,10 +277,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
       page,
       'button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))'
     );
-    if (!chatWithDoc) {
-      test.skip(true, "No document media found in synced chats");
-      return;
-    }
+    expect(chatWithDoc, "No document media found in synced chats").toBeTruthy();
 
     // Match filenames like "report.pdf", "image.png", etc.
     const docName = page.locator(
@@ -304,10 +295,10 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     test.setTimeout(30_000);
 
     const chatWithSticker = await findChatWith(page, 'img[alt="Sticker"]');
-    if (!chatWithSticker) {
-      test.skip(true, "No sticker media found in synced chats");
-      return;
-    }
+    expect(
+      chatWithSticker,
+      "No sticker media found in synced chats"
+    ).toBeTruthy();
 
     const stickers = page.locator('img[alt="Sticker"]');
     const first = stickers.first();
@@ -331,10 +322,10 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     test.setTimeout(30_000);
 
     const chatWithAnim = await findChatWith(page, "video[autoplay][loop]");
-    if (!chatWithAnim) {
-      test.skip(true, "No animation media found in synced chats");
-      return;
-    }
+    expect(
+      chatWithAnim,
+      "No animation media found in synced chats"
+    ).toBeTruthy();
 
     const anim = page.locator("video[autoplay][loop]").first();
     await expect(anim).toBeVisible({ timeout: 10_000 });
@@ -377,10 +368,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     test.setTimeout(30_000);
 
     const chatWithPhoto = await findChatWith(page, 'img[alt="Shared media"]');
-    if (!chatWithPhoto) {
-      test.skip(true, "No photo found for lightbox test");
-      return;
-    }
+    expect(chatWithPhoto, "No photo found for lightbox test").toBeTruthy();
 
     const img = page.locator('img[alt="Shared media"]').first();
     await expect(img).toBeVisible({ timeout: 10_000 });
