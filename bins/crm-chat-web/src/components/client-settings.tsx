@@ -25,37 +25,37 @@ import { Switch } from "./ui/switch";
 // ---------------------------------------------------------------------------
 
 interface MediaSettings {
-  savePhotos?: boolean;
-  saveVideos?: boolean;
-  saveAudio?: boolean;
-  saveVoice?: boolean;
-  saveStickers?: boolean;
-  saveDocuments?: boolean;
   saveAnimations?: boolean;
+  saveAudio?: boolean;
+  saveDocuments?: boolean;
+  savePhotos?: boolean;
+  saveStickers?: boolean;
   saveVideoNotes?: boolean;
+  saveVideos?: boolean;
+  saveVoice?: boolean;
 }
 
 interface ChatDoc {
   _id: string;
   chatId: string;
   chatType: string;
-  isPinned: boolean;
-  pinnedName?: string;
-  lastMessageTimestamp: number;
-  scanEnabled?: boolean;
   fullScanned?: boolean;
+  isPinned: boolean;
+  lastMessageTimestamp: number;
   mediaSettings?: MediaSettings;
-  totalMessages?: number;
-  syncedMessages?: number;
+  pinnedName?: string;
+  scanEnabled?: boolean;
   scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
+  syncedMessages?: number;
+  totalMessages?: number;
 }
 
 interface ClientDoc {
   _id: Id<"clients">;
-  telegramId: string;
+  mediaSettings?: MediaSettings;
   phoneNumber?: string;
   status: { type: string };
-  mediaSettings?: MediaSettings;
+  telegramId: string;
 }
 
 // ---------------------------------------------------------------------------

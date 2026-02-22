@@ -33,10 +33,10 @@ type SearchScopeType =
   | { type: "client"; clientId: number };
 
 interface SearchDialogProps {
-  open: boolean;
+  initialScope?: SearchScopeType;
   onOpenChange: (open: boolean) => void;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
-  initialScope?: SearchScopeType;
+  open: boolean;
 }
 
 function formatTimestamp(ts: number): string {
