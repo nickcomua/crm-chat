@@ -5,8 +5,8 @@ import { useQrAuth } from "@/hooks/use-qr-auth";
 import { Button } from "../ui/button";
 
 interface QrAuthProps {
-  onSuccess?: () => void;
   onCancel?: () => void;
+  onSuccess?: () => void;
 }
 
 export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {

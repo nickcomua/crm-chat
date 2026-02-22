@@ -25,19 +25,19 @@ import type { MediaKind } from "./media-types";
 // ---------------------------------------------------------------------------
 
 interface MediaRecord {
-  telegramFileId: string;
-  messageId: string;
-  kind: MediaKind;
-  status: "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
   bytesDownloaded?: number;
-  fileSize?: number;
-  fileName?: string;
-  mimeType?: string;
   chatId: string;
   chatName?: string;
-  messageTs?: number;
-  error?: string;
   createdAt: number;
+  error?: string;
+  fileName?: string;
+  fileSize?: number;
+  kind: MediaKind;
+  messageId: string;
+  messageTs?: number;
+  mimeType?: string;
+  status: "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
+  telegramFileId: string;
 }
 
 // ---------------------------------------------------------------------------
