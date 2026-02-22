@@ -23,11 +23,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::cancel_watcher::spawn_cancel_watcher;
-use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
+use crate::ops::convex::{
+    self as cx, ConvexResultExt as _, TaskPayload, run_task, worker_complete,
+};
 use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 use super::dialog_sync::ClientTaskFields;
 
@@ -109,8 +111,7 @@ async fn run_listener(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
-    let mut refresh_interval =
-        tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
+    let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
     refresh_interval.tick().await; // consume first immediate tick
 
     loop {

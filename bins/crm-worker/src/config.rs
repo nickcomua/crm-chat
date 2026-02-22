@@ -45,10 +45,10 @@ impl WorkerConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(9080);
-        let restate_admin_url = env::var("RESTATE_ADMIN_URL")
-            .unwrap_or_else(|_| "http://localhost:9070".to_string());
-        let restate_ingress_url = env::var("RESTATE_INGRESS_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let restate_admin_url =
+            env::var("RESTATE_ADMIN_URL").unwrap_or_else(|_| "http://localhost:9070".to_string());
+        let restate_ingress_url =
+            env::var("RESTATE_INGRESS_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
         let restate_service_url = env::var("RESTATE_SERVICE_URL")
             .unwrap_or_else(|_| format!("http://host.docker.internal:{restate_port}"));
         let max_media_workflows: usize = env::var("MAX_MEDIA_WORKFLOWS")
@@ -103,4 +103,3 @@ pub fn sanitize_owner_id(owner_id: &str) -> String {
         })
         .collect()
 }
-

@@ -11,7 +11,7 @@ use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
-use crate::ops::convex::{self as cx, run_task, worker_complete, TaskPayload};
+use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
 use crate::ops::media::download_and_upload;
 use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
@@ -104,7 +104,13 @@ impl MediaDownloader for MediaDownloaderImpl {
                     error = %e,
                     "Failed to download file"
                 );
-                cx::mark_media_failed(&self.convex, &payload.task_id, &telegramFileId, &e.to_string()).await;
+                cx::mark_media_failed(
+                    &self.convex,
+                    &payload.task_id,
+                    &telegramFileId,
+                    &e.to_string(),
+                )
+                .await;
             }
         }
 

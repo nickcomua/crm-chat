@@ -1,5 +1,8 @@
 /// Assert that a typed mutation returned an error containing the expected substring.
-pub fn assert_mutation_error<T: std::fmt::Debug, E: std::fmt::Display>(result: Result<T, E>, expected_substring: &str) {
+pub fn assert_mutation_error<T: std::fmt::Debug, E: std::fmt::Display>(
+    result: Result<T, E>,
+    expected_substring: &str,
+) {
     match result {
         Ok(val) => panic!("Expected error but got success: {val:?}"),
         Err(e) => {

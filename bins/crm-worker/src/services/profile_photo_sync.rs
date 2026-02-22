@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ConvexApi, ConvexApiClient, WorkerOpsUpdateChatPhotoArgs,
-    WorkerTasksTask as Task, WorkerTasksTaskProfilePhotoSyncChats,
+    ConvexApi, ConvexApiClient, WorkerOpsUpdateChatPhotoArgs, WorkerTasksTask as Task,
+    WorkerTasksTaskProfilePhotoSyncChats,
 };
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
@@ -15,8 +15,8 @@ use restate_sdk::serde::Json;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
+use crate::ops::convex::{ConvexResultExt as _, TaskPayload, run_task, worker_complete};
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
-use crate::ops::convex::{run_task, worker_complete, ConvexResultExt as _, TaskPayload};
 
 #[restate_sdk::object]
 pub trait ProfilePhotoSync {

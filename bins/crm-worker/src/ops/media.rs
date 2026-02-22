@@ -86,12 +86,8 @@ pub async fn download_and_upload(
     let media_stream = tg_client
         .stream_message_media(chat_external_id, msg_id)
         .await
-        .map_err(|e| {
-            WorkerError::MutationFailed(format!("Failed to download from Telegram: {e}"))
-        })?
-        .ok_or_else(|| {
-            WorkerError::MutationFailed("No media in Telegram message".to_string())
-        })?;
+        .map_err(|e| WorkerError::MutationFailed(format!("Failed to download from Telegram: {e}")))?
+        .ok_or_else(|| WorkerError::MutationFailed("No media in Telegram message".to_string()))?;
 
     let file_size = media_stream.file_size.or(known_file_size);
 
@@ -165,10 +161,9 @@ pub async fn download_and_upload(
         )));
     }
 
-    let upload_result: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| WorkerError::MutationFailed(format!("Failed to parse upload response: {e}")))?;
+    let upload_result: serde_json::Value = response.json().await.map_err(|e| {
+        WorkerError::MutationFailed(format!("Failed to parse upload response: {e}"))
+    })?;
 
     let storage_id = upload_result["storageId"].as_str().ok_or_else(|| {
         WorkerError::MutationFailed("Missing storageId in upload response".to_string())

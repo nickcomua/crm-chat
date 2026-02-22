@@ -34,4 +34,3 @@ impl From<convex_backend::ConvexError> for WorkerError {
         WorkerError::MutationFailed(err.to_string())
     }
 }
-
