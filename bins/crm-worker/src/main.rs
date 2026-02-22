@@ -10,8 +10,8 @@ mod auth;
 mod config;
 mod error;
 mod ops;
-pub mod session_manager;
 mod services;
+pub mod session_manager;
 
 use std::env;
 use std::sync::Arc;
@@ -24,7 +24,6 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use crate::config::WorkerConfig;
-use crate::session_manager::TelegramSessionManager;
 use crate::services::chat_scanner::{ChatScanner, ChatScannerImpl};
 use crate::services::dialog_sync::{DialogSync, DialogSyncImpl};
 use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
@@ -33,6 +32,7 @@ use crate::services::profile_photo_sync::{ProfilePhotoSync, ProfilePhotoSyncImpl
 use crate::services::qr_auth::{QrAuthWorkflow, QrAuthWorkflowImpl};
 use crate::services::task_orchestrator::run_orchestrator;
 use crate::services::update_listener::{UpdateListener, UpdateListenerImpl};
+use crate::session_manager::TelegramSessionManager;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -164,9 +164,14 @@ async fn main() -> anyhow::Result<()> {
     let orch_ingress = ingress_url.clone();
     let orch_cancel = CancellationToken::new();
     let orchestrator_handle = tokio::spawn(async move {
-        if let Err(e) =
-            run_orchestrator(&orch_convex, &orch_config, &orch_sessions, &orch_ingress, &orch_cancel)
-                .await
+        if let Err(e) = run_orchestrator(
+            &orch_convex,
+            &orch_config,
+            &orch_sessions,
+            &orch_ingress,
+            &orch_cancel,
+        )
+        .await
         {
             tracing::error!(error = %e, "TaskOrchestrator exited with error");
         }

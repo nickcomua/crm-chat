@@ -15,8 +15,8 @@ use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
 use crate::error::WorkerError;
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 /// Subset of client task fields used internally after extracting from the Task enum.
 #[derive(Clone)]
