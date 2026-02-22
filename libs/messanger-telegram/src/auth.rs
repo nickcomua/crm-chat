@@ -344,10 +344,7 @@ impl TelegramClient {
     /// * `Success` — login completed successfully
     /// * `MigrateTo` — need to reconnect to a different DC
     #[instrument(skip(self))]
-    pub async fn import_login_token(
-        &self,
-        url: &str,
-    ) -> Result<QrLoginToken, MessengerError> {
+    pub async fn import_login_token(&self, url: &str) -> Result<QrLoginToken, MessengerError> {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use grammers_tl_types as tl;
@@ -355,13 +352,11 @@ impl TelegramClient {
         info!(url = %url, "Importing login token from URL");
 
         // Parse the base64 token from the tg:// URL
-        let token_b64 = url
-            .strip_prefix("tg://login?token=")
-            .ok_or_else(|| {
-                MessengerError::Authentication(
-                    "Invalid QR login URL: expected tg://login?token=<base64>".to_string(),
-                )
-            })?;
+        let token_b64 = url.strip_prefix("tg://login?token=").ok_or_else(|| {
+            MessengerError::Authentication(
+                "Invalid QR login URL: expected tg://login?token=<base64>".to_string(),
+            )
+        })?;
 
         let token = URL_SAFE_NO_PAD.decode(token_b64).map_err(|e| {
             error!(error = %e, "Failed to decode base64 token from URL");
@@ -402,25 +397,23 @@ impl TelegramClient {
                     dc_id: migrate.dc_id,
                 })
             }
-            tl::enums::auth::LoginToken::Success(success) => {
-                match success.authorization {
-                    tl::enums::auth::Authorization::Authorization(auth) => {
-                        let user_id = match auth.user {
-                            tl::enums::User::User(user) => user.id,
-                            tl::enums::User::Empty(empty) => empty.id,
-                        };
-                        info!(user_id = user_id, "Login token import successful");
-                        Ok(QrLoginToken::Success { user_id })
-                    }
-                    tl::enums::auth::Authorization::SignUpRequired(_) => {
-                        error!("Import failed - account signup required");
-                        Err(MessengerError::Authentication(
-                            "Account signup required - QR login only works for existing accounts"
-                                .to_string(),
-                        ))
-                    }
+            tl::enums::auth::LoginToken::Success(success) => match success.authorization {
+                tl::enums::auth::Authorization::Authorization(auth) => {
+                    let user_id = match auth.user {
+                        tl::enums::User::User(user) => user.id,
+                        tl::enums::User::Empty(empty) => empty.id,
+                    };
+                    info!(user_id = user_id, "Login token import successful");
+                    Ok(QrLoginToken::Success { user_id })
                 }
-            }
+                tl::enums::auth::Authorization::SignUpRequired(_) => {
+                    error!("Import failed - account signup required");
+                    Err(MessengerError::Authentication(
+                        "Account signup required - QR login only works for existing accounts"
+                            .to_string(),
+                    ))
+                }
+            },
         }
     }
 

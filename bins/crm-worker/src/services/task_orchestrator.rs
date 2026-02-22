@@ -11,9 +11,8 @@
 use std::time::Duration;
 
 use convex_backend::{
-    ClientsWorkerRegisterConnectedArgs, ConvexApi, ConvexApiClient,
-    WorkerTasksMarkDispatchedArgs, WorkerTasksPendingForWorkerArgs, WorkerTasksTable,
-    WorkerTasksTask as Task,
+    ClientsWorkerRegisterConnectedArgs, ConvexApi, ConvexApiClient, WorkerTasksMarkDispatchedArgs,
+    WorkerTasksPendingForWorkerArgs, WorkerTasksTable, WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -97,7 +96,10 @@ pub async fn run_orchestrator(
     } else {
         None
     };
-    info!(max_media_workflows = config.max_media_workflows, "Media workflow concurrency limit");
+    info!(
+        max_media_workflows = config.max_media_workflows,
+        "Media workflow concurrency limit"
+    );
     let mut tasks = convex
         .subscribe_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
             maxMediaWorkflows: max_media,
@@ -188,21 +190,13 @@ fn dispatch_info(row: &WorkerTasksTable) -> (&'static str, String, &'static str,
                 "task_id": row.id,
                 "user_id": row.user_id.as_deref().unwrap_or(""),
             });
-            (
-                "QrAuthWorkflow",
-                row.id.clone(),
-                "run",
-                payload.to_string(),
-            )
+            ("QrAuthWorkflow", row.id.clone(), "run", payload.to_string())
         }
 
         // ── Client lifecycle ─────────────────────────────────────────
-        Task::DialogSync { clientId, .. } => (
-            "DialogSync",
-            clientId.clone(),
-            "sync",
-            task_payload(row),
-        ),
+        Task::DialogSync { clientId, .. } => {
+            ("DialogSync", clientId.clone(), "sync", task_payload(row))
+        }
         Task::UpdateListener { clientId, .. } => (
             "UpdateListener",
             clientId.clone(),
@@ -217,17 +211,12 @@ fn dispatch_info(row: &WorkerTasksTable) -> (&'static str, String, &'static str,
         ),
 
         // ── Chat scanning ────────────────────────────────────────────
-        Task::ChatScanner { chatId, .. } => (
-            "ChatScanner",
-            chatId.clone(),
-            "scan",
-            task_payload(row),
-        ),
+        Task::ChatScanner { chatId, .. } => {
+            ("ChatScanner", chatId.clone(), "scan", task_payload(row))
+        }
 
         // ── Per-file media download ──────────────────────────────────
-        Task::MediaDownloader {
-            telegramFileId, ..
-        } => (
+        Task::MediaDownloader { telegramFileId, .. } => (
             "MediaDownloader",
             telegramFileId.clone(),
             "download",
@@ -260,7 +249,10 @@ async fn discover_and_register_sessions(
         return;
     }
 
-    info!(count = discovered.len(), "Found session files, checking authorization");
+    info!(
+        count = discovered.len(),
+        "Found session files, checking authorization"
+    );
 
     let mut registered = 0u32;
     let mut skipped = 0u32;

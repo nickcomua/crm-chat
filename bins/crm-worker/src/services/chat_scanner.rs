@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use convex_backend::{
     ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, WorkerOpsCreatePendingMediaArgs,
-    WorkerOpsUpdateSyncProgressArgs, WorkerOpsUpdateSyncProgressScanPhase,
-    WorkerOpsUpsertChatArgs, WorkerOpsUpsertMessageArgs, WorkerTasksTask as Task,
+    WorkerOpsUpdateSyncProgressArgs, WorkerOpsUpdateSyncProgressScanPhase, WorkerOpsUpsertChatArgs,
+    WorkerOpsUpsertMessageArgs, WorkerTasksTask as Task,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -19,9 +19,11 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::error::WorkerError;
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
-use crate::ops::convex::{self as cx, run_task, worker_complete, ConvexResultExt as _, TaskPayload};
+use crate::ops::convex::{
+    self as cx, ConvexResultExt as _, TaskPayload, run_task, worker_complete,
+};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 /// Internal request used for direct `scan_chat_messages()` calls (e.g. from
 /// UpdateListener backfill). Contains the derived fields that the Restate
