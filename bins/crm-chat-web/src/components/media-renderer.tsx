@@ -490,7 +490,17 @@ function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
   }
 
   if (mime === "application/x-tgsticker") {
-    return <TgsSticker height={h} url={media.url ?? ""} width={w} />;
+    if (!media.url) {
+      return (
+        <img
+          alt="Sticker"
+          className="max-h-[180px] max-w-[180px]"
+          height={h}
+          width={w}
+        />
+      );
+    }
+    return <TgsSticker height={h} url={media.url} width={w} />;
   }
 
   return (

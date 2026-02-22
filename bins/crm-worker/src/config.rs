@@ -14,12 +14,12 @@ pub struct WorkerConfig {
     pub robot_kid: String,
     pub private_key: String,
     pub restate_port: u16,
-    /// Restate admin API URL for registering deployments (default: http://localhost:9070).
+    /// Restate admin API URL for registering deployments (default: `http://localhost:9070`).
     pub restate_admin_url: String,
-    /// Restate ingress URL where the bridge sends requests (default: http://localhost:8080).
+    /// Restate ingress URL where the bridge sends requests (default: `http://localhost:8080`).
     pub restate_ingress_url: String,
     /// URL the Restate runtime uses to reach this service endpoint.
-    /// Must be reachable from within Docker (default: http://host.docker.internal:{restate_port}).
+    /// Must be reachable from within Docker (default: `http://host.docker.internal:{restate_port}`).
     pub restate_service_url: String,
     /// Maximum number of MediaDownloader workflows running in parallel.
     /// Controls how many clients can download media simultaneously.
