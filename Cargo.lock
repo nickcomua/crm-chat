@@ -566,7 +566,7 @@ dependencies = [
 [[package]]
 name = "convex-typegen"
 version = "0.2.0"
-source = "git+https://github.com/nickcomua/convex-typegen.git#01e914591d36999008ea2b394f49dd01e1536755"
+source = "git+https://github.com/nickcomua/convex-typegen.git#1270de794bba056e075f9c5dd679d7bc9d4ba9ba"
 dependencies = [
  "convex",
  "flate2",
@@ -3679,7 +3679,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
