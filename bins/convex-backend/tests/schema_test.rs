@@ -13,7 +13,7 @@ fn test_crm_chat_schema() {
 
     let config = Configuration {
         schema_path,
-        out_file: out_file.to_string_lossy().to_string(),
+        out_file: out_file.clone(),
         function_paths: vec![],
         helper_stubs: HashMap::new(),
     };
