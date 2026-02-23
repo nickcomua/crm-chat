@@ -34,7 +34,8 @@ fn main() {
 
     let config = Configuration {
         schema_path: std::path::PathBuf::from("convex/schema.ts"),
-        out_file: format!("{}/convex_types.rs", std::env::var("OUT_DIR").unwrap()),
+        out_file: std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap())
+            .join("convex_types.rs"),
         function_paths,
         helper_stubs,
     };
