@@ -1,236 +1,128 @@
 import { v } from "convex/values";
 
-import { mutation, query } from "./_generated/server";
-import { qrAuthDoc } from "./schema";
-import {
-  isQrAuthTerminal,
-  requireAssignedRobot,
-  requireHuman,
-  requireOwner,
-  requireRobot,
-  sendError,
-} from "./helpers/auth";
-
-// =============================================================================
-// Queries
-// =============================================================================
-
-/** Active QR auths + most recent terminal auth for the current user. */
-export const listForUser = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    const all = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
-      .collect();
-    const activeAuths = all.filter((a) => !isQrAuthTerminal(a.step));
-    const mostRecentTerminal = all
-      .filter((a) => isQrAuthTerminal(a.step))
-      .sort((a, b) => b._creationTime - a._creationTime)[0];
-    return mostRecentTerminal ? [...activeAuths, mostRecentTerminal] : activeAuths;
-  },
-});
-
-/** Active (non-terminal) QR auths for the current human user. */
-export const active = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    const all = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
-      .collect();
-    return all.filter((a) => !isQrAuthTerminal(a.step));
-  },
-});
-
-/** Unclaimed QR auths (step=Pending, no assigned robot). For robot polling. */
-export const pendingForRobot = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    await requireRobot(ctx);
-    const pending = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_step", (q) => q.eq("step", "Pending"))
-      .collect();
-    return pending.filter((a) => !a.assignedRobot);
-  },
-});
-
-/** QR auths assigned to the calling robot. */
-export const assignedToRobot = query({
-  args: {},
-  returns: v.array(qrAuthDoc),
-  handler: async (ctx) => {
-    const caller = await requireRobot(ctx);
-    const assigned = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_assignedRobot", (q) => q.eq("assignedRobot", caller.id))
-      .collect();
-    return assigned.filter((a) => !isQrAuthTerminal(a.step));
-  },
-});
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import { mutation } from "./functions";
+import { isQrAuthTerminal, requireHuman, sendError } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
+import { enqueueTask } from "./helpers/tasks";
 
 // =============================================================================
 // Human Mutations
 // =============================================================================
 
-/** Start QR code authentication. No client is created yet. */
+/** Start QR code authentication. Returns the task ID for subscription. */
 export const start = mutation({
   args: {},
-  returns: v.null(),
+  returns: v.id("workerTasks"),
   handler: async (ctx) => {
     const caller = await requireHuman(ctx);
-    await ctx.db.insert("qrAuths", {
+    const taskId = await ctx.db.insert("workerTasks", {
+      task: {
+        type: "QrAuth" as const,
+        step: "Pending" as const,
+      },
+      status: "Pending" as const,
+      createdAt: Date.now(),
       userId: caller.id,
-      step: "Pending",
-      updatedAt: Date.now(),
     });
+    return taskId;
   },
 });
 
-/** User cancels the QR auth flow. */
+/** User cancels the QR auth flow. Worker detects via status subscription. */
 export const cancel = mutation({
-  args: { authId: v.id("qrAuths") },
-  returns: v.null(),
-  handler: async (ctx, { authId }) => {
+  args: { taskId: v.id("workerTasks") },
+  returns: result(v.null(), v.union(v.literal("Task not found"), v.literal("Unauthorized"), v.literal("Not a QR auth task"), v.literal("Cannot cancel: auth is already in a terminal state"))),
+  handler: async (ctx, { taskId }) => {
     const caller = await requireHuman(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
-    requireOwner(caller.id, auth.userId);
+    const task = await ctx.db.get(taskId);
+    if (!task) return err("Task not found");
+    if (task.userId !== caller.id) return err("Unauthorized");
+    if (task.task.type !== "QrAuth") return err("Not a QR auth task");
 
-    if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot cancel: auth is already in a terminal state");
+    if (isQrAuthTerminal(task.task.step)) {
+      return err("Cannot cancel: auth is already in a terminal state");
     }
 
-    await ctx.db.patch(authId, {
-      step: "Cancelled",
-      updatedAt: Date.now(),
+    // Patch both the task step and the universal status — worker detects via subscription
+    await ctx.db.patch(taskId, {
+      task: { ...task.task, step: "Cancelled" as const },
+      status: "Cancelled" as const,
     });
+
+    return ok(null);
   },
 });
 
 // =============================================================================
-// Robot Mutations
+// Completion logic (called from workerTasks.workerComplete)
 // =============================================================================
 
-/** Robot claims a QR auth session. */
-export const robotClaim = mutation({
-  args: { authId: v.id("qrAuths") },
-  returns: v.null(),
-  handler: async (ctx, { authId }) => {
-    const caller = await requireRobot(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
+interface QrAuthTask {
+	type: "QrAuth";
+	step: string;
+	telegramUserId?: bigint;
+	phoneNumber?: string;
+	error?: string;
+}
 
-    if (auth.step !== "Pending") {
-      throw new Error(`Invalid step: expected Pending, got ${auth.step}`);
-    }
-    if (auth.assignedRobot) {
-      throw new Error("QrAuth is already claimed by a robot");
-    }
+export async function completeQrAuth(
+	ctx: MutationCtx,
+	ownerUserId: string | undefined,
+	task: QrAuthTask,
+): Promise<void> {
+	if (!ownerUserId) throw new Error("QrAuth task has no userId");
 
-    await ctx.db.patch(authId, {
-      assignedRobot: caller.id,
-      step: "Generating",
-      updatedAt: Date.now(),
-    });
-  },
-});
+	if (task.step === "Authorized" || task.step === "AlreadyAuthorized") {
+		if (!task.telegramUserId) throw new Error("QrAuth completion requires telegramUserId");
 
-/** Robot provides a new QR token for the user to scan. */
-export const robotUpdateQrToken = mutation({
-  args: {
-    authId: v.id("qrAuths"),
-    url: v.string(),
-    expires: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, { authId, url, expires }) => {
-    const caller = await requireRobot(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
-    requireAssignedRobot(caller.id, auth.assignedRobot);
+		const numericId = task.telegramUserId.toString();
+		// Normalize phone: Telegram API returns without +, we always store with +
+		const phone = task.phoneNumber;
+		const normalizedPhone = phone
+			? phone.startsWith("+") ? phone : `+${phone}`
+			: null;
+		// Canonical telegramId: prefer phone, fall back to numeric ID
+		const telegramId = normalizedPhone
+			? `telegram:${normalizedPhone}`
+			: `telegram:${numericId}`;
 
-    if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot update: auth is in a terminal state");
-    }
+		const existing = await ctx.db
+			.query("clients")
+			.withIndex("by_userId_telegramId", (q) =>
+				q.eq("userId", ownerUserId).eq("telegramId", telegramId),
+			)
+			.unique();
 
-    await ctx.db.patch(authId, {
-      qrUrl: url,
-      qrExpires: expires,
-      step: "Token",
-      updatedAt: Date.now(),
-    });
-  },
-});
+		let clientId: Id<"clients">;
+		if (existing) {
+			await ctx.db.patch(existing._id, {
+				status: { type: "Connected" },
+				externalId: numericId,
+				...(normalizedPhone ? { phoneNumber: normalizedPhone } : {}),
+			});
+			clientId = existing._id;
+		} else {
+			clientId = await ctx.db.insert("clients", {
+				userId: ownerUserId,
+				kind: "Telegram",
+				telegramId,
+				externalId: numericId,
+				phoneNumber: normalizedPhone ?? undefined,
+				scanningChatIds: [],
+				status: { type: "Connected" },
+			});
+		}
 
-/** Robot reports the final result of QR authentication. */
-export const robotCompleteQrAuth = mutation({
-  args: {
-    authId: v.id("qrAuths"),
-    result: v.union(
-      v.object({ type: v.literal("Authorized"), userId: v.int64() }),
-      v.object({ type: v.literal("AlreadyAuthorized"), userId: v.int64() }),
-      v.object({ type: v.literal("Failed"), error: v.string() }),
-    ),
-  },
-  returns: v.null(),
-  handler: async (ctx, { authId, result }) => {
-    const caller = await requireRobot(ctx);
-    const auth = await ctx.db.get(authId);
-    if (!auth) throw new Error("QrAuth not found");
-    requireAssignedRobot(caller.id, auth.assignedRobot);
+		await enqueueTask(ctx, {
+			type: "UpdateListener",
+			clientId,
+			userId: ownerUserId,
+			telegramId,
+		});
+	} else if (task.step === "Failed") {
+		await sendError(ctx, ownerUserId, `QR code login failed: ${task.error ?? "unknown error"}`);
+	}
+}
 
-    if (isQrAuthTerminal(auth.step)) {
-      throw new Error("Cannot complete: auth is already in a terminal state");
-    }
-
-    const now = Date.now();
-
-    if (result.type === "Authorized" || result.type === "AlreadyAuthorized") {
-      const externalId = `telegram:${result.userId}`;
-      const step = result.type;
-
-      // Find or create the client
-      const existing = await ctx.db
-        .query("clients")
-        .withIndex("by_userId_externalId", (q) =>
-          q.eq("userId", auth.userId).eq("externalId", externalId),
-        )
-        .unique();
-
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          status: { type: "Connected" },
-        });
-      } else {
-        await ctx.db.insert("clients", {
-          userId: auth.userId,
-          kind: "Telegram",
-          externalId,
-          activeChats: [],
-          status: { type: "Connected" },
-        });
-      }
-
-      await ctx.db.patch(authId, {
-        telegramUserId: result.userId,
-        step,
-        updatedAt: now,
-      });
-    } else {
-      // Failed
-      await sendError(ctx, auth.userId, `QR code login failed: ${result.error}`);
-      await ctx.db.patch(authId, {
-        step: "Failed",
-        error: result.error,
-        updatedAt: now,
-      });
-    }
-  },
-});

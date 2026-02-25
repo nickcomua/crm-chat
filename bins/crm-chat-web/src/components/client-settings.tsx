@@ -1,6 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import type { Id } from "crm-chat-convex-backend/dataModel";
 import {
   ArrowLeft,
   Check,
@@ -14,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/lib/convex";
+import { api, type Id, onResultError } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -26,35 +25,37 @@ import { Switch } from "./ui/switch";
 // ---------------------------------------------------------------------------
 
 interface MediaSettings {
-  savePhotos?: boolean;
-  saveVideos?: boolean;
-  saveAudio?: boolean;
-  saveVoice?: boolean;
-  saveStickers?: boolean;
-  saveDocuments?: boolean;
   saveAnimations?: boolean;
+  saveAudio?: boolean;
+  saveDocuments?: boolean;
+  savePhotos?: boolean;
+  saveStickers?: boolean;
   saveVideoNotes?: boolean;
+  saveVideos?: boolean;
+  saveVoice?: boolean;
 }
 
 interface ChatDoc {
   _id: string;
   chatId: string;
   chatType: string;
-  isPinned: boolean;
-  pinnedName?: string;
-  lastMessageTs: number;
-  scanEnabled?: boolean;
   fullScanned?: boolean;
+  isPinned: boolean;
+  lastMessageTimestamp: number;
   mediaSettings?: MediaSettings;
-  totalMessages?: number;
+  pinnedName?: string;
+  scanEnabled?: boolean;
+  scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
   syncedMessages?: number;
-  scanPhase?: "scanning_messages" | "downloading_media" | "listening";
+  totalMessages?: number;
 }
 
 interface ClientDoc {
-  _id: string;
-  externalId: string;
+  _id: Id<"clients">;
   mediaSettings?: MediaSettings;
+  phoneNumber?: string;
+  status: { type: string };
+  telegramId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,26 +78,23 @@ const MEDIA_SETTINGS_ITEMS: { key: keyof MediaSettings; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function getScanStatus(chat: ChatDoc): { label: string; className: string } {
-  if (chat.scanPhase === "listening") {
-    return {
-      label: "Listening",
-      className: "bg-emerald-500/15 text-emerald-700",
-    };
-  }
-  if (chat.scanPhase === "downloading_media") {
-    return {
-      label: "Downloading media...",
-      className: "bg-blue-500/15 text-blue-700",
-    };
-  }
-  if (chat.scanPhase === "scanning_messages") {
+  // Active scanning phases take priority — show progress while work is happening
+  if (chat.scanPhase === "ScanningMessages") {
     return {
       label: "Scanning messages...",
       className: "bg-amber-500/15 text-amber-700",
     };
   }
+  // Fully scanned = "Synced" even if UpdateListener set scanPhase to "Listening"
   if (chat.fullScanned) {
     return { label: "Synced", className: "bg-emerald-500/15 text-emerald-700" };
+  }
+  // Not fully scanned but listening — still catching up
+  if (chat.scanPhase === "Listening") {
+    return {
+      label: "Listening",
+      className: "bg-emerald-500/15 text-emerald-700",
+    };
   }
   if (chat.scanEnabled) {
     return { label: "Syncing...", className: "bg-amber-500/15 text-amber-700" };
@@ -148,7 +146,9 @@ function EditableName({
 
   const handleSave = (): void => {
     const trimmed = value.trim();
-    updatePinnedName({ chatId, pinnedName: trimmed || undefined });
+    updatePinnedName({ chatId, pinnedName: trimmed || undefined }).then(
+      onResultError
+    );
     setEditing(false);
   };
 
@@ -255,8 +255,8 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
   const msgPercent =
     msgTotal > 0 ? Math.min(100, Math.round((msgSynced / msgTotal) * 100)) : 0;
 
-  const mediaTotal = mediaCounts ? mediaCounts.total - mediaCounts.skipped : 0;
-  const mediaStored = mediaCounts?.stored ?? 0;
+  const mediaTotal = mediaCounts ? mediaCounts.total - mediaCounts.Skipped : 0;
+  const mediaStored = mediaCounts?.Stored ?? 0;
   const mediaPercent =
     mediaTotal > 0
       ? Math.min(100, Math.round((mediaStored / mediaTotal) * 100))
@@ -264,7 +264,7 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
 
   return (
     <div className="mt-2 space-y-1.5">
-      {chat.scanPhase === "scanning_messages" && msgTotal > 0 && (
+      {chat.scanPhase === "ScanningMessages" && msgTotal > 0 && (
         <ProgressBar
           label={`${msgSynced} / ${msgTotal} messages`}
           percent={msgPercent}
@@ -276,7 +276,7 @@ function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
           percent={mediaPercent}
         />
       )}
-      {chat.scanPhase === "listening" && (
+      {chat.scanPhase === "Listening" && (
         <div className="flex items-center gap-1.5">
           <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
           <span className="text-[11px] text-muted-foreground">
@@ -302,7 +302,7 @@ function MediaSettingsPanel({
     updateMediaSettings({
       chatId: chat.chatId,
       mediaSettings: { ...current, [key]: checked },
-    });
+    }).then(onResultError);
   };
 
   return (
@@ -390,7 +390,9 @@ function ChatRow({
             {chat.scanEnabled && chat.fullScanned && (
               <button
                 className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                onClick={() => rescan({ chatId: chat.chatId })}
+                onClick={() =>
+                  rescan({ chatId: chat.chatId }).then(onResultError)
+                }
                 title="Re-scan all messages"
                 type="button"
               >
@@ -421,7 +423,10 @@ function ChatRow({
             aria-label={`Toggle scanning for ${displayName}`}
             checked={chat.scanEnabled ?? false}
             onCheckedChange={(checked) =>
-              updateScanEnabled({ chatId: chat.chatId, scanEnabled: checked })
+              updateScanEnabled({
+                chatId: chat.chatId,
+                scanEnabled: checked,
+              }).then(onResultError)
             }
           />
         </div>
@@ -451,6 +456,7 @@ export function ClientSettings({
   const chats = useQuery(api.chats.listByClient, { clientId });
   const clients = useQuery(api.clients.list);
   const navigate = useNavigate();
+  const triggerSync = useMutation(api.clients.triggerDialogSync);
 
   if (chats === undefined || clients === undefined) {
     return (
@@ -472,6 +478,8 @@ export function ClientSettings({
     );
   }
 
+  const isConnected = client.status.type === "Connected";
+
   const sortedChats = [...chats].sort((a, b) => {
     if (a.isPinned && !b.isPinned) {
       return -1;
@@ -479,7 +487,7 @@ export function ClientSettings({
     if (!a.isPinned && b.isPinned) {
       return 1;
     }
-    return b.lastMessageTs - a.lastMessageTs;
+    return b.lastMessageTimestamp - a.lastMessageTimestamp;
   });
 
   return (
@@ -493,15 +501,27 @@ export function ClientSettings({
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div>
+        <div className="flex-1">
           <h2 className="font-bold text-2xl tracking-tight">
-            {client.externalId || `Client ${client._id.slice(0, 8)}`}
+            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </h2>
           <p className="text-muted-foreground text-sm">
             {chats.length} chat{chats.length !== 1 ? "s" : ""} &middot;{" "}
             {chats.filter((c) => c.scanEnabled).length} scan-enabled
           </p>
         </div>
+        {isConnected && (
+          <Button
+            onClick={() =>
+              triggerSync({ clientId: client._id }).then(onResultError)
+            }
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            Sync Dialogs
+          </Button>
+        )}
       </div>
 
       {sortedChats.length === 0 ? (
@@ -509,8 +529,8 @@ export function ClientSettings({
           <CardContent className="flex flex-col items-center justify-center py-12">
             <MessageSquare className="mb-4 h-12 w-12 text-muted-foreground" />
             <p className="text-muted-foreground">
-              No chats synced yet. The subscriber will sync dialogs
-              automatically.
+              No chats synced yet. Click &ldquo;Sync Dialogs&rdquo; to fetch
+              your conversations.
             </p>
           </CardContent>
         </Card>

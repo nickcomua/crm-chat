@@ -1,0 +1,123 @@
+//! DialogSync — Restate virtual object for syncing Telegram dialogs to Convex.
+//!
+//! Keyed by `client_id`. Iterates all Telegram dialogs and upserts them as chats.
+
+use std::sync::Arc;
+
+use convex_backend::{
+    ConvexApi, ConvexApiClient, WorkerOpsUpsertChatArgs, WorkerTasksTask as Task,
+};
+use futures::StreamExt;
+use messanger_interface::MessengerClient;
+use messanger_telegram::TelegramClient;
+use restate_sdk::prelude::*;
+use restate_sdk::serde::Json;
+use tracing::{info, warn};
+
+use crate::error::WorkerError;
+use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
+use crate::session_manager::{SessionManager as _, TelegramSessionManager};
+
+/// Subset of client task fields used internally after extracting from the Task enum.
+#[derive(Clone)]
+pub struct ClientTaskFields {
+    pub client_id: String,
+    pub user_id: String,
+    pub telegram_id: String,
+}
+
+#[restate_sdk::object]
+pub trait DialogSync {
+    async fn sync(req: Json<TaskPayload>) -> Result<(), HandlerError>;
+}
+
+pub struct DialogSyncImpl {
+    pub convex: ConvexApiClient,
+    pub sessions: Arc<TelegramSessionManager>,
+}
+
+impl DialogSync for DialogSyncImpl {
+    async fn sync(
+        &self,
+        _ctx: ObjectContext<'_>,
+        req: Json<TaskPayload>,
+    ) -> Result<(), HandlerError> {
+        let payload = req.into_inner();
+        let Task::DialogSync {
+            clientId,
+            userId,
+            telegramId,
+        } = payload.task
+        else {
+            return Err(anyhow::anyhow!("Expected DialogSync task").into());
+        };
+
+        run_task(&self.convex, &payload.task_id).await;
+        info!(client_id = %clientId, "DialogSync: syncing dialogs");
+
+        let fields = ClientTaskFields {
+            client_id: clientId,
+            user_id: userId,
+            telegram_id: telegramId,
+        };
+
+        let tg_client = self
+            .sessions
+            .get_for_telegram_id(&fields.user_id, &fields.telegram_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        sync_dialogs(&self.convex, &tg_client, &fields, &payload.task_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        // Completion handler (completeDialogSync) enqueues ProfilePhotoSync + ChatScanner
+        worker_complete(&self.convex, &payload.task_id).await;
+        Ok(())
+    }
+}
+
+/// Sync all Telegram dialogs to Convex for a client.
+pub async fn sync_dialogs(
+    convex: &ConvexApiClient,
+    tg_client: &TelegramClient,
+    client: &ClientTaskFields,
+    task_id: &str,
+) -> Result<(), WorkerError> {
+    let mut stream = tg_client
+        .iter_dialogs()
+        .await
+        .map_err(|e| WorkerError::MutationFailed(format!("Failed to iterate dialogs: {e}")))?;
+
+    let mut count = 0u32;
+    while let Some(result) = stream.next().await {
+        let dialog = match result {
+            Ok(d) => d,
+            Err(e) => {
+                warn!(error = %e, "Error reading dialog, skipping");
+                continue;
+            }
+        };
+        let chat_id = format!("{}:{}", client.client_id, dialog.external_id);
+        let chat_type = cx::map_chat_type(dialog.chat_type.as_deref());
+
+        convex
+            .worker_ops_upsert_chat(WorkerOpsUpsertChatArgs {
+                taskId: task_id.to_string(),
+                chatId: chat_id,
+                userId: client.user_id.clone(),
+                clientId: client.client_id.clone(),
+                chatType: chat_type,
+                isPinned: dialog.is_pinned,
+                pinnedName: dialog.name.clone(),
+                lastMessageTimestamp: 0.0,
+            })
+            .await
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
+
+        count += 1;
+    }
+
+    info!(count, "Dialog sync complete");
+    Ok(())
+}

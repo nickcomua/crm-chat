@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import type { Id } from "crm-chat-convex-backend/dataModel";
 import { ClientSettings } from "@/components/client-settings";
+import type { Id } from "@/lib/convex";
 
 export const Route = createFileRoute("/_auth/client/$clientId")({
   component: ClientSettingsPage,

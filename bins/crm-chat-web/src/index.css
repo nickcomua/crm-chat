@@ -50,7 +50,6 @@
 
 /* ─── Light Theme: Crisp white with teal-cyan accent ─── */
 :root {
-  color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(0.985 0.002 260);
   --foreground: oklch(0.14 0.015 260);
@@ -83,11 +82,11 @@
   --sidebar-accent-foreground: oklch(0.22 0.06 185);
   --sidebar-border: oklch(0.92 0.005 260);
   --sidebar-ring: oklch(0.56 0.18 185);
+  color-scheme: light;
 }
 
 /* ─── Dark Theme: Deep charcoal-navy with luminous teal ─── */
 .dark {
-  color-scheme: dark;
   --background: oklch(0.135 0.022 260);
   --foreground: oklch(0.94 0.006 260);
   --card: oklch(0.175 0.02 260);
@@ -119,6 +118,7 @@
   --sidebar-accent-foreground: oklch(0.82 0.1 185);
   --sidebar-border: oklch(1 0 0 / 9%);
   --sidebar-ring: oklch(0.72 0.15 185);
+  color-scheme: dark;
 }
 
 @layer base {

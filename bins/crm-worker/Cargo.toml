@@ -1,5 +1,5 @@
 [package]
-name = "telegram-subscriber"
+name = "crm-worker"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
@@ -8,22 +8,25 @@ license = "MIT"
 anyhow = "1.0.100"
 convex = "0.10.2"
 convex-backend = { path = "../convex-backend" }
+dashmap = "6"
 dirs = "6"
 futures = "0.3"
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = ["impl-serde"] }
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-tokio-stream = "0.1"
+restate-sdk = "0.8.0"
 sentry = { version = "0.38", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "reqwest", "rustls"] }
-sentry-tracing = "0.38"
+sentry-tracing = "0.46.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2"
 tokio = { version = "1.49.0", features = ["full", "macros", "rt-multi-thread"] }
+tokio-stream = "0.1"
 tokio-util = "0.7.18"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hack = { version = "0.1", path = "../../libs/hack" }
+async-trait = "0.1.89"

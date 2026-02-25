@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import { AlertCircle, AlertTriangle, Bell, Info, X } from "lucide-react";
-import { api } from "@/lib/convex";
+import { api, type Id } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 
@@ -55,32 +55,38 @@ export function NotificationsPanel(): React.ReactNode {
         </div>
       ) : (
         <div className="space-y-1.5">
-          {notifications.map((notification) => (
-            <div
-              className={cn(
-                "group flex items-start gap-2.5 rounded-lg border border-l-[3px] bg-card/60 p-2.5 transition-colors hover:bg-card",
-                getSeverityAccent(notification.severity)
-              )}
-              key={notification._id}
-            >
-              <div className="shrink-0 pt-px">
-                {getSeverityIcon(notification.severity)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] leading-relaxed">
-                  {notification.message}
-                </p>
-              </div>
-              <Button
-                className="h-6 w-6 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                onClick={() => dismiss({ notificationId: notification._id })}
-                size="icon"
-                variant="ghost"
+          {notifications.map(
+            (notification: {
+              _id: Id<"notifications">;
+              severity: Severity;
+              message: string;
+            }) => (
+              <div
+                className={cn(
+                  "group flex items-start gap-2.5 rounded-lg border border-l-[3px] bg-card/60 p-2.5 transition-colors hover:bg-card",
+                  getSeverityAccent(notification.severity)
+                )}
+                key={notification._id}
               >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
+                <div className="shrink-0 pt-px">
+                  {getSeverityIcon(notification.severity)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] leading-relaxed">
+                    {notification.message}
+                  </p>
+                </div>
+                <Button
+                  className="h-6 w-6 shrink-0 text-muted-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  onClick={() => dismiss({ notificationId: notification._id })}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            )
+          )}
         </div>
       )}
     </div>

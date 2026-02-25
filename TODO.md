@@ -1,4 +1,7 @@
-1. qr code password requer
-2. implement replieys
-3. text search
-4. borad system
+1. qr code with password case
+2. web test for qr auth 
+3. code auth
+4. web tests for code auth
+3. implement replieys
+4. text search
+5. borad system

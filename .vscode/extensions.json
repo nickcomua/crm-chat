@@ -1,15 +1,18 @@
 {
-    "recommendations": [
-        "bierner.markdown-mermaid",
-        "tamasfe.even-better-toml",
-        "fill-labs.dependi",
-        "mkhl.direnv",
-        "rust-lang.rust-analyzer",
-        "visualjj.visualjj",
-        "biomejs.biome",
-        "jnoortheen.nix-ide",
-        "github.vscode-github-actions",
-        "redhat.vscode-yaml",
-        "gruntfuggly.todo-tree"
-    ]
+	"recommendations": [
+		"bierner.markdown-mermaid",
+		"tamasfe.even-better-toml",
+		"fill-labs.dependi",
+		"mkhl.direnv",
+		"visualjj.visualjj",
+		"biomejs.biome",
+		"jnoortheen.nix-ide",
+		"github.vscode-github-actions",
+		"redhat.vscode-yaml",
+		"gruntfuggly.todo-tree",
+		"dbaeumer.vscode-eslint",
+		"yoavbls.pretty-ts-errors",
+		"bradlc.vscode-tailwindcss",
+		"ms-azuretools.vscode-docker"
+	]
 }

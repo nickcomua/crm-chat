@@ -1,4 +1,25 @@
 services:
+  restate:
+    image: docker.restate.dev/restatedev/restate:latest
+    # image: docker.io/restatedev/restate:1.6
+    ports:
+      - 8080:8080
+      - 9070:9070
+      - 9071:9071
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./target/restate-data:/restate-data
+    environment:
+      - RESTATE_OBSERVABILITY__LOG__FORMAT=json
+      # Long-running handlers (TaskOrchestrator, UpdateListener) run subscription
+      # loops that may be idle for extended periods between events.
+      - RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT=24h
+      - RESTATE_WORKER__INVOKER__ABORT_TIMEOUT=25h
+      # Optional: send Restate traces to Sentry via OTEL ingest
+      - RESTATE_OBSERVABILITY__TRACING__ENDPOINT=${SENTRY_OTEL_ENDPOINT:-}
+      - RESTATE_OBSERVABILITY__TRACING__HEADERS=${SENTRY_OTEL_HEADERS:-}
+
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
     stop_grace_period: 10s
@@ -7,7 +28,7 @@ services:
       - "${PORT:-3210}:3210"
       - "${SITE_PROXY_PORT:-3211}:3211"
     volumes:
-      - /Volumes/Untitled/crm-chat_data-2:/convex/data
+      - /Volumes/bbkr/crm-chat-data:/convex/data
     environment:
       # - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${PORT:-3210}}
       - CONVEX_CLOUD_ORIGIN=http://backend.crm-chat.orb.local
@@ -106,7 +127,3 @@ services:
 #       elasticsearch:
 #         condition: service_healthy
 #     restart: unless-stopped
-
-# volumes:
-#   data:
-#   es_data:
