@@ -57,24 +57,24 @@ function getChatDisplayName(
 }
 
 function getClientDisplayName(
-  client: { kind: string; externalId: string } | undefined
+  client: { kind: string; telegramId: string } | undefined
 ): string {
   if (!client) {
     return "";
   }
-  return `${client.kind} • ${client.externalId}`;
+  return `${client.kind} • ${client.telegramId}`;
 }
 
 interface MessageDoc {
   _id: string;
-  messageId: string;
-  text?: string;
-  out: boolean;
-  deleted: boolean;
-  ts: number;
-  mediaId?: string;
-  mediaKind?: string;
   chatId: string;
+  deleted: boolean;
+  mediaExternalId?: string;
+  mediaKind?: string;
+  messageId: string;
+  outgoing: boolean;
+  text?: string;
+  timestamp: number;
 }
 
 function shouldShowDateHeader(
@@ -85,8 +85,8 @@ function shouldShowDateHeader(
     return true;
   }
 
-  const messageDate = new Date(message.ts).toDateString();
-  const prevDate = new Date(prevMessage.ts).toDateString();
+  const messageDate = new Date(message.timestamp).toDateString();
+  const prevDate = new Date(prevMessage.timestamp).toDateString();
 
   return messageDate !== prevDate;
 }
@@ -100,7 +100,7 @@ function MessageBubble({
   media?: MediaInfo;
   highlighted?: boolean;
 }): React.ReactNode {
-  const isOutgoing = message.out;
+  const isOutgoing = message.outgoing;
   const isDeleted = message.deleted;
   const hasMedia = media !== undefined;
 
@@ -151,7 +151,7 @@ function MessageBubble({
               : "text-muted-foreground/60"
           )}
         >
-          {formatMessageTime(message.ts)}
+          {formatMessageTime(message.timestamp)}
         </div>
       </div>
     </div>
@@ -390,7 +390,7 @@ export function MessageList({
                     <div className="my-5 flex items-center gap-3 px-4">
                       <div className="h-px flex-1 bg-border/50" />
                       <span className="font-medium text-[11px] text-muted-foreground/60 uppercase tracking-wider">
-                        {formatDateHeader(message.ts)}
+                        {formatDateHeader(message.timestamp)}
                       </span>
                       <div className="h-px flex-1 bg-border/50" />
                     </div>

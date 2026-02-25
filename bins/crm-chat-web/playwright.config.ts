@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig, devices } from "@playwright/test";
 
 // Fixed ports — must match global-setup.ts container config
@@ -13,7 +14,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
-  timeout: 60_000,
+  timeout: 30_000,
   use: {
     baseURL: process.env.TEST_BASE_URL ?? `http://localhost:${TEST_PORT}`,
     trace: "on-first-retry",

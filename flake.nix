@@ -18,6 +18,11 @@
       flake = false;
     };
 
+    bun2nix = {
+      url = "github:nix-community/bun2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Swagger UI fetched below via pkgs.fetchurl to preserve zip format
 
     # sccache = {
@@ -33,6 +38,19 @@
 
   };
 
+  nixConfig = {
+    extra-substituters = [
+      "https://cache.nixos.org"
+      "https://nix-community.cachix.org"
+      "https://nickcomua.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+      "nickcomua.cachix.org-1:stcsazuAJ0uhVu6i4yXinhDenHEwKngOtystEXf++so="
+    ];
+  };
+
   outputs = {
     self,
     nixpkgs,
@@ -40,6 +58,7 @@
     flake-utils,
     fenix,
     advisory-db,
+    bun2nix,
     # sccache,
     crm-chat-web-app,
     ...
@@ -48,6 +67,7 @@
       system: let
         pkgs = import nixpkgs {
           inherit system;
+          overlays = [ bun2nix.overlays.default ];
         #   config.allowUnfree = true;
         #   # overlays = [ sccache.overlays.default ];
         };
@@ -80,12 +100,38 @@
         ];
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        # Include standard Cargo sources plus .ts files needed by convex-backend build.rs
+
+        # Pre-fetch convex-backend node_modules (needed by convex-typegen build.rs
+        # to resolve npm imports like convex-helpers when parsing TypeScript)
+        convexBackendNodeModules = pkgs.stdenv.mkDerivation {
+          pname = "convex-backend-node-modules";
+          version = "0.0.0";
+          src = pkgs.runCommand "convex-backend-pkg-src" {} ''
+            mkdir -p $out
+            cp ${./bins/convex-backend/package.json} $out/package.json
+            cp ${./bins/convex-backend/bun.lock} $out/bun.lock
+          '';
+          nativeBuildInputs = [ pkgs.bun2nix.hook ];
+          bunDeps = pkgs.bun2nix.fetchBunDeps {
+            bunNix = ./bins/convex-backend/bun.nix;
+          };
+          dontUseBunBuild = true;
+          bunInstallFlags =
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then [ "--backend=copyfile" ]
+            else [];
+          installPhase = ''
+            mkdir -p $out
+            cp -r node_modules $out/
+          '';
+        };
+
+        # Include standard Cargo sources plus .ts/.js files needed by convex-backend build.rs
         src = lib.fileset.toSource {
           root = ./.;
           fileset = lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./.)
-            (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
+            (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
           ];
         };
 
@@ -100,6 +146,9 @@
             cp ${swaggerUiZip}/v5.17.14.zip $SWAGGER_UI_ZIP_DIR/
             chmod 644 $SWAGGER_UI_ZIP_DIR/v5.17.14.zip
             export SWAGGER_UI_DOWNLOAD_URL="file://$SWAGGER_UI_ZIP_DIR/v5.17.14.zip"
+
+            # Link node_modules for convex-backend (convex-typegen build.rs resolves npm imports)
+            ln -s ${convexBackendNodeModules}/node_modules bins/convex-backend/node_modules
           '';
 
           nativeBuildInputs = [
@@ -108,6 +157,7 @@
             pkgs.pkg-config
             pkgs.perl # Required by openssl-sys vendored build
             pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
+            pkgs.bun # Required by convex-typegen build.rs to parse TypeScript
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
           #   pkgs.llvmPackages.libclang
@@ -158,8 +208,8 @@
 
               (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./bins/convex-backend)
-              # Include .ts files needed by convex-backend build.rs (convex-typegen)
-              (lib.fileset.fileFilter (file: file.hasExt "ts") ./bins/convex-backend/convex)
+              # Include .ts/.js files needed by convex-backend build.rs (convex-typegen)
+              (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
@@ -167,13 +217,13 @@
             ];
           };
 
-        # Build telegram-subscriber binary
-        telegram-subscriber = craneLib.buildPackage (
+        # Build crm-worker binary
+        crm-worker = craneLib.buildPackage (
           individualCrateArgs
           // {
-            pname = "telegram-subscriber";
-            cargoExtraArgs = "-p telegram-subscriber";
-            src = fileSetForCrate ./bins/telegram-subscriber;
+            pname = "crm-worker";
+            cargoExtraArgs = "-p crm-worker";
+            src = fileSetForCrate ./bins/crm-worker;
           }
         );
         crm-chat-web = crm-chat-web-app.packages.${system}.crm-chat-web;
@@ -181,7 +231,7 @@
 
       in {
         checks = {
-          inherit telegram-subscriber;
+          inherit crm-worker;
           # crm-chat-web build requires convex-backend generated types outside sandbox
           inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint;
           crm-chat-clippy = craneLib.cargoClippy (
@@ -266,17 +316,18 @@
 
         };
         packages = {
-          inherit telegram-subscriber crm-chat-web crm-chat-web-img;
+          inherit crm-worker crm-chat-web crm-chat-web-img;
 
-          telegram-subscriber-img = pkgs.dockerTools.buildLayeredImage {
-            name = "nick395/telegram-subscriber";
+          crm-worker-img = pkgs.dockerTools.buildLayeredImage {
+            name = "nick395/crm-worker";
             tag = "latest";
-            contents = [telegram-subscriber pkgs.cacert];
+            contents = [crm-worker pkgs.cacert];
 
             config = {
-              Cmd = ["/bin/telegram-subscriber"];
+              Cmd = ["/bin/crm-worker"];
             };
           };
+
         };
 
         devShells.default = craneLib.devShell {
@@ -286,7 +337,6 @@
           SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
-            export PATH="$HOME/.opencode/bin:$PATH"
             export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
           '';
           checks = self.checks.${system};
@@ -299,7 +349,7 @@
           # cargo, rustc, clippy, rustfmt are provided by the fenix toolchain
           packages = with pkgs; [
             openssl
-
+            bun
             taplo
             cargo-hakari
             cargo-audit

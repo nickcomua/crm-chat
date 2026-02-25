@@ -1,10 +1,10 @@
-//! Error types for task execution.
+//! Error types for crm-worker.
 
 use thiserror::Error;
 
 /// Errors that can occur during task execution.
 #[derive(Error, Debug)]
-pub enum TaskError {
+pub enum WorkerError {
     /// Failed to build Telegram client.
     #[error("failed to build Telegram client: {0}")]
     ClientBuildFailed(String),
@@ -17,13 +17,20 @@ pub enum TaskError {
     #[error("Convex mutation error: {0}")]
     MutationFailed(String),
 
-    /// Password token deserialization failed.
-    #[error("failed to deserialize password token: {0}")]
-    PasswordTokenInvalid(String),
+    /// Session not found on disk.
+    #[error("session not found: {0}")]
+    #[allow(dead_code)]
+    SessionNotFound(String),
 }
 
-impl From<serde_json::Error> for TaskError {
+impl From<serde_json::Error> for WorkerError {
     fn from(err: serde_json::Error) -> Self {
-        TaskError::Serialization(err.to_string())
+        WorkerError::Serialization(err.to_string())
+    }
+}
+
+impl From<convex_backend::ConvexError> for WorkerError {
+    fn from(err: convex_backend::ConvexError) -> Self {
+        WorkerError::MutationFailed(err.to_string())
     }
 }

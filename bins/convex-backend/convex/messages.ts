@@ -1,13 +1,13 @@
-import { mutation, query } from "./_generated/server";
-import { ConvexError } from "convex/values";
+import { asyncMap } from "convex-helpers";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
+import { query } from "./_generated/server";
+import { mutation } from "./functions";
 import {
-	isRobotCaller,
-	requireAuth,
 	requireHuman,
 	requireOwner,
 } from "./helpers/auth";
+import { err, ok, result } from "./helpers/result";
 import { mediaKind } from "./schema";
 
 const MAX_CHAT_IDS = 100;
@@ -44,34 +44,37 @@ export const getLastPerChat = query({
 		v.object({
 			chatId: v.string(),
 			text: v.optional(v.string()),
-			mediaId: v.optional(v.string()),
+			mediaExternalId: v.optional(v.string()),
 			mediaKind: v.optional(mediaKind),
 		}),
 	),
 	handler: async (ctx, { chatIds }) => {
 		if (chatIds.length > MAX_CHAT_IDS) {
-			throw new ConvexError(`Too many chatIds (max ${MAX_CHAT_IDS})`);
+			return [];
 		}
 		const caller = await requireHuman(ctx);
 
 		// Verify chat ownership and fetch last messages in parallel
-		const entries = await Promise.all(
-			chatIds.map(async (chatId) => {
-				const chat = await ctx.db
-					.query("chats")
-					.withIndex("by_chatId", (q) => q.eq("chatId", chatId))
-					.unique();
-				if (!chat || chat.userId !== caller.id) return null;
+		const entries = await asyncMap(chatIds, async (chatId) => {
+			const chat = await ctx.db
+				.query("chats")
+				.withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+				.unique();
+			if (!chat || chat.userId !== caller.id) return null;
 
-				const msg = await ctx.db
-					.query("messages")
-					.withIndex("by_chatId_ts", (q) => q.eq("chatId", chatId))
-					.order("desc")
-					.first();
-				if (!msg) return null;
-				return { chatId, text: msg.text, mediaId: msg.mediaId, mediaKind: msg.mediaKind };
-			}),
-		);
+			const msg = await ctx.db
+				.query("messages")
+				.withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
+				.order("desc")
+				.first();
+			if (!msg) return null;
+			return {
+				chatId,
+				text: msg.text,
+				mediaExternalId: msg.mediaExternalId,
+				mediaKind: msg.mediaKind,
+			};
+		});
 		return entries.filter((e): e is NonNullable<typeof e> => e !== null);
 	},
 });
@@ -94,13 +97,14 @@ export const listByChat = query({
 
 		return await ctx.db
 			.query("messages")
-			.withIndex("by_chatId_ts", (q) => q.eq("chatId", chatId))
+			.withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
 			.order("desc")
 			.paginate(paginationOpts);
 	},
 });
 
-/** Upsert a message. Callable by owner or robot. */
+/** Upsert a message. Human-only (workers use workerOps.upsertMessage).
+ *  Auto-creates media records respecting per-chat/client media settings. */
 export const upsert = mutation({
 	args: {
 		messageId: v.string(),
@@ -110,20 +114,16 @@ export const upsert = mutation({
 		chatId: v.string(),
 		senderId: v.string(),
 		text: v.optional(v.string()),
-		out: v.boolean(),
+		outgoing: v.boolean(),
 		deleted: v.boolean(),
-		ts: v.number(),
-		mediaId: v.optional(v.string()),
+		timestamp: v.number(),
+		mediaExternalId: v.optional(v.string()),
 		mediaKind: v.optional(mediaKind),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const caller = await requireAuth(ctx);
-
-		const isRobot = isRobotCaller(caller);
-		if (!isRobot) {
-			requireOwner(caller.id, args.userId);
-		}
+		const caller = await requireHuman(ctx);
+		requireOwner(caller.id, args.userId);
 
 		const existing = await ctx.db
 			.query("messages")
@@ -133,10 +133,10 @@ export const upsert = mutation({
 		if (existing) {
 			await ctx.db.patch(existing._id, {
 				text: args.text,
-				out: args.out,
+				outgoing: args.outgoing,
 				deleted: args.deleted,
-				ts: args.ts,
-				mediaId: args.mediaId,
+				timestamp: args.timestamp,
+				mediaExternalId: args.mediaExternalId,
 				mediaKind: args.mediaKind,
 			});
 		} else {
@@ -145,11 +145,11 @@ export const upsert = mutation({
 
 		// Auto-create media record if this message has media.
 		// Respects per-chat media settings (falling back to client-level settings).
-		const { mediaId: mid, mediaKind: mk } = args;
+		const { mediaExternalId: mid, mediaKind: mk } = args;
 		if (mid && mk) {
 			const existingMedia = await ctx.db
 				.query("media")
-				.withIndex("by_externalId", (q) => q.eq("externalId", mid))
+				.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", mid))
 				.unique();
 
 			if (!existingMedia) {
@@ -172,25 +172,26 @@ export const upsert = mutation({
 				}
 
 				await ctx.db.insert("media", {
-					externalId: mid,
+					telegramFileId: mid,
 					userId: args.userId,
 					clientId: args.clientId,
 					chatId: args.chatId,
 					messageId: args.messageId,
-					status: shouldSave ? ("pending" as const) : ("skipped" as const),
+					status: shouldSave ? ("Pending" as const) : ("Skipped" as const),
 					kind: mk,
 				});
 			}
 		}
+		return null;
 	},
 });
 
-/** Soft-delete a message by external ID. */
+/** Soft-delete a message by external ID. Human-only (workers use workerOps.markMessageDeleted). */
 export const markDeleted = mutation({
 	args: { externalId: v.string() },
-	returns: v.null(),
+	returns: result(v.null(), v.literal("Message not found or ambiguous (multiple matches)")),
 	handler: async (ctx, { externalId }) => {
-		const caller = await requireAuth(ctx);
+		const caller = await requireHuman(ctx);
 
 		const messages = await ctx.db
 			.query("messages")
@@ -198,15 +199,13 @@ export const markDeleted = mutation({
 			.collect();
 
 		if (messages.length !== 1) {
-			throw new Error("Message not found or ambiguous (multiple matches)");
+			return err("Message not found or ambiguous (multiple matches)");
 		}
 
 		const msg = messages[0];
-		const isRobot = isRobotCaller(caller);
-		if (!isRobot) {
-			requireOwner(caller.id, msg.userId);
-		}
+		requireOwner(caller.id, msg.userId);
 
 		await ctx.db.patch(msg._id, { deleted: true });
+		return ok(null);
 	},
 });

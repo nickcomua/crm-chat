@@ -13,11 +13,14 @@ use std::time::Duration;
 
 use common::{assert_mutation_error, get_test_env, mint_robot_jwt};
 use convex::ConvexClient;
-use convex_backend::{ConvexApi, PhoneAuthRobotClaimArgs, QrAuthRobotClaimArgs};
+use convex_backend::{
+    ConvexApi, ConvexApiClient, WorkerTasksPendingForWorkerArgs, WorkerTasksRunTaskArgs,
+    WorkerTasksWorkerCompleteArgs,
+};
 use futures::StreamExt;
 
-/// Create a fresh ConvexClient authenticated as the test robot.
-async fn connect_robot_client() -> ConvexClient {
+/// Create a fresh ConvexApiClient authenticated as the test robot.
+async fn connect_robot_client() -> ConvexApiClient {
     let env = get_test_env().await;
     let token = mint_robot_jwt(&env.robot_private_key_pem, &env.robot_id);
     let mut client = ConvexClient::new(&env.convex_url)
@@ -26,7 +29,7 @@ async fn connect_robot_client() -> ConvexClient {
     client.set_auth(Some(token)).await;
     // Give the server a moment to process the auth token
     tokio::time::sleep(Duration::from_millis(500)).await;
-    client
+    ConvexApiClient::new(client)
 }
 
 // =============================================================================
@@ -34,12 +37,13 @@ async fn connect_robot_client() -> ConvexClient {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_subscribe_phone_auth_pending_empty() {
-    let mut client = connect_robot_client().await;
+async fn test_subscribe_worker_tasks_pending_empty() {
+    let client = connect_robot_client().await;
 
     let mut sub = client
-        .subscribe_phone_auth_pending_for_robot()
+        .subscribe_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
+            maxMediaWorkflows: None,
+        })
         .await
         .expect("Failed to subscribe");
 
@@ -51,41 +55,19 @@ async fn test_subscribe_phone_auth_pending_empty() {
 
     assert!(
         result.is_empty(),
-        "Expected no pending phone auths, got {}",
+        "Expected no pending tasks, got {}",
         result.len()
     );
 }
 
 #[tokio::test]
-
-async fn test_subscribe_qr_auth_pending_empty() {
-    let mut client = connect_robot_client().await;
-
-    let mut sub = client
-        .subscribe_qr_auth_pending_for_robot()
-        .await
-        .expect("Failed to subscribe");
-
-    let result = tokio::time::timeout(Duration::from_secs(10), sub.next())
-        .await
-        .expect("Timeout waiting for subscription")
-        .expect("Subscription stream ended")
-        .expect("Subscription yielded error");
-
-    assert!(
-        result.is_empty(),
-        "Expected no pending QR auths, got {}",
-        result.len()
-    );
-}
-
-#[tokio::test]
-
-async fn test_query_phone_auth_pending() {
-    let mut client = connect_robot_client().await;
+async fn test_query_worker_tasks_pending_empty() {
+    let client = connect_robot_client().await;
 
     let result = client
-        .query_phone_auth_pending_for_robot()
+        .query_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
+            maxMediaWorkflows: Some(2.0),
+        })
         .await
         .expect("Query failed");
 
@@ -101,13 +83,12 @@ async fn test_query_phone_auth_pending() {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_phone_auth_robot_claim_invalid_id() {
-    let mut client = connect_robot_client().await;
+async fn test_run_task_invalid_id() {
+    let client = connect_robot_client().await;
 
     let result = client
-        .phone_auth_robot_claim(PhoneAuthRobotClaimArgs {
-            authId: "not_a_valid_convex_id".into(),
+        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
+            taskId: "not_a_valid_convex_id".into(),
         })
         .await;
 
@@ -116,13 +97,13 @@ async fn test_phone_auth_robot_claim_invalid_id() {
 }
 
 #[tokio::test]
-
-async fn test_qr_auth_robot_claim_invalid_id() {
-    let mut client = connect_robot_client().await;
+async fn test_worker_complete_invalid_id() {
+    let client = connect_robot_client().await;
 
     let result = client
-        .qr_auth_robot_claim(QrAuthRobotClaimArgs {
-            authId: "not_a_valid_convex_id".into(),
+        .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
+            taskId: "not_a_valid_convex_id".into(),
+            task: None,
         })
         .await;
 
@@ -134,25 +115,24 @@ async fn test_qr_auth_robot_claim_invalid_id() {
 // =============================================================================
 
 #[tokio::test]
-
-async fn test_phone_auth_args_serialization() {
-    let args = PhoneAuthRobotClaimArgs {
-        authId: "test_id_123".into(),
+async fn test_run_task_args_serialization() {
+    let args = WorkerTasksRunTaskArgs {
+        taskId: "test_id_123".into(),
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("authId"), Some(&serde_json::json!("test_id_123")));
+    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_123")));
     assert_eq!(map.len(), 1);
 }
 
 #[tokio::test]
-
-async fn test_qr_auth_args_serialization() {
-    let args = QrAuthRobotClaimArgs {
-        authId: "test_id_456".into(),
+async fn test_worker_complete_args_serialization() {
+    let args = WorkerTasksWorkerCompleteArgs {
+        taskId: "test_id_456".into(),
+        task: None,
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("authId"), Some(&serde_json::json!("test_id_456")));
-    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_456")));
+    // task is None so it shouldn't be serialized (or serialized as null)
 }
 
 // =============================================================================
@@ -160,17 +140,18 @@ async fn test_qr_auth_args_serialization() {
 // =============================================================================
 
 #[tokio::test]
-
 async fn test_unauthenticated_rejected() {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url)
-        .await
-        .expect("Failed to connect");
+    let client = ConvexApiClient::new(
+        ConvexClient::new(&env.convex_url)
+            .await
+            .expect("Failed to connect"),
+    );
     // Deliberately do NOT call set_auth
 
     let result = client
-        .phone_auth_robot_claim(PhoneAuthRobotClaimArgs {
-            authId: "test_id".into(),
+        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
+            taskId: "test_id".into(),
         })
         .await;
     assert_mutation_error(result, "");

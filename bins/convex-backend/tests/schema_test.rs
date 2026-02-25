@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use std::collections::HashMap;
+
 use convex_typegen::{Configuration, generate};
 
 #[test]
@@ -11,8 +13,9 @@ fn test_crm_chat_schema() {
 
     let config = Configuration {
         schema_path,
-        out_file: out_file.to_string_lossy().to_string(),
+        out_file: out_file.clone(),
         function_paths: vec![],
+        helper_stubs: HashMap::new(),
     };
 
     generate(config).expect("Failed to generate types from CRM chat schema");
@@ -36,11 +39,12 @@ fn test_crm_chat_schema() {
         "Missing PhoneAuthsTable struct"
     );
     assert!(
-        output.contains("QrAuthsTable"),
-        "Missing QrAuthsTable struct"
-    );
-    assert!(
         output.contains("NotificationsTable"),
         "Missing NotificationsTable struct"
     );
+    assert!(
+        output.contains("WorkerTasksTable"),
+        "Missing WorkerTasksTable struct"
+    );
+    assert!(output.contains("HumansTable"), "Missing HumansTable struct");
 }

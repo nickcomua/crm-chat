@@ -24,7 +24,7 @@ interface ChatDoc {
 interface ClientDoc {
   _id: string;
   kind: string;
-  externalId: string;
+  telegramId: string;
 }
 
 type SearchScopeType =
@@ -33,10 +33,10 @@ type SearchScopeType =
   | { type: "client"; clientId: number };
 
 interface SearchDialogProps {
-  open: boolean;
+  initialScope?: SearchScopeType;
   onOpenChange: (open: boolean) => void;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
-  initialScope?: SearchScopeType;
+  open: boolean;
 }
 
 function formatTimestamp(ts: number): string {
@@ -359,7 +359,7 @@ export function SearchDialog({
                 }
                 type="button"
               >
-                {client.kind} ({client.externalId.slice(0, 8)}...)
+                {client.kind} ({client.telegramId.slice(0, 8)}...)
               </button>
             ))}
           </div>

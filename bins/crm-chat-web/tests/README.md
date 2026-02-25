@@ -23,9 +23,9 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 
 Tests use **testcontainers** to automatically spin up infrastructure:
 
-1. `global-setup.ts` starts a Convex Docker container, generates robot RSA keys, deploys Convex functions, and launches `telegram-subscriber` as a child process.
+1. `global-setup.ts` starts Convex and Restate Docker containers, generates robot RSA keys, deploys Convex functions, launches `crm-worker`, and registers it with Restate.
 2. Tests run against the ephemeral backend (no manual Docker/deploy needed).
-3. `global-teardown.ts` kills the subscriber and stops the container.
+3. `global-teardown.ts` kills the worker and stops the containers.
 
 The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Bun.
 
@@ -58,8 +58,8 @@ Note: `global-setup.ts` still starts a Convex container unless you also set `E2E
 
 | File | Description |
 |------|-------------|
-| `global-setup.ts` | Testcontainers global setup (Convex container, robot keys, deploy, subscriber) |
-| `global-teardown.ts` | Cleanup (kill subscriber, stop container) |
+| `global-setup.ts` | Testcontainers global setup (Convex + Restate containers, robot keys, deploy, crm-worker) |
+| `global-teardown.ts` | Cleanup (kill worker, stop containers) |
 | `helpers.ts` | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
 | `qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
 | `scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |

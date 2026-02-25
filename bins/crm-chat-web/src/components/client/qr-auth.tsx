@@ -1,16 +1,16 @@
-import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, XCircle } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useRef, useState } from "react";
 import { useQrAuth } from "@/hooks/use-qr-auth";
 import { Button } from "../ui/button";
 
 interface QrAuthProps {
-  onSuccess?: () => void;
   onCancel?: () => void;
+  onSuccess?: () => void;
 }
 
 export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
-  const { auth, startQrAuth, cancelQrAuth } = useQrAuth();
+  const { progress, isDone, startQrAuth, cancelQrAuth } = useQrAuth();
   const hasStartedRef = useRef(false);
 
   // Keep latest cancelQrAuth in a ref for cleanup
@@ -34,24 +34,24 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
     };
   }, []);
 
-  const step = auth?.step;
-
-  // Handle success
+  // When task is deleted (isDone), close the dialog
   useEffect(() => {
-    if (step === "Authorized" || step === "AlreadyAuthorized") {
+    if (isDone) {
       onSuccess?.();
     }
-  }, [step, onSuccess]);
+  }, [isDone, onSuccess]);
+
+  const step = progress?.step;
 
   // Track expiration countdown
   const [expiresIn, setExpiresIn] = useState(0);
 
   useEffect(() => {
-    if (step !== "Token" || !auth?.qrExpires) {
+    if (step !== "Token" || !progress?.qrExpires) {
       return;
     }
 
-    const expires = auth.qrExpires;
+    const expires = progress.qrExpires;
 
     const updateExpiration = (): void => {
       const now = Math.floor(Date.now() / 1000);
@@ -65,7 +65,7 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
       clearTimeout(timeout);
       clearInterval(interval);
     };
-  }, [step, auth?.qrExpires]);
+  }, [step, progress?.qrExpires]);
 
   const handleCancel = (): void => {
     cancelQrAuth();
@@ -77,7 +77,7 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
   };
 
   // Loading state
-  if (!auth || step === "Pending" || step === "Generating") {
+  if (!progress || step === "Pending" || step === "Generating") {
     return (
       <div className="flex flex-col items-center justify-center space-y-4 p-8">
         <Loader2 className="h-12 w-12 animate-spin text-muted-foreground" />
@@ -90,11 +90,11 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
   }
 
   // QR code token
-  if (step === "Token" && auth.qrUrl) {
+  if (step === "Token" && progress.qrUrl) {
     return (
       <div className="flex flex-col items-center justify-center space-y-4 p-6">
         <div className="rounded-lg bg-white p-4">
-          <QRCodeSVG size={200} value={auth.qrUrl} />
+          <QRCodeSVG size={200} value={progress.qrUrl} />
         </div>
         <p className="text-muted-foreground text-sm">
           Scan with Telegram to sign in
@@ -111,17 +111,7 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
     );
   }
 
-  // Success
-  if (step === "Authorized" || step === "AlreadyAuthorized") {
-    return (
-      <div className="flex flex-col items-center justify-center space-y-4 p-8">
-        <CheckCircle2 className="h-12 w-12 text-emerald-500" />
-        <p className="font-medium text-emerald-600">Successfully connected!</p>
-      </div>
-    );
-  }
-
-  // Cancelled
+  // Cancelled — offer retry
   if (step === "Cancelled") {
     return (
       <div className="flex flex-col items-center justify-center space-y-4 p-8">
@@ -131,26 +121,6 @@ export function QrAuth({ onSuccess, onCancel }: QrAuthProps): React.ReactNode {
           <RefreshCw className="mr-2 h-4 w-4" />
           Try Again
         </Button>
-      </div>
-    );
-  }
-
-  // Failed
-  if (step === "Failed") {
-    return (
-      <div className="flex flex-col items-center justify-center space-y-4 p-8">
-        <XCircle className="h-12 w-12 text-red-500" />
-        <p className="font-medium text-red-600">Authentication failed</p>
-        <p className="text-muted-foreground text-sm">{auth.error}</p>
-        <div className="flex gap-2">
-          <Button onClick={handleRetry} variant="outline">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Try Again
-          </Button>
-          <Button onClick={handleCancel} variant="ghost">
-            Cancel
-          </Button>
-        </div>
       </div>
     );
   }

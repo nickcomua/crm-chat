@@ -4,6 +4,7 @@
 //! and implements phone-based and QR code login flows.
 
 use grammers_client::{client::PasswordToken, SignInError};
+use grammers_session::Session as _;
 use messanger_interface::MessengerError;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -18,7 +19,10 @@ pub enum QrLoginToken {
         expires: i32,
     },
     /// The token was accepted on another device, login succeeded.
-    Success,
+    Success {
+        /// The numeric Telegram user ID of the authenticated user.
+        user_id: i64,
+    },
     /// The client needs to connect to a different DC to complete login.
     /// This is handled automatically by `login_with_qr`.
     MigrateTo { dc_id: i32 },
@@ -326,6 +330,93 @@ impl TelegramClient {
         }
     }
 
+    /// Import a login token from a `tg://login?token=...` URL.
+    ///
+    /// This calls [`auth.importLoginToken`](https://core.telegram.org/method/auth.importLoginToken)
+    /// to import a QR login token. Can be called on an unauthenticated connection.
+    ///
+    /// # Arguments
+    /// * `url` - A `tg://login?token=...` URL (e.g. scanned from a QR code)
+    ///
+    /// # Returns
+    /// A `QrLoginToken` indicating the result:
+    /// * `Token` — the import returned a new token (re-export)
+    /// * `Success` — login completed successfully
+    /// * `MigrateTo` — need to reconnect to a different DC
+    #[instrument(skip(self))]
+    pub async fn import_login_token(&self, url: &str) -> Result<QrLoginToken, MessengerError> {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        use grammers_tl_types as tl;
+
+        info!(url = %url, "Importing login token from URL");
+
+        // Parse the base64 token from the tg:// URL
+        let token_b64 = url.strip_prefix("tg://login?token=").ok_or_else(|| {
+            MessengerError::Authentication(
+                "Invalid QR login URL: expected tg://login?token=<base64>".to_string(),
+            )
+        })?;
+
+        let token = URL_SAFE_NO_PAD.decode(token_b64).map_err(|e| {
+            error!(error = %e, "Failed to decode base64 token from URL");
+            MessengerError::Authentication(format!("Failed to decode token: {}", e))
+        })?;
+
+        let request = tl::functions::auth::ImportLoginToken { token };
+
+        let result = {
+            let client = self.client.lock().await;
+            client.invoke(&request).await
+        };
+
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => {
+                error!(error = %e, "Failed to import login token");
+                return Err(MessengerError::Authentication(format!(
+                    "Failed to import login token: {}",
+                    e
+                )));
+            }
+        };
+
+        match result {
+            tl::enums::auth::LoginToken::Token(token) => {
+                let encoded = URL_SAFE_NO_PAD.encode(&token.token);
+                let new_url = format!("tg://login?token={}", encoded);
+                debug!(expires = token.expires, "Import returned a new token");
+                Ok(QrLoginToken::Token {
+                    url: new_url,
+                    expires: token.expires,
+                })
+            }
+            tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                info!(dc_id = migrate.dc_id, "Import requires DC migration");
+                Ok(QrLoginToken::MigrateTo {
+                    dc_id: migrate.dc_id,
+                })
+            }
+            tl::enums::auth::LoginToken::Success(success) => match success.authorization {
+                tl::enums::auth::Authorization::Authorization(auth) => {
+                    let user_id = match auth.user {
+                        tl::enums::User::User(user) => user.id,
+                        tl::enums::User::Empty(empty) => empty.id,
+                    };
+                    info!(user_id = user_id, "Login token import successful");
+                    Ok(QrLoginToken::Success { user_id })
+                }
+                tl::enums::auth::Authorization::SignUpRequired(_) => {
+                    error!("Import failed - account signup required");
+                    Err(MessengerError::Authentication(
+                        "Account signup required - QR login only works for existing accounts"
+                            .to_string(),
+                    ))
+                }
+            },
+        }
+    }
+
     /// Perform QR code login.
     ///
     /// This function returns a stream of `QrLoginToken` events. Display each token as a QR code.
@@ -346,8 +437,8 @@ impl TelegramClient {
     ///             println!("Scan this QR code: {}", url);
     ///             println!("Expires at: {}", expires);
     ///         }
-    ///         QrLoginToken::Success => {
-    ///             println!("Login successful!");
+    ///         QrLoginToken::Success { user_id } => {
+    ///             println!("Login successful! User ID: {}", user_id);
     ///             break;
     ///         }
     ///         QrLoginToken::MigrateTo { dc_id } => {
@@ -443,9 +534,19 @@ impl TelegramClient {
                         match import_result {
                             tl::enums::auth::LoginToken::Success(success) => {
                                 info!("QR login successful after DC migration");
+
+                                // invoke_in_dc() saved DC4's auth key but left home_dc
+                                // pointing at DC1. Redirect all future invoke() calls to
+                                // the DC where we're actually authorized.
+                                self.session.set_home_dc_id(migrate.dc_id);
+
                                 match success.authorization {
-                                    tl::enums::auth::Authorization::Authorization(_) => {
-                                        yield Ok(QrLoginToken::Success);
+                                    tl::enums::auth::Authorization::Authorization(auth) => {
+                                        let user_id = match auth.user {
+                                            tl::enums::User::User(user) => user.id,
+                                            tl::enums::User::Empty(empty) => empty.id,
+                                        };
+                                        yield Ok(QrLoginToken::Success { user_id });
                                         return;
                                     }
                                     tl::enums::auth::Authorization::SignUpRequired(_) => {
@@ -466,8 +567,12 @@ impl TelegramClient {
                     tl::enums::auth::LoginToken::Success(success) => {
                         info!("QR login successful");
                         match success.authorization {
-                            tl::enums::auth::Authorization::Authorization(_) => {
-                                yield Ok(QrLoginToken::Success);
+                            tl::enums::auth::Authorization::Authorization(auth) => {
+                                let user_id = match auth.user {
+                                    tl::enums::User::User(user) => user.id,
+                                    tl::enums::User::Empty(empty) => empty.id,
+                                };
+                                yield Ok(QrLoginToken::Success { user_id });
                                 return;
                             }
                             tl::enums::auth::Authorization::SignUpRequired(_) => {

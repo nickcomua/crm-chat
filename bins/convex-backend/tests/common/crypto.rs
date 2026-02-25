@@ -39,7 +39,7 @@ pub fn generate_keypair_and_jwks() -> (String, String) {
 }
 
 #[derive(Serialize)]
-struct RobotClaims {
+struct WorkerClaims {
     sub: String,
     iss: String,
     aud: String,
@@ -57,7 +57,7 @@ pub fn mint_robot_jwt(private_key_pem: &str, robot_id: &str) -> String {
         .unwrap()
         .as_secs();
 
-    let claims = RobotClaims {
+    let claims = WorkerClaims {
         sub: robot_id.to_string(),
         iss: "https://crm-chat-robot.local".to_string(),
         aud: "convex".to_string(),
