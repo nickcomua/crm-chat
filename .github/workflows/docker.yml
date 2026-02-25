@@ -41,33 +41,33 @@ jobs:
           name: nickcomua
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
-      - name: Build and push telegram-subscriber (multi-arch)
+      - name: Build and push crm-worker (multi-arch)
         run: |
           set -e
           VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
 
           # Build x86_64-linux
-          nix build --accept-flake-config .#packages.x86_64-linux.telegram-subscriber-img --print-build-logs
+          nix build --accept-flake-config .#packages.x86_64-linux.crm-worker-img --print-build-logs
           docker load < ./result
-          docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-amd64
-          docker push nick395/telegram-subscriber:${VERSION_TAG}-amd64
+          docker tag nick395/crm-worker:latest nick395/crm-worker:${VERSION_TAG}-amd64
+          docker push nick395/crm-worker:${VERSION_TAG}-amd64
 
           # Build aarch64-linux
-          nix build --accept-flake-config .#packages.aarch64-linux.telegram-subscriber-img --print-build-logs
+          nix build --accept-flake-config .#packages.aarch64-linux.crm-worker-img --print-build-logs
           docker load < ./result
-          docker tag nick395/telegram-subscriber:latest nick395/telegram-subscriber:${VERSION_TAG}-arm64
-          docker push nick395/telegram-subscriber:${VERSION_TAG}-arm64
+          docker tag nick395/crm-worker:latest nick395/crm-worker:${VERSION_TAG}-arm64
+          docker push nick395/crm-worker:${VERSION_TAG}-arm64
 
           # Create and push manifest
-          docker manifest create --amend nick395/telegram-subscriber:latest \
-            nick395/telegram-subscriber:${VERSION_TAG}-amd64 \
-            nick395/telegram-subscriber:${VERSION_TAG}-arm64
-          docker manifest create --amend nick395/telegram-subscriber:${VERSION_TAG} \
-            nick395/telegram-subscriber:${VERSION_TAG}-amd64 \
-            nick395/telegram-subscriber:${VERSION_TAG}-arm64
+          docker manifest create --amend nick395/crm-worker:latest \
+            nick395/crm-worker:${VERSION_TAG}-amd64 \
+            nick395/crm-worker:${VERSION_TAG}-arm64
+          docker manifest create --amend nick395/crm-worker:${VERSION_TAG} \
+            nick395/crm-worker:${VERSION_TAG}-amd64 \
+            nick395/crm-worker:${VERSION_TAG}-arm64
 
-          docker manifest push nick395/telegram-subscriber:latest
-          docker manifest push nick395/telegram-subscriber:${VERSION_TAG}
+          docker manifest push nick395/crm-worker:latest
+          docker manifest push nick395/crm-worker:${VERSION_TAG}
 
       - name: Build and push crm-chat-web (multi-arch)
         run: |
