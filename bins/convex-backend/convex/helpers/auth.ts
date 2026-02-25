@@ -1,4 +1,4 @@
-// todo delete this file
+// TODO delete this file
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
@@ -14,7 +14,7 @@ export type CallerIdentity = {
 };
 
 /** Extract and validate the caller's identity. Throws if not authenticated. */
-// todo make default mutation/query in functions.ts to have auth
+// TODO make default mutation/query in functions.ts to have auth
 export async function requireAuth(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<CallerIdentity> {
@@ -36,7 +36,7 @@ export function isWorkerCaller(caller: CallerIdentity): boolean {
 }
 
 /** Require the caller to be a human (Clerk-authenticated). */
-// todo create custom mutation/query in functions.ts
+// TODO create custom mutation/query in functions.ts
 export async function requireHuman(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<CallerIdentity> {
@@ -48,7 +48,7 @@ export async function requireHuman(
 }
 
 /** Require the caller to be a worker (custom JWT). */
-// todo create custom mutation/query in functions.ts
+// TODO create custom mutation/query in functions.ts
 export async function requireWorker(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<CallerIdentity> {
@@ -77,13 +77,13 @@ export function requireAssignedWorker(
 }
 
 /** Check if a phone auth step is terminal. */
-// todo remove this bs
+// TODO remove this bs
 export function isPhoneAuthTerminal(step: string): boolean {
 	return step === "Connected" || step === "Failed" || step === "Cancelled";
 }
 
 /** Check if a QR auth step is terminal. */
-// todo remove this bs
+// TODO remove this bs
 export function isQrAuthTerminal(step: string): boolean {
 	return (
 		step === "Authorized" ||
