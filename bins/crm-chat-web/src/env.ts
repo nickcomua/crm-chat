@@ -20,6 +20,8 @@ export const env = createEnv({
     VITE_ES_PROXY_URL: z.string().url().default("http://localhost:3001"),
     VITE_SENTRY_DSN: z.string().url().optional(),
     VITE_SENTRY_ENVIRONMENT: z.string().optional(),
+    VITE_TEST_USERNAME: z.string().optional(),
+    VITE_TEST_PASSWORD: z.string().optional(),
   },
   runtimeEnv: getRuntimeEnv(),
   emptyStringAsUndefined: true,

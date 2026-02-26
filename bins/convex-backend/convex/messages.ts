@@ -8,7 +8,7 @@ import {
 	requireOwner,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { mediaKind } from "./schema";
+import { forwardedFromValidator, mediaKind, reactionValidator } from "./schema";
 
 const MAX_CHAT_IDS = 100;
 
@@ -119,6 +119,10 @@ export const upsert = mutation({
 		timestamp: v.number(),
 		mediaExternalId: v.optional(v.string()),
 		mediaKind: v.optional(mediaKind),
+		replyToMessageId: v.optional(v.string()),
+		replyToText: v.optional(v.string()),
+		forwardedFrom: v.optional(forwardedFromValidator),
+		reactions: v.optional(v.array(reactionValidator)),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -138,6 +142,10 @@ export const upsert = mutation({
 				timestamp: args.timestamp,
 				mediaExternalId: args.mediaExternalId,
 				mediaKind: args.mediaKind,
+				replyToMessageId: args.replyToMessageId,
+				replyToText: args.replyToText,
+				forwardedFrom: args.forwardedFrom,
+				reactions: args.reactions,
 			});
 		} else {
 			await ctx.db.insert("messages", args);

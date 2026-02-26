@@ -2,27 +2,7 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
-
-/** Mirror Rust's sanitize_owner_id: replace non-alphanumeric (except - _) with _ */
-function sanitizeOwnerId(ownerId: string): string {
-  return ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-/** Mirror Rust's sanitize for session paths: keep only digits and + */
-function sanitizeIdentifier(identifier: string): string {
-  return identifier.replace(/[^0-9+]/g, "");
-}
-
-/** Compute session file path using E2E_SESSION_DIR (mirrors Rust's get_session_path) */
-function getSessionPath(identifier: string, ownerId: string): string {
-  const baseDir = process.env.E2E_SESSION_DIR;
-  if (!baseDir) {
-    throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
-  }
-  const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
-  return path.join(dir, `${sanitizeIdentifier(identifier)}.session`);
-}
+import { api, getConvexUserId, getRobotClient, getSessionPath, pollUntil } from "./helpers";
 
 const SETTINGS_URL_PATTERN = /\/settings/;
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -60,13 +40,11 @@ test.describe("Client Settings & Chat Scanning", () => {
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
     const robot = getRobotClient();
-    registeredClientId = unwrapResult<string>(
-      await robot.mutation(api.clients.workerRegisterConnected, {
-        userId: convexUserId,
-        telegramId,
-        kind: "Telegram",
-      })
-    );
+    registeredClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
+      userId: convexUserId,
+      telegramId,
+      kind: "Telegram",
+    })) as string;
 
     await page.close();
   });
@@ -76,7 +54,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     if (registeredClientId) {
       try {
         const robot = getRobotClient();
-        await robot.mutation(api.clients.deleteClient, {
+        await robot.mutation(api.testHelpers.deleteClient, {
           clientId: registeredClientId,
         });
       } catch {
@@ -339,16 +317,3 @@ test.describe("Client Settings & Chat Scanning", () => {
   });
 });
 
-/**
- * Poll a condition with 5s sleeps between attempts.
- * Individual checks are instant; the overall wait is bounded by test.setTimeout.
- */
-async function pollUntil(
-  page: import("@playwright/test").Page,
-  condition: () => Promise<boolean>,
-  intervalMs = 5000
-): Promise<void> {
-  while (!(await condition())) {
-    await page.waitForTimeout(intervalMs);
-  }
-}

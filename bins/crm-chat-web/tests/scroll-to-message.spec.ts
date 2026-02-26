@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
+import { api, getConvexUserId, getRobotClient } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 
@@ -28,17 +28,15 @@ test.describe("Scroll to Message", () => {
     const robot = getRobotClient();
 
     // Create test client.
-    clientId = unwrapResult<string>(
-      await robot.mutation(api.clients.workerRegisterConnected, {
-        userId,
-        telegramId: `telegram:scroll-test-${Date.now()}`,
-        kind: "Telegram",
-      })
-    );
+    clientId = (await robot.mutation(api.clients.workerRegisterConnected, {
+      userId,
+      telegramId: `telegram:scroll-test-${Date.now()}`,
+      kind: "Telegram",
+    })) as string;
 
     // Create test chat.
     chatId = `${clientId}:scroll-chat`;
-    await robot.mutation(api.chats.upsert, {
+    await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
       clientId,
@@ -53,7 +51,7 @@ test.describe("Scroll to Message", () => {
     const baseTs = Date.now() - 400_000;
     for (let i = 1; i <= 70; i++) {
       const msgId = `${clientId}:${chatId}:msg-${i}`;
-      await robot.mutation(api.messages.upsert, {
+      await robot.mutation(api.testHelpers.seedMessage, {
         messageId: msgId,
         externalId: `scroll-ext-${i}`,
         userId,
@@ -81,7 +79,7 @@ test.describe("Scroll to Message", () => {
     }
     try {
       const robot = getRobotClient();
-      await robot.mutation(api.clients.deleteClient, { clientId });
+      await robot.mutation(api.testHelpers.deleteClient, { clientId });
     } catch {
       // Best-effort cleanup.
     }

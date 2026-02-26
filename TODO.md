@@ -3,5 +3,7 @@
 3. code auth
 4. web tests for code auth
 3. implement replieys
-4. text search
-5. borad system
+4. reactions
+5. forwards
+6. text search
+7. borad system

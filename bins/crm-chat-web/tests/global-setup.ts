@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, renameSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,16 +73,34 @@ function loadEnvFile(): void {
 
 /** Run `bunx convex <args>` against the test backend. */
 function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
-  const result = spawnSync("bunx", ["convex", ...args], {
-    cwd: CONVEX_DIR,
-    env: {
-      ...process.env,
-      CONVEX_SELF_HOSTED_URL: convexUrl,
-      CONVEX_SELF_HOSTED_ADMIN_KEY: adminKey,
-    },
-    stdio: "pipe",
-    encoding: "utf-8",
-  });
+  // The Convex CLI reads .env.local from CWD, which may contain CONVEX_DEPLOYMENT
+  // that conflicts with CONVEX_SELF_HOSTED_URL. Temporarily hide it.
+  const envLocal = path.join(CONVEX_DIR, ".env.local");
+  const envLocalBak = `${envLocal}.e2e-bak`;
+  const hadEnvLocal = existsSync(envLocal);
+  if (hadEnvLocal) {
+    renameSync(envLocal, envLocalBak);
+  }
+
+  const { CONVEX_DEPLOYMENT: _, ...cleanEnv } = process.env;
+
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync("bunx", ["convex", ...args], {
+      cwd: CONVEX_DIR,
+      env: {
+        ...cleanEnv,
+        CONVEX_SELF_HOSTED_URL: convexUrl,
+        CONVEX_SELF_HOSTED_ADMIN_KEY: adminKey,
+      },
+      stdio: "pipe",
+      encoding: "utf-8",
+    });
+  } finally {
+    if (hadEnvLocal) {
+      renameSync(envLocalBak, envLocal);
+    }
+  }
   if (result.status !== 0) {
     throw new Error(
       `bunx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`

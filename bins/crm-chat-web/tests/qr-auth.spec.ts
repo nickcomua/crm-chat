@@ -111,9 +111,15 @@ test.describe("QR Code Authentication", () => {
     // Wait briefly so the task is created and potentially dispatched
     await page.waitForTimeout(2000);
 
-    // Close the dialog via the X close button
+    // Close the dialog via the X close button or Cancel button
     // This triggers QrAuth unmount → auto-cancel via cancelQrAuth()
-    await page.click('[role="dialog"] [data-slot="dialog-close"]');
+    const closeBtn = page.locator('[role="dialog"] [data-slot="dialog-close"]');
+    const cancelBtn = page.locator('[role="dialog"] button:has-text("Cancel")');
+    const target = await Promise.race([
+      closeBtn.waitFor({ timeout: 5000 }).then(() => closeBtn),
+      cancelBtn.waitFor({ timeout: 5000 }).then(() => cancelBtn),
+    ]);
+    await target.click();
 
     // Dialog should close
     await expect(page.locator('[role="dialog"]')).toBeHidden({

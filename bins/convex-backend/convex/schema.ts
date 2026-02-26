@@ -209,6 +209,17 @@ export const chatListItem = v.object({
 	photoUrl: v.optional(v.string()),
 });
 
+export const reactionValidator = v.object({
+	emoji: v.string(),
+	count: v.number(),
+	recent: v.array(v.object({ userId: v.string() })),
+});
+
+export const forwardedFromValidator = v.object({
+	senderName: v.string(),
+	date: v.optional(v.number()),
+});
+
 export const messageDoc = v.object({
 	_id: v.id("messages"),
 	_creationTime: v.number(),
@@ -224,6 +235,13 @@ export const messageDoc = v.object({
 	timestamp: v.number(),
 	mediaExternalId: v.optional(v.string()),
 	mediaKind: v.optional(mediaKind),
+	// Reply support
+	replyToMessageId: v.optional(v.string()),
+	replyToText: v.optional(v.string()),
+	// Forwarded message metadata
+	forwardedFrom: v.optional(forwardedFromValidator),
+	// Message reactions
+	reactions: v.optional(v.array(reactionValidator)),
 });
 
 export const mediaDoc = v.object({

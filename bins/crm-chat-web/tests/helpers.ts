@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import path from "node:path";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
@@ -95,17 +96,15 @@ export async function seedTestClient(
 ): Promise<string> {
   const client = getRobotClient();
 
-  // Register the client as Connected
-  const clientId = unwrapResult<string>(
-    await client.mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId,
-      kind: "Telegram",
-    })
-  );
+  // Register the client as Connected (returns bare v.id, not result-wrapped)
+  const clientId = (await client.mutation(api.clients.workerRegisterConnected, {
+    userId,
+    telegramId,
+    kind: "Telegram",
+  })) as string;
 
   // Create some test chats
-  await client.mutation(api.chats.upsert, {
+  await client.mutation(api.testHelpers.seedChat, {
     chatId: `${clientId}:chat-pinned-1`,
     userId,
     clientId,
@@ -115,7 +114,7 @@ export async function seedTestClient(
     lastMessageTimestamp: Date.now(),
   });
 
-  await client.mutation(api.chats.upsert, {
+  await client.mutation(api.testHelpers.seedChat, {
     chatId: `${clientId}:chat-unpinned-1`,
     userId,
     clientId,
@@ -125,7 +124,7 @@ export async function seedTestClient(
     lastMessageTimestamp: Date.now() - 3_600_000,
   });
 
-  await client.mutation(api.chats.upsert, {
+  await client.mutation(api.testHelpers.seedChat, {
     chatId: `${clientId}:chat-pinned-2`,
     userId,
     clientId,
@@ -154,4 +153,154 @@ export async function clerkLogin(page: Page): Promise<void> {
   await page.click("button.cl-formButtonPrimary");
   await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
   await page.waitForTimeout(3000);
+}
+
+// =============================================================================
+// Test data seeding helpers (use robot client → convex/testHelpers.ts mutations)
+// =============================================================================
+
+type Severity = "Info" | "Warning" | "Error";
+type MediaKind =
+  | "Photo"
+  | "Video"
+  | "VideoNote"
+  | "Audio"
+  | "Voice"
+  | "Sticker"
+  | "Animation"
+  | "Document";
+type MediaStatus = "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
+
+/** Seed a notification for a user. Returns the notification ID. */
+export async function seedNotification(
+  userId: string,
+  severity: Severity,
+  message: string
+): Promise<string> {
+  const robot = getRobotClient();
+  return (await robot.mutation(api.testHelpers.seedNotification, {
+    userId,
+    severity,
+    message,
+  })) as string;
+}
+
+/** Seed a media record at any status. Returns the media ID. */
+export async function seedMediaRecord(
+  userId: string,
+  clientId: string,
+  chatId: string,
+  messageId: string,
+  kind: MediaKind,
+  status: MediaStatus,
+  opts?: {
+    telegramFileId?: string;
+    mimeType?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+    downloadedAt?: number;
+  }
+): Promise<string> {
+  const robot = getRobotClient();
+  return (await robot.mutation(api.testHelpers.seedMediaRecord, {
+    telegramFileId:
+      opts?.telegramFileId ?? `test-file-${Date.now()}-${Math.random()}`,
+    userId,
+    clientId,
+    chatId,
+    messageId,
+    kind,
+    status,
+    mimeType: opts?.mimeType,
+    fileName: opts?.fileName,
+    fileSize: opts?.fileSize,
+    error: opts?.error,
+    downloadedAt: opts?.downloadedAt,
+  })) as string;
+}
+
+/** Seed a message with optional reply/forward/reaction fields. */
+export async function seedMessage(
+  userId: string,
+  clientId: string,
+  chatId: string,
+  messageId: string,
+  text: string | undefined,
+  opts?: {
+    externalId?: string;
+    senderId?: string;
+    outgoing?: boolean;
+    deleted?: boolean;
+    timestamp?: number;
+    replyToMessageId?: string;
+    replyToText?: string;
+    forwardedFrom?: { senderName: string; date?: number };
+    reactions?: Array<{
+      emoji: string;
+      count: number;
+      recent: Array<{ userId: string }>;
+    }>;
+  }
+): Promise<void> {
+  const robot = getRobotClient();
+  await robot.mutation(api.testHelpers.seedMessage, {
+    messageId,
+    externalId: opts?.externalId ?? `ext-${messageId}`,
+    userId,
+    clientId,
+    chatId,
+    senderId: opts?.senderId ?? "sender-test",
+    text,
+    outgoing: opts?.outgoing ?? false,
+    deleted: opts?.deleted ?? false,
+    timestamp: opts?.timestamp ?? Date.now(),
+    replyToMessageId: opts?.replyToMessageId,
+    replyToText: opts?.replyToText,
+    forwardedFrom: opts?.forwardedFrom,
+    reactions: opts?.reactions,
+  });
+}
+
+/** Delete all data for a user. Use for cleanup or empty-state tests. */
+export async function cleanupUser(userId: string): Promise<void> {
+  const robot = getRobotClient();
+  await robot.mutation(api.testHelpers.deleteAllForUser, { userId });
+}
+
+/** Mirror Rust's sanitize_owner_id: replace non-alphanumeric (except - _) with _ */
+export function sanitizeOwnerId(ownerId: string): string {
+  return ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** Mirror Rust's sanitize for session paths: keep only digits and + */
+export function sanitizeIdentifier(identifier: string): string {
+  return identifier.replace(/[^0-9+]/g, "");
+}
+
+/** Compute session file path using E2E_SESSION_DIR. */
+export function getSessionPath(
+  identifier: string,
+  ownerId: string
+): string {
+  const baseDir = process.env.E2E_SESSION_DIR;
+  if (!baseDir) {
+    throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
+  }
+  const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
+  return path.join(dir, `${sanitizeIdentifier(identifier)}.session`);
+}
+
+/**
+ * Poll a condition with configurable interval.
+ * Individual checks are instant; overall bounded by test.setTimeout.
+ */
+export async function pollUntil(
+  page: Page,
+  condition: () => Promise<boolean>,
+  intervalMs = 5000
+): Promise<void> {
+  while (!(await condition())) {
+    await page.waitForTimeout(intervalMs);
+  }
 }

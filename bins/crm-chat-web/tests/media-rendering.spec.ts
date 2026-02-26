@@ -2,26 +2,7 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
-
-/** Mirror Rust's sanitize_owner_id */
-function sanitizeOwnerId(ownerId: string): string {
-  return ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-/** Mirror Rust's sanitize for session paths */
-function sanitizeIdentifier(identifier: string): string {
-  return identifier.replace(/[^0-9+]/g, "");
-}
-
-function getSessionPath(identifier: string, ownerId: string): string {
-  const baseDir = process.env.E2E_SESSION_DIR;
-  if (!baseDir) {
-    throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
-  }
-  const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
-  return path.join(dir, `${sanitizeIdentifier(identifier)}.session`);
-}
+import { api, getConvexUserId, getRobotClient, getSessionPath, pollUntil } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const FILE_EXTENSION_RE = /\.[a-z0-9]+$/i;
@@ -58,13 +39,11 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     copyFileSync(session.sessionFile, copiedSessionPath);
 
     const robot = getRobotClient();
-    registeredClientId = unwrapResult<string>(
-      await robot.mutation(api.clients.workerRegisterConnected, {
-        userId: convexUserId,
-        telegramId,
-        kind: "Telegram",
-      })
-    );
+    registeredClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
+      userId: convexUserId,
+      telegramId,
+      kind: "Telegram",
+    })) as string;
 
     await page.close();
   });
@@ -73,7 +52,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     if (registeredClientId) {
       try {
         const robot = getRobotClient();
-        await robot.mutation(api.clients.deleteClient, {
+        await robot.mutation(api.testHelpers.deleteClient, {
           clientId: registeredClientId,
         });
       } catch {
@@ -449,16 +428,3 @@ async function findChatWith(
   return false;
 }
 
-/**
- * Poll a condition with 5s sleeps between attempts.
- * Individual checks are instant; the overall wait is bounded by test.setTimeout.
- */
-async function pollUntil(
-  page: import("@playwright/test").Page,
-  condition: () => Promise<boolean>,
-  intervalMs = 5000
-): Promise<void> {
-  while (!(await condition())) {
-    await page.waitForTimeout(intervalMs);
-  }
-}
