@@ -29,11 +29,16 @@ test.describe("Chat List — Backend", () => {
 
   test("seeded chats appear in list query ordered by timestamp", async () => {
     const robot = getRobotClient();
-    const cId = await seedTestClient(userId, `telegram:chatlist-backend-${Date.now()}`);
+    const cId = await seedTestClient(
+      userId,
+      `telegram:chatlist-backend-${Date.now()}`
+    );
 
     // seedTestClient creates 3 chats:
     // Alice (pinned, now), Team Chat (unpinned, -1h), Bob (pinned, -2h)
-    const chats = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chats = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
       pinnedName?: string;
       isPinned: boolean;
@@ -54,13 +59,23 @@ test.describe("Chat List — Backend", () => {
 
   test("last message preview is returned for seeded chats", async () => {
     const robot = getRobotClient();
-    const cId = await seedTestClient(userId, `telegram:chatlist-preview-${Date.now()}`);
+    const cId = await seedTestClient(
+      userId,
+      `telegram:chatlist-preview-${Date.now()}`
+    );
     const chatId = `${cId}:chat-pinned-1`;
 
     // Seed a message
-    await seedMessage(userId, cId, chatId, `${chatId}:preview-msg`, "Hello from test", {
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      cId,
+      chatId,
+      `${chatId}:preview-msg`,
+      "Hello from test",
+      {
+        timestamp: Date.now(),
+      }
+    );
 
     const lastMessages = (await robot.query(api.testHelpers.queryLastPerChat, {
       chatIds: [chatId],
@@ -74,7 +89,10 @@ test.describe("Chat List — Backend", () => {
 
   test("pinnedName update persists", async () => {
     const robot = getRobotClient();
-    const cId = await seedTestClient(userId, `telegram:chatlist-rename-${Date.now()}`);
+    const cId = await seedTestClient(
+      userId,
+      `telegram:chatlist-rename-${Date.now()}`
+    );
     const chatId = `${cId}:chat-pinned-1`;
 
     // Rename via upsert
@@ -88,7 +106,9 @@ test.describe("Chat List — Backend", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    const chats = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chats = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
       pinnedName?: string;
     }>;
@@ -110,18 +130,35 @@ test.describe("Chat List — UI", () => {
     await page.waitForTimeout(1000);
     userId = await getConvexUserId(page);
 
-    clientId = await seedTestClient(userId, `telegram:chatlist-ui-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:chatlist-ui-${Date.now()}`
+    );
 
     // Seed messages for chat previews
     const aliceChatId = `${clientId}:chat-pinned-1`;
-    await seedMessage(userId, clientId, aliceChatId, `${aliceChatId}:msg-1`, "Hey, how are you?", {
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      aliceChatId,
+      `${aliceChatId}:msg-1`,
+      "Hey, how are you?",
+      {
+        timestamp: Date.now(),
+      }
+    );
 
     const teamChatId = `${clientId}:chat-unpinned-1`;
-    await seedMessage(userId, clientId, teamChatId, `${teamChatId}:msg-1`, "Meeting at 3pm", {
-      timestamp: Date.now() - 3_600_000,
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      teamChatId,
+      `${teamChatId}:msg-1`,
+      "Meeting at 3pm",
+      {
+        timestamp: Date.now() - 3_600_000,
+      }
+    );
 
     await page.close();
   });
@@ -137,12 +174,16 @@ test.describe("Chat List — UI", () => {
     }
   });
 
-  test("renders seeded chats with names and last message previews", async ({ page }) => {
+  test("renders seeded chats with names and last message previews", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     // Wait for chat list to populate (only scanEnabled=true chats appear)
-    await expect(page.locator("text=Alice").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Alice").first()).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.locator("text=Bob").first()).toBeVisible();
 
     // Check last message preview for pinned chat
@@ -159,7 +200,9 @@ test.describe("Chat List — UI", () => {
     await aliceChat.click();
 
     // Should navigate to chat view and show messages
-    await expect(page.locator("text=Hey, how are you?")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Hey, how are you?")).toBeVisible({
+      timeout: 10_000,
+    });
     // Header should show chat name (confirmed h2 in message view)
     await expect(page.locator("h2:has-text('Alice')")).toBeVisible();
   });
@@ -167,37 +210,52 @@ test.describe("Chat List — UI", () => {
   test("search input filters chat list", async ({ page }) => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await expect(page.locator("text=Alice").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Alice").first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Type in search
     const searchInput = page.locator('input[placeholder*="Search"]');
     await searchInput.fill("Bob");
 
     // Alice should be filtered out (only scan-enabled chats shown)
-    await expect(page.locator("text=Bob").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Bob").first()).toBeVisible({
+      timeout: 5000,
+    });
     await expect(page.locator("button:has-text('Alice')")).toBeHidden();
 
     // Clear search
     await searchInput.clear();
-    await expect(page.locator("text=Alice").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Alice").first()).toBeVisible({
+      timeout: 5000,
+    });
   });
 
-  test("pinned chats are ordered by timestamp (newest first)", async ({ page }) => {
+  test("pinned chats are ordered by timestamp (newest first)", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await expect(page.locator("text=Alice").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Alice").first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Only scanEnabled=true chats appear (Alice: now, Bob: -2h)
     // Alice should appear before Bob (newer timestamp first)
-    const chatButtons = page.locator("button:has-text('Alice'), button:has-text('Bob')");
+    const chatButtons = page.locator(
+      "button:has-text('Alice'), button:has-text('Bob')"
+    );
     const count = await chatButtons.count();
     expect(count).toBeGreaterThanOrEqual(2);
 
     const names: string[] = [];
     for (let i = 0; i < count; i++) {
       const text = await chatButtons.nth(i).textContent();
-      if (text?.includes("Alice")) names.push("Alice");
-      else if (text?.includes("Bob")) names.push("Bob");
+      if (text?.includes("Alice")) {
+        names.push("Alice");
+      } else if (text?.includes("Bob")) {
+        names.push("Bob");
+      }
     }
 
     const aliceIdx = names.indexOf("Alice");
@@ -211,23 +269,34 @@ test.describe("Chat List — UI", () => {
   test("deleting client removes its chats from the backend", async () => {
     // Verify chats exist before deletion
     const robot = getRobotClient();
-    const chatsBefore = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chatsBefore = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
     }>;
-    const ourChatsBefore = chatsBefore.filter((c) => c.chatId.startsWith(clientId));
+    const ourChatsBefore = chatsBefore.filter((c) =>
+      c.chatId.startsWith(clientId)
+    );
     expect(ourChatsBefore.length).toBeGreaterThanOrEqual(2);
 
     // Delete the client (cascades to its chats)
     await robot.mutation(api.testHelpers.deleteClient, { clientId });
 
     // Verify chats for this client are gone
-    const chatsAfter = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chatsAfter = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
     }>;
-    const ourChatsAfter = chatsAfter.filter((c) => c.chatId.startsWith(clientId));
+    const ourChatsAfter = chatsAfter.filter((c) =>
+      c.chatId.startsWith(clientId)
+    );
     expect(ourChatsAfter.length).toBe(0);
 
     // Re-seed for any downstream tests
-    clientId = await seedTestClient(userId, `telegram:chatlist-ui-reseed-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:chatlist-ui-reseed-${Date.now()}`
+    );
   });
 });

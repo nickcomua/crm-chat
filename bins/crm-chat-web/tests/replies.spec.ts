@@ -26,7 +26,10 @@ test.describe("Replies — Backend", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:replies-test-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:replies-test-${Date.now()}`
+    );
     chatId = `${clientId}:replies-chat`;
 
     const robot = getRobotClient();
@@ -56,9 +59,16 @@ test.describe("Replies — Backend", () => {
 
   test("stores reply fields on a message", async () => {
     const originalMsgId = `${chatId}:msg-original`;
-    await seedMessage(userId, clientId, chatId, originalMsgId, "Original message", {
-      timestamp: Date.now() - 5000,
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      originalMsgId,
+      "Original message",
+      {
+        timestamp: Date.now() - 5000,
+      }
+    );
 
     const replyMsgId = `${chatId}:msg-reply`;
     await seedMessage(userId, clientId, chatId, replyMsgId, "This is a reply", {
@@ -68,10 +78,14 @@ test.describe("Replies — Backend", () => {
     });
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; replyToMessageId?: string; replyToText?: string }>;
+    })) as Array<{
+      messageId: string;
+      replyToMessageId?: string;
+      replyToText?: string;
+    }>;
 
     const reply = msgs.find((m) => m.messageId === replyMsgId);
     expect(reply).toBeTruthy();
@@ -84,10 +98,10 @@ test.describe("Replies — Backend", () => {
     await seedMessage(userId, clientId, chatId, msgId, "Not a reply");
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; replyToMessageId?: string }>;
+    })) as Array<{ messageId: string; replyToMessageId?: string }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
@@ -106,7 +120,10 @@ test.describe("Replies — UI", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:replies-ui-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:replies-ui-${Date.now()}`
+    );
     chatId = `${clientId}:replies-ui-chat`;
 
     const robot = getRobotClient();
@@ -121,15 +138,29 @@ test.describe("Replies — UI", () => {
     });
 
     const originalId = `${chatId}:ui-original`;
-    await seedMessage(userId, clientId, chatId, originalId, "I said something important", {
-      timestamp: Date.now() - 2000,
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      originalId,
+      "I said something important",
+      {
+        timestamp: Date.now() - 2000,
+      }
+    );
 
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-reply`, "Yes, I agree!", {
-      replyToMessageId: originalId,
-      replyToText: "I said something important",
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-reply`,
+      "Yes, I agree!",
+      {
+        replyToMessageId: originalId,
+        replyToText: "I said something important",
+        timestamp: Date.now(),
+      }
+    );
 
     await page.close();
   });
@@ -157,22 +188,33 @@ test.describe("Replies — UI", () => {
     await expect(replyPreview).toContainText("I said something important");
   });
 
-  test("reply preview text is truncated for long messages", async ({ page }) => {
+  test("reply preview text is truncated for long messages", async ({
+    page,
+  }) => {
     // Seed a reply to a very long message
     const longText = "A".repeat(200);
     const longMsgId = `${chatId}:ui-long-original`;
     await seedMessage(userId, clientId, chatId, longMsgId, longText, {
       timestamp: Date.now() - 1000,
     });
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-long-reply`, "Reply to long", {
-      replyToMessageId: longMsgId,
-      replyToText: longText,
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-long-reply`,
+      "Reply to long",
+      {
+        replyToMessageId: longMsgId,
+        replyToText: longText,
+        timestamp: Date.now(),
+      }
+    );
 
     await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
 
-    const replyMsg = page.locator(`[data-message-id="${chatId}:ui-long-reply"]`);
+    const replyMsg = page.locator(
+      `[data-message-id="${chatId}:ui-long-reply"]`
+    );
     await expect(replyMsg).toBeVisible({ timeout: 10_000 });
 
     const replyPreview = replyMsg.locator('[data-testid="reply-preview"]');

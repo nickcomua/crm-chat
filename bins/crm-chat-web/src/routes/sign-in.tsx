@@ -17,17 +17,23 @@ function AutoSignIn(): React.ReactNode {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    if (!isLoaded || !signIn) return;
+    if (!(isLoaded && signIn)) {
+      return;
+    }
 
     const username = env.VITE_TEST_USERNAME;
     const password = env.VITE_TEST_PASSWORD;
-    if (!username || !password) return;
+    if (!(username && password)) {
+      return;
+    }
 
     let cancelled = false;
     signIn
       .create({ identifier: username, password })
       .then((result) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         if (result.status === "complete" && result.createdSessionId) {
           return setActive({ session: result.createdSessionId }).then(() => {
             navigate({ to: "/chats" });
@@ -36,7 +42,9 @@ function AutoSignIn(): React.ReactNode {
         setError(`Unexpected sign-in status: ${result.status}`);
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         const message =
           err instanceof Error ? err.message : "Auto sign-in failed";
         setError(message);

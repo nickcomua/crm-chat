@@ -26,7 +26,10 @@ test.describe("Reactions — Backend", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:reactions-test-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:reactions-test-${Date.now()}`
+    );
     chatId = `${clientId}:reactions-chat`;
 
     const robot = getRobotClient();
@@ -58,17 +61,24 @@ test.describe("Reactions — Backend", () => {
     const msgId = `${chatId}:msg-react-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Hello!", {
       reactions: [
-        { emoji: "❤️", count: 3, recent: [{ userId: "user-a" }, { userId: "user-b" }] },
+        {
+          emoji: "❤️",
+          count: 3,
+          recent: [{ userId: "user-a" }, { userId: "user-b" }],
+        },
         { emoji: "👍", count: 1, recent: [{ userId: "user-c" }] },
       ],
     });
 
     // Query the message and verify reactions
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; reactions?: Array<{ emoji: string; count: number }> }>;
+    })) as Array<{
+      messageId: string;
+      reactions?: Array<{ emoji: string; count: number }>;
+    }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
@@ -86,14 +96,23 @@ test.describe("Reactions — Backend", () => {
 
     // Update with new count
     await seedMessage(userId, clientId, chatId, msgId, "Update me", {
-      reactions: [{ emoji: "😂", count: 5, recent: [{ userId: "user-a" }, { userId: "user-b" }] }],
+      reactions: [
+        {
+          emoji: "😂",
+          count: 5,
+          recent: [{ userId: "user-a" }, { userId: "user-b" }],
+        },
+      ],
     });
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; reactions?: Array<{ emoji: string; count: number }> }>;
+    })) as Array<{
+      messageId: string;
+      reactions?: Array<{ emoji: string; count: number }>;
+    }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg?.reactions?.[0].count).toBe(5);
@@ -104,10 +123,10 @@ test.describe("Reactions — Backend", () => {
     await seedMessage(userId, clientId, chatId, msgId, "No reactions here");
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; reactions?: unknown }>;
+    })) as Array<{ messageId: string; reactions?: unknown }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
@@ -126,7 +145,10 @@ test.describe("Reactions — UI", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:reactions-ui-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:reactions-ui-${Date.now()}`
+    );
     chatId = `${clientId}:reactions-ui-chat`;
 
     const robot = getRobotClient();
@@ -141,17 +163,31 @@ test.describe("Reactions — UI", () => {
     });
 
     // Seed messages with reactions
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-msg-1`, "Message with reactions", {
-      reactions: [
-        { emoji: "❤️", count: 3, recent: [{ userId: "u1" }] },
-        { emoji: "😂", count: 7, recent: [{ userId: "u2" }] },
-      ],
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-msg-1`,
+      "Message with reactions",
+      {
+        reactions: [
+          { emoji: "❤️", count: 3, recent: [{ userId: "u1" }] },
+          { emoji: "😂", count: 7, recent: [{ userId: "u2" }] },
+        ],
+        timestamp: Date.now(),
+      }
+    );
 
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-msg-2`, "No reactions", {
-      timestamp: Date.now() - 1000,
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-msg-2`,
+      "No reactions",
+      {
+        timestamp: Date.now() - 1000,
+      }
+    );
 
     await page.close();
   });
@@ -174,16 +210,17 @@ test.describe("Reactions — UI", () => {
     const msgEl = page.locator(`[data-message-id="${chatId}:ui-msg-1"]`);
     await expect(msgEl).toBeVisible({ timeout: 10_000 });
 
-    // Verify reaction badges are rendered
-    const heartReaction = msgEl.locator('text="❤️"');
-    await expect(heartReaction).toBeVisible({ timeout: 5000 });
+    // Verify reaction badges are rendered (scope to reactions container
+    // to avoid matching timestamp text like "02:27 AM" for digits)
+    const reactions = msgEl.locator('[data-testid="reactions"]');
+    await expect(reactions).toBeVisible({ timeout: 5000 });
 
-    const laughReaction = msgEl.locator('text="😂"');
-    await expect(laughReaction).toBeVisible();
+    await expect(reactions.locator('text="❤️"')).toBeVisible();
+    await expect(reactions.locator('text="😂"')).toBeVisible();
 
     // Verify counts are displayed
-    await expect(msgEl.locator("text=3")).toBeVisible();
-    await expect(msgEl.locator("text=7")).toBeVisible();
+    await expect(reactions.getByText("3", { exact: true })).toBeVisible();
+    await expect(reactions.getByText("7", { exact: true })).toBeVisible();
   });
 
   test("message without reactions shows no reaction UI", async ({ page }) => {

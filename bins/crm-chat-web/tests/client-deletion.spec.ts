@@ -1,26 +1,21 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { getSessionEnv } from "./env";
 import {
   api,
   getConvexUserId,
   getRobotClient,
-  getSessionPath,
-  sanitizeOwnerId,
   seedTestClient,
 } from "./helpers";
 
 /**
- * Client Deletion Bug Test
+ * Client Deletion Tests
  *
- * This test exposes a known bug: when a TG client is deleted via the UI/API,
- * the .session file persists on disk. On crm-worker restart,
- * `discover_and_register_sessions()` finds the orphaned session file and
- * re-creates the client via `workerRegisterConnected()`.
+ * The core bug: deleteClient() removes the DB record but leaves the
+ * .session file on disk. When crm-worker restarts, discover_and_register_sessions()
+ * finds the orphaned session and calls workerRegisterConnected(), which blindly
+ * recreates the client. workerRegisterConnected has zero awareness of deletions.
  *
- * Expected: After deletion, the client should NOT reappear.
- * Actual (bug): The client reappears after worker restart/discovery.
+ * The "worker re-registration" test below asserts CORRECT behavior and is
+ * expected to FAIL until the bug is fixed.
  */
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -28,212 +23,83 @@ const SETTINGS_URL_PATTERN = /\/#\/settings/;
 
 test.describe.configure({ mode: "serial" });
 
-const session = getSessionEnv();
-
 let userId: string;
 
-test.describe("Client Deletion — Backend Bug", () => {
-  let clientId: string;
-
-  test.beforeAll(async ({ browser }) => {
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
-
-    userId = await getConvexUserId(page);
-    await page.close();
+test.beforeAll(async ({ browser }) => {
+  const context = await browser.newContext({
+    storageState: "tests/.auth/user.json",
   });
+  const page = await context.newPage();
+  await page.goto("/");
+  await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
+  await page.waitForTimeout(1000);
+  userId = await getConvexUserId(page);
+  await page.close();
+});
 
-  test("delete client removes from DB", async () => {
-    // Register a client
-    clientId = await seedTestClient(
-      userId,
-      `telegram:deletion-test-${Date.now()}`
-    );
-
+test.describe("Client Deletion", () => {
+  test("deleted client must not be recreated by worker re-registration", async () => {
+    const telegramId = `telegram:deletion-bug-${Date.now()}`;
     const robot = getRobotClient();
 
-    // Verify it exists
-    const before = await robot.query(api.clients.getForWorker, {
-      clientId,
-    });
-    expect(before).toBeTruthy();
+    // 1. Worker discovers a session file and registers the client
+    const clientId = (await robot.mutation(
+      api.clients.workerRegisterConnected,
+      { userId, telegramId, kind: "Telegram" }
+    )) as string;
 
-    // Delete it
+    // 2. User deletes the client from the UI
     await robot.mutation(api.testHelpers.deleteClient, { clientId });
 
-    // Verify it's gone
-    const after = await robot.query(api.clients.getForWorker, { clientId });
-    expect(after).toBeNull();
-  });
-
-  test("workerRegisterConnected re-creates deleted client with same telegramId (BUG)", async () => {
-    /**
-     * This test reproduces the bug: after deleting a client,
-     * calling workerRegisterConnected with the same telegramId
-     * creates a NEW client — simulating what happens when the worker
-     * discovers an orphaned session file.
-     *
-     * This test is expected to PASS (demonstrating the bug EXISTS).
-     * Once the bug is fixed (e.g., session cleanup on delete, or a
-     * `deletedAt` flag that discovery respects), this test should be
-     * updated to assert the opposite.
-     */
-    const telegramId = `telegram:deletion-bug-${Date.now()}`;
-
-    // Step 1: Register client
-    const robot = getRobotClient();
-    const firstClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId,
-      kind: "Telegram",
-    })) as string;
-    expect(firstClientId).toBeTruthy();
-
-    // Step 2: Delete client
-    await robot.mutation(api.testHelpers.deleteClient, {
-      clientId: firstClientId,
+    // 3. Verify it's gone
+    const afterDelete = await robot.query(api.clients.getForWorker, {
+      clientId,
     });
+    expect(afterDelete).toBeNull();
 
-    // Step 3: Verify deleted
-    const deleted = await robot.query(api.clients.getForWorker, {
-      clientId: firstClientId,
+    // 4. Worker restarts — rediscovers the same .session file on disk
+    //    and calls workerRegisterConnected again with the same telegramId
+    const recreatedId = (await robot.mutation(
+      api.clients.workerRegisterConnected,
+      { userId, telegramId, kind: "Telegram" }
+    )) as string;
+
+    // 5. The client should NOT exist — it was deleted by the user.
+    //    This fails because workerRegisterConnected has no deletion awareness.
+    const ghost = await robot.query(api.clients.getForWorker, {
+      clientId: recreatedId,
     });
-    expect(deleted).toBeNull();
-
-    // Step 4: Simulate worker discovery — register again with same telegramId
-    const secondClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId,
-      kind: "Telegram",
-    })) as string;
-
-    // BUG: A new client is created (or the old one is patched back to Connected)
-    // This should NOT happen if the bug were fixed
-    expect(secondClientId).toBeTruthy();
-
-    const revived = await robot.query(api.clients.getForWorker, {
-      clientId: secondClientId,
-    }) as { status: { type: string } } | null;
-    expect(revived).toBeTruthy();
-    expect(revived?.status.type).toBe("Connected");
-
-    // Cleanup
-    await robot.mutation(api.testHelpers.deleteClient, {
-      clientId: secondClientId,
-    });
-  });
-});
-
-test.describe("Client Deletion — Session File Persistence", () => {
-  test.skip(!session, "Skipping: TG_SESSION_FILE_1 not set");
-
-  let clientId: string;
-  let sessionPath: string;
-
-  test.beforeAll(async ({ browser }) => {
-    if (!session) return;
-
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
-
-    userId = await getConvexUserId(page);
-
-    // Copy a real session file to the worker's session directory
-    const telegramId = `telegram:${session!.userId}`;
-    sessionPath = getSessionPath(telegramId, userId);
-    mkdirSync(path.dirname(sessionPath), { recursive: true });
-    copyFileSync(session!.sessionFile, sessionPath);
-
-    // Register the client
-    clientId = (await getRobotClient().mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId,
-      kind: "Telegram",
-    })) as string;
-
-    await page.close();
+    expect(ghost).toBeNull();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        await getRobotClient().mutation(api.testHelpers.deleteClient, {
-          clientId,
-        });
-      } catch {
-        // best-effort
-      }
-    }
-  });
+  test("deleting client via UI removes it from settings list", async ({
+    page,
+  }) => {
+    const testTelegramId = `telegram:del-ui-${Date.now()}`;
+    await seedTestClient(userId, testTelegramId);
 
-  test("session file persists after client deletion (BUG)", async () => {
-    if (!session || !sessionPath) return;
-
-    // Verify session file exists before deletion
-    expect(existsSync(sessionPath)).toBe(true);
-
-    // Delete the client via API
-    await getRobotClient().mutation(api.testHelpers.deleteClient, { clientId });
-
-    // BUG: Session file still exists on disk after deletion
-    // A proper fix would clean up the session file during deleteClient
-    expect(existsSync(sessionPath)).toBe(true);
-  });
-});
-
-test.describe("Client Deletion — UI", () => {
-  let testClientId: string;
-
-  test.beforeAll(async ({ browser }) => {
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
-
-    userId = await getConvexUserId(page);
-    testClientId = await seedTestClient(
-      userId,
-      `telegram:del-ui-${Date.now()}`
-    );
-
-    await page.close();
-  });
-
-  test("deleting client via UI removes it from settings list", async ({ page }) => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
-    // Wait for client cards to load
-    await expect(page.locator("text=Connected").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Connected").first()).toBeVisible({
+      timeout: 10_000,
+    });
 
-    // Count initial client cards
-    const initialCards = await page.locator(".group").count();
+    const cardSelector = '[data-testid="client-card"]';
+    const targetCard = page.locator(cardSelector, {
+      hasText: testTelegramId,
+    });
+    await expect(targetCard).toBeVisible({ timeout: 10_000 });
 
-    // Hover over the last card (our test client) and click delete
-    const lastCard = page.locator(".group").last();
-    await lastCard.hover();
+    const initialCards = await page.locator(cardSelector).count();
 
-    // Click the delete button (last button with SVG in the hover group)
-    const deleteBtn = lastCard.locator("button").last();
+    await targetCard.hover();
+    const deleteBtn = targetCard.locator('button[aria-label="Delete client"]');
     await deleteBtn.click();
 
-    // Wait for the card to disappear — either fewer cards or the specific one is gone
-    await page.waitForTimeout(2000);
+    await expect(targetCard).toBeHidden({ timeout: 10_000 });
 
-    const finalCards = await page.locator(".group").count();
+    const finalCards = await page.locator(cardSelector).count();
     expect(finalCards).toBeLessThan(initialCards);
   });
 });

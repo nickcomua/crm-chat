@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
@@ -69,21 +70,26 @@ const CLERK_ISSUER_DOMAIN = "https://noted-rabbit-14.clerk.accounts.dev";
  * Convex constructs tokenIdentifier as `{issuer_domain}|{clerk_user_id}`.
  */
 export async function getConvexUserId(page: Page): Promise<string> {
-  const clerkUserId = await page.evaluate(() => {
-    const w = globalThis as unknown as Record<
-      string,
-      Record<string, Record<string, string>>
-    >;
-    return w.Clerk?.user?.id ?? null;
-  });
+  // Wait for Clerk SDK to initialize (loads async from CDN)
+  const clerkUserId = await page.waitForFunction(
+    () => {
+      const w = globalThis as unknown as Record<
+        string,
+        Record<string, Record<string, string>>
+      >;
+      return w.Clerk?.user?.id ?? null;
+    },
+    { timeout: 10_000 }
+  );
 
-  if (!clerkUserId) {
+  const id = await clerkUserId.jsonValue();
+  if (!id) {
     throw new Error(
       "Could not extract Clerk user ID from browser. Is the user logged in?"
     );
   }
 
-  return `${CLERK_ISSUER_DOMAIN}|${clerkUserId}`;
+  return `${CLERK_ISSUER_DOMAIN}|${id}`;
 }
 
 /**
@@ -96,7 +102,7 @@ export async function seedTestClient(
 ): Promise<string> {
   const client = getRobotClient();
 
-  // Register the client as Connected (returns bare v.id, not result-wrapped)
+  // Register the client as Connected (returns bare v.id, not result-wrapped).
   const clientId = (await client.mutation(api.clients.workerRegisterConnected, {
     userId,
     telegramId,
@@ -145,13 +151,13 @@ export async function clerkLogin(page: Page): Promise<void> {
   const { TEST_CLERK_USERNAME, TEST_CLERK_PASSWORD } = staticEnv;
 
   await page.goto("/");
-  await page.waitForSelector('input[name="identifier"]', { timeout: 15_000 });
+  await page.waitForSelector('input[name="identifier"]', { timeout: 10_000 });
   await page.fill('input[name="identifier"]', TEST_CLERK_USERNAME);
   await page.click("button.cl-formButtonPrimary");
   await page.waitForSelector('input[name="password"]', { timeout: 10_000 });
   await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
   await page.click("button.cl-formButtonPrimary");
-  await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
+  await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
   await page.waitForTimeout(3000);
 }
 
@@ -273,22 +279,41 @@ export function sanitizeOwnerId(ownerId: string): string {
   return ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-/** Mirror Rust's sanitize for session paths: keep only digits and + */
-export function sanitizeIdentifier(identifier: string): string {
-  return identifier.replace(/[^0-9+]/g, "");
-}
+const TELEGRAM_PREFIX_RE = /^telegram:/;
 
-/** Compute session file path using E2E_SESSION_DIR. */
-export function getSessionPath(
-  identifier: string,
-  ownerId: string
-): string {
+/**
+ * Compute session file path matching Rust session_manager's naming convention.
+ *
+ * Rust (session_manager.rs get_for_telegram_id):
+ *   suffix = telegram_id.strip_prefix("telegram:").unwrap_or(telegram_id)
+ *   stem = format!("telegram_{suffix}")
+ *   path = owner_dir / "{stem}.session"
+ *
+ * Example: identifier="telegram:+84779004206", ownerId="https://…|user123"
+ *   → {E2E_SESSION_DIR}/{sanitized_owner}/telegram_+84779004206.session
+ */
+export function getSessionPath(identifier: string, ownerId: string): string {
   const baseDir = process.env.E2E_SESSION_DIR;
   if (!baseDir) {
     throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
   }
   const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
-  return path.join(dir, `${sanitizeIdentifier(identifier)}.session`);
+  // Strip "telegram:" scheme prefix, then use "telegram_" file prefix (matching Rust)
+  const suffix = identifier.replace(TELEGRAM_PREFIX_RE, "");
+  return path.join(dir, `telegram_${suffix}.session`);
+}
+
+/**
+ * Write .owner file in the session directory.
+ * Matches Rust session_manager's owner_dir() which writes the raw ownerId
+ * so discover_sessions() can map subdirectories back to Convex user IDs.
+ */
+export function writeOwnerFile(sessionPath: string, ownerId: string): void {
+  const dir = path.dirname(sessionPath);
+  const ownerFile = path.join(dir, ".owner");
+  if (!existsSync(ownerFile)) {
+    writeFileSync(ownerFile, ownerId);
+  }
 }
 
 /**
@@ -303,4 +328,30 @@ export async function pollUntil(
   while (!(await condition())) {
     await page.waitForTimeout(intervalMs);
   }
+}
+
+/**
+ * Wait for pending ChatScanner tasks to drain so the worker has capacity
+ * for QrAuth. tg-scan tests enqueue scanners that may still be pending
+ * when tg-qr-auth starts — if the worker is busy dispatching those,
+ * QrAuth token generation can exceed the timeout.
+ */
+export async function waitForPendingScanners(
+  timeoutMs = 30_000
+): Promise<void> {
+  const robot = getRobotClient();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
+      maxMediaWorkflows: 0,
+    })) as Array<{ task: { type: string } }>;
+
+    const scanners = tasks.filter((t) => t.task.type === "ChatScanner");
+    if (scanners.length === 0) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  // Don't throw — proceed anyway; the QR test has its own timeout.
 }

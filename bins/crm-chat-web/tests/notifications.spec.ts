@@ -25,7 +25,10 @@ test.describe("Notifications — Backend", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:notif-backend-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:notif-backend-${Date.now()}`
+    );
 
     await page.close();
   });
@@ -42,7 +45,11 @@ test.describe("Notifications — Backend", () => {
   });
 
   test("seedNotification creates undismissed notification", async () => {
-    const notifId = await seedNotification(userId, "Info", "Test info notification");
+    const notifId = await seedNotification(
+      userId,
+      "Info",
+      "Test info notification"
+    );
     expect(notifId).toBeTruthy();
   });
 
@@ -117,10 +124,14 @@ test.describe("Notifications — UI", () => {
     await bellButton.click();
 
     // Panel should open with "Notifications" header
-    await expect(page.locator("text=Notifications").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Notifications").first()).toBeVisible({
+      timeout: 5000,
+    });
 
     // Should show our seeded notification messages
-    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("notifications show correct severity icons", async ({ page }) => {
@@ -129,12 +140,20 @@ test.describe("Notifications — UI", () => {
 
     const bellButton = page.locator('button[title="Notifications"]');
     await bellButton.click();
-    await expect(page.locator("text=Notifications").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Notifications").first()).toBeVisible({
+      timeout: 5000,
+    });
 
     // All three severity messages should be visible
-    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({ timeout: 5000 });
-    await expect(page.locator("text=Rate limit approaching")).toBeVisible({ timeout: 5000 });
-    await expect(page.locator("text=Sync complete for 42 chats")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Rate limit approaching")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Sync complete for 42 chats")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("dismiss button removes notification", async ({ page }) => {
@@ -143,10 +162,15 @@ test.describe("Notifications — UI", () => {
 
     const bellButton = page.locator('button[title="Notifications"]');
     await bellButton.click();
-    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Connection lost to Telegram")).toBeVisible({
+      timeout: 5000,
+    });
 
     // Each notification is a .group div; hover reveals the dismiss (X) button inside it
-    const notifCard = page.locator(".group").filter({ hasText: "Connection lost to Telegram" }).first();
+    const notifCard = page
+      .locator(".group")
+      .filter({ hasText: "Connection lost to Telegram" })
+      .first();
     await notifCard.hover();
 
     // The dismiss button is the last button inside the .group card
@@ -154,7 +178,9 @@ test.describe("Notifications — UI", () => {
     await dismissBtn.click();
 
     // Notification should disappear
-    await expect(page.locator("text=Connection lost to Telegram")).toBeHidden({ timeout: 5000 });
+    await expect(page.locator("text=Connection lost to Telegram")).toBeHidden({
+      timeout: 5000,
+    });
   });
 
   test("Escape key closes notifications panel", async ({ page }) => {
@@ -163,16 +189,22 @@ test.describe("Notifications — UI", () => {
 
     const bellButton = page.locator('button[title="Notifications"]');
     await bellButton.click();
-    await expect(page.locator('button[title="Close notifications"]')).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.locator('button[title="Close notifications"]')
+    ).toBeVisible({ timeout: 5000 });
 
     // Press Escape
     await page.keyboard.press("Escape");
 
     // Panel should close — the close button should be gone
-    await expect(page.locator('button[title="Close notifications"]')).toBeHidden({ timeout: 5000 });
+    await expect(
+      page.locator('button[title="Close notifications"]')
+    ).toBeHidden({ timeout: 5000 });
   });
 
-  test("empty state shows 'All caught up' when no notifications", async ({ page }) => {
+  test("empty state shows 'All caught up' when no notifications", async ({
+    page,
+  }) => {
     // Dismiss all remaining notifications first
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
@@ -183,9 +215,13 @@ test.describe("Notifications — UI", () => {
 
     // Dismiss all visible notifications by hovering each .group card
     for (let i = 0; i < 10; i++) {
-      const notifCards = page.locator(".group").filter({ has: page.locator("button") });
+      const notifCards = page
+        .locator(".group")
+        .filter({ has: page.locator("button") });
       const count = await notifCards.count();
-      if (count === 0) break;
+      if (count === 0) {
+        break;
+      }
 
       // Hover the first card to reveal dismiss button, then click it
       await notifCards.first().hover();
@@ -194,6 +230,8 @@ test.describe("Notifications — UI", () => {
     }
 
     // Should show empty state
-    await expect(page.locator("text=All caught up")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=All caught up")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

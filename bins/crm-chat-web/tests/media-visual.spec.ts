@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { getSessionEnv } from "./env";
@@ -8,6 +8,7 @@ import {
   getRobotClient,
   getSessionPath,
   pollUntil,
+  writeOwnerFile,
 } from "./helpers";
 
 /**
@@ -26,6 +27,7 @@ import {
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const DOWNLOADS_URL_PATTERN = /\/#\/downloads/;
+const DURATION_RE = /\d+:\d{2}/;
 
 test.describe.configure({ mode: "serial" });
 
@@ -35,10 +37,13 @@ let registeredClientId: string | null = null;
 let copiedSessionPath: string | null = null;
 
 test.describe("Media Visual — Real Telegram Data", () => {
+  // biome-ignore lint/suspicious/noSkippedTests: conditional skip for real TG session
   test.skip(!session, "Skipping: TG_SESSION_FILE_1 not set");
 
   test.beforeAll(async ({ browser }) => {
-    if (!session) return;
+    if (!session) {
+      return;
+    }
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
@@ -50,22 +55,30 @@ test.describe("Media Visual — Real Telegram Data", () => {
 
     const convexUserId = await getConvexUserId(page);
 
-    const telegramId = `telegram:${session!.userId}`;
+    // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
+    const telegramId = `telegram:${session.userId}`;
     copiedSessionPath = getSessionPath(telegramId, convexUserId);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
-    copyFileSync(session!.sessionFile, copiedSessionPath);
+    if (!existsSync(copiedSessionPath)) {
+      copyFileSync(session.sessionFile, copiedSessionPath);
+    }
+    writeOwnerFile(copiedSessionPath, convexUserId);
 
     const robot = getRobotClient();
-    registeredClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
-      userId: convexUserId,
-      telegramId,
-      kind: "Telegram",
-    })) as string;
+    registeredClientId = (await robot.mutation(
+      api.clients.workerRegisterConnected,
+      {
+        userId: convexUserId,
+        telegramId,
+        kind: "Telegram",
+      }
+    )) as string;
 
     await page.close();
   });
 
   test.afterAll(async () => {
+    // Last spec in the real-TG chain — clean up shared client + session file
     if (registeredClientId) {
       try {
         const robot = getRobotClient();
@@ -86,7 +99,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("wait for media sync to complete", async ({ page }) => {
-    test.setTimeout(300_000);
+    // Real TG sync: DialogSync completes in ~2s, scanning may take a bit longer
 
     await page.goto(`/#/client/${registeredClientId}`);
     await page.waitForSelector("text=Chat Scanning", { timeout: 10_000 });
@@ -106,22 +119,24 @@ test.describe("Media Visual — Real Telegram Data", () => {
       }
     }
 
-    // Poll for "Synced" badge
-    await pollUntil(page, () =>
-      page.locator("text=Synced").first().isVisible()
+    // Poll for "Synced" badge — 1s interval (page is Convex-reactive)
+    await pollUntil(
+      page,
+      () => page.locator("text=Synced").first().isVisible(),
+      1000
     );
 
     // Wait for at least one media download
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
-    await pollUntil(page, () =>
-      page.locator('text="Recent"').isVisible()
+    await pollUntil(
+      page,
+      () => page.locator('text="Recent"').isVisible(),
+      1000
     );
   });
 
   test("photo thumbnails respect max-height (300px)", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const found = await findChatWith(page, 'img[alt="Shared media"]');
     expect(found, "No photo media found").toBeTruthy();
 
@@ -138,12 +153,10 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("VideoNote has circular (rounded-full) styling", async ({ page }) => {
-    test.setTimeout(30_000);
-
     // VideoNote videos have rounded-full class
     const found = await findChatWith(page, "video.rounded-full");
     if (!found) {
-      // VideoNotes may not exist in test data — skip gracefully
+      // biome-ignore lint/suspicious/noSkippedTests: VideoNotes may not exist in test data
       test.skip();
       return;
     }
@@ -157,10 +170,9 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("sticker images are constrained to 180px", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const found = await findChatWith(page, 'img[alt="Sticker"]');
     if (!found) {
+      // biome-ignore lint/suspicious/noSkippedTests: stickers may not exist in test data
       test.skip();
       return;
     }
@@ -179,10 +191,9 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("animations autoplay and loop silently", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const found = await findChatWith(page, "video[autoplay][loop][muted]");
     if (!found) {
+      // biome-ignore lint/suspicious/noSkippedTests: animations may not exist in test data
       test.skip();
       return;
     }
@@ -197,14 +208,13 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("document media shows filename and download icon", async ({ page }) => {
-    test.setTimeout(30_000);
-
     // Documents are rendered as buttons with a file name and download icon
     const found = await findChatWith(
       page,
       'button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))'
     );
     if (!found) {
+      // biome-ignore lint/suspicious/noSkippedTests: documents may not exist in test data
       test.skip();
       return;
     }
@@ -220,10 +230,9 @@ test.describe("Media Visual — Real Telegram Data", () => {
   });
 
   test("video duration overlay is displayed", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const found = await findChatWith(page, "video:not([autoplay])");
     if (!found) {
+      // biome-ignore lint/suspicious/noSkippedTests: videos may not exist in test data
       test.skip();
       return;
     }
@@ -233,9 +242,14 @@ test.describe("Media Visual — Real Telegram Data", () => {
       'span.bg-black\\/60:text-matches("\\d+:\\d{2}")'
     );
 
-    if (await durationBadge.first().isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (
+      await durationBadge
+        .first()
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
+    ) {
       const text = await durationBadge.first().textContent();
-      expect(text).toMatch(/\d+:\d{2}/);
+      expect(text).toMatch(DURATION_RE);
     }
   });
 });
@@ -248,23 +262,23 @@ async function findChatWith(
   page: import("@playwright/test").Page,
   selector: string
 ): Promise<boolean> {
+  // Navigate once; sidebar stays visible in desktop SPA layout.
   await page.goto("/");
   await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-  const chatButtons = page.locator(".space-y-px > button");
-  await expect(chatButtons.first()).toBeVisible({ timeout: 10_000 });
+  // Only click real Telegram chats (skip seeded test data from parallel specs).
+  const buttons = page.locator('.space-y-px > button:has-text("telegram:")');
+  const fallbackButtons = page.locator(".space-y-px > button");
+  await expect(fallbackButtons.first()).toBeVisible({ timeout: 10_000 });
 
-  const count = await chatButtons.count();
+  const count = await buttons.count();
 
   for (let i = 0; i < count; i++) {
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-
-    const buttons = page.locator(".space-y-px > button");
     await buttons.nth(i).click();
 
+    // Check initial view (media already downloaded, 3s is enough)
     try {
-      await page.waitForSelector(selector, { timeout: 10_000 });
+      await page.waitForSelector(selector, { timeout: 3000 });
       return true;
     } catch {
       // Not in initial view — try scrolling up
@@ -274,7 +288,7 @@ async function findChatWith(
     if ((await msgContainer.count()) > 0) {
       await msgContainer.evaluate((el) => el.scrollTo(0, 0));
       try {
-        await page.waitForSelector(selector, { timeout: 10_000 });
+        await page.waitForSelector(selector, { timeout: 3000 });
         return true;
       } catch {
         // Not found, try next chat

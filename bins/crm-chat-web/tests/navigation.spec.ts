@@ -57,15 +57,21 @@ test.describe("Navigation", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    await expect(page.locator("h1:has-text('CRM Chat')")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("h1:has-text('CRM Chat')")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
-  test("nav links: Chats, Downloads, Settings are visible", async ({ page }) => {
+  test("nav links: Chats, Downloads, Settings are visible", async ({
+    page,
+  }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     // Nav links in header
-    await expect(page.locator("nav a:has-text('Chats')")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("nav a:has-text('Chats')")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.locator("nav a:has-text('Downloads')")).toBeVisible();
     await expect(page.locator("nav a:has-text('Settings')")).toBeVisible();
   });
@@ -124,11 +130,15 @@ test.describe("Navigation", () => {
 
     // Should show client settings page with "Chat Scanning" section
     await expect(
-      page.locator("text=Chat Scanning").or(page.locator("text=Client not found"))
+      page
+        .locator("text=Chat Scanning")
+        .or(page.locator("text=Client not found"))
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("theme toggle switches between light and dark mode", async ({ page }) => {
+  test("theme toggle switches between light and dark mode", async ({
+    page,
+  }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 

@@ -1,6 +1,12 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, openSync, readFileSync, renameSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,12 +18,6 @@ const ROOT = path.resolve(WEB_DIR, "../..");
 const CONVEX_DIR = path.join(ROOT, "bins/convex-backend");
 const WORKER_BIN = path.join(ROOT, "target/debug/crm-worker");
 
-// Fixed ports — must match playwright.config.ts
-const CONVEX_HOST_PORT = 13_210;
-const SITE_HOST_PORT = 13_211;
-const RESTATE_INGRESS_PORT = 18_080;
-const RESTATE_ADMIN_PORT = 19_070;
-const WORKER_SERVICE_PORT = 19_080;
 
 /** Auto-detect Docker socket for OrbStack/Docker Desktop/standard Docker. */
 function ensureDockerHost(): void {
@@ -108,6 +108,41 @@ function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
   }
 }
 
+/**
+ * Poll the Restate admin API until the worker's deployment is registered.
+ * Fails after 30s if the worker doesn't register or crashes.
+ */
+async function waitForWorkerReady(
+  worker: ChildProcess,
+  adminPort: number
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (worker.exitCode !== null) {
+      throw new Error(
+        `crm-worker exited prematurely (code ${worker.exitCode})`
+      );
+    }
+    try {
+      const resp = await fetch(
+        `http://localhost:${adminPort}/deployments`
+      );
+      if (resp.ok) {
+        const body = (await resp.json()) as { deployments?: unknown[] };
+        if (body.deployments && body.deployments.length > 0) {
+          // Extra wait for the TaskOrchestrator to start its subscription loop
+          await new Promise((r) => setTimeout(r, 2000));
+          return;
+        }
+      }
+    } catch {
+      // Restate admin not ready yet — keep polling
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("crm-worker did not register with Restate within 30s");
+}
+
 export default async function globalSetup(): Promise<void> {
   loadEnvFile();
   ensureDockerHost();
@@ -125,6 +160,30 @@ export default async function globalSetup(): Promise<void> {
     }
   }
 
+  // ── 0. Read pre-allocated ports ─────────────────────────────────
+  // Ports are allocated in playwright.config.ts (at config eval time) because
+  // Playwright starts webServer BEFORE globalSetup — the Vite build needs
+  // VITE_CONVEX_URL baked in at build time.
+  const convexPort = Number(process.env.E2E_CONVEX_PORT);
+  const sitePort = Number(process.env.E2E_SITE_PORT);
+  const restateIngressPort = Number(process.env.E2E_RESTATE_INGRESS_PORT);
+  const restateAdminPort = Number(process.env.E2E_RESTATE_ADMIN_PORT);
+  const workerServicePort = Number(process.env.E2E_WORKER_PORT);
+  if (
+    !convexPort ||
+    !sitePort ||
+    !restateIngressPort ||
+    !restateAdminPort ||
+    !workerServicePort
+  ) {
+    throw new Error(
+      "[e2e] E2E_*_PORT env vars not set — playwright.config.ts should allocate them"
+    );
+  }
+  console.log(
+    `[e2e] Using ports — convex:${convexPort} site:${sitePort} restate-ingress:${restateIngressPort} restate-admin:${restateAdminPort} worker:${workerServicePort}`
+  );
+
   // ── 1. Start Convex backend container ─────────────────────────────
   console.log("[e2e] Starting Convex backend container...");
 
@@ -132,21 +191,21 @@ export default async function globalSetup(): Promise<void> {
     "ghcr.io/get-convex/convex-backend:latest"
   )
     .withExposedPorts(
-      { container: 3210, host: CONVEX_HOST_PORT },
-      { container: 3211, host: SITE_HOST_PORT }
+      { container: 3210, host: convexPort },
+      { container: 3211, host: sitePort }
     )
     .withEnvironment({
       INSTANCE_NAME: "test-instance",
       INSTANCE_SECRET:
         "4361726e697461732c206c69746572616c6c79206d65616e696e6720226c6974",
-      CONVEX_CLOUD_ORIGIN: `http://localhost:${CONVEX_HOST_PORT}`,
-      CONVEX_SITE_ORIGIN: `http://localhost:${SITE_HOST_PORT}`,
+      CONVEX_CLOUD_ORIGIN: `http://localhost:${convexPort}`,
+      CONVEX_SITE_ORIGIN: `http://localhost:${sitePort}`,
       RUST_LOG: "error",
     })
     .withStartupTimeout(120_000)
     .start();
 
-  const convexUrl = `http://localhost:${CONVEX_HOST_PORT}`;
+  const convexUrl = `http://localhost:${convexPort}`;
 
   console.log(
     `[e2e] Container started at ${convexUrl}, waiting for backend...`
@@ -176,8 +235,8 @@ export default async function globalSetup(): Promise<void> {
     "docker.io/restatedev/restate:1.3"
   )
     .withExposedPorts(
-      { container: 8080, host: RESTATE_INGRESS_PORT },
-      { container: 9070, host: RESTATE_ADMIN_PORT }
+      { container: 8080, host: restateIngressPort },
+      { container: 9070, host: restateAdminPort }
     )
     .withEnvironment({
       RESTATE_OBSERVABILITY__LOG__FORMAT: "json",
@@ -186,7 +245,7 @@ export default async function globalSetup(): Promise<void> {
     .start();
 
   console.log(
-    `[e2e] Restate container started (ingress: ${RESTATE_INGRESS_PORT}, admin: ${RESTATE_ADMIN_PORT})`
+    `[e2e] Restate container started (ingress: ${restateIngressPort}, admin: ${restateAdminPort})`
   );
 
   // ── 2. Generate admin key inside the container ────────────────────
@@ -267,7 +326,17 @@ export default async function globalSetup(): Promise<void> {
   const buildResult = spawnSync(
     "cargo",
     ["build", "-p", "crm-worker", "--quiet"],
-    { cwd: ROOT, stdio: "pipe", encoding: "utf-8" }
+    {
+      cwd: ROOT,
+      stdio: "pipe",
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        // Prefer CommandLineTools to avoid Xcode license prompts blocking CI
+        DEVELOPER_DIR:
+          process.env.DEVELOPER_DIR ?? "/Library/Developer/CommandLineTools",
+      },
+    }
   );
   if (buildResult.status !== 0) {
     throw new Error(`cargo build failed:\n${buildResult.stderr}`);
@@ -296,9 +365,9 @@ export default async function globalSetup(): Promise<void> {
       TG_ID: process.env.TG_ID,
       TG_HASH: process.env.TG_HASH,
       TG_SESSION_DIR: sessionDir,
-      RESTATE_SERVICE_PORT: String(WORKER_SERVICE_PORT),
-      RESTATE_ADMIN_URL: `http://localhost:${RESTATE_ADMIN_PORT}`,
-      RESTATE_INGRESS_URL: `http://localhost:${RESTATE_INGRESS_PORT}`,
+      RESTATE_SERVICE_PORT: String(workerServicePort),
+      RESTATE_ADMIN_URL: `http://localhost:${restateAdminPort}`,
+      RESTATE_INGRESS_URL: `http://localhost:${restateIngressPort}`,
       SCAN_REFRESH_SECS: "5",
       RUST_LOG: "debug,crm_worker=debug",
     },
@@ -306,15 +375,10 @@ export default async function globalSetup(): Promise<void> {
   });
 
   // Worker self-registers with Restate and bootstraps the TaskOrchestrator.
-  // Wait for it to be ready (registration + bootstrap happen ~500ms after bind).
-  await new Promise((r) => setTimeout(r, 5000));
-  if (worker.exitCode !== null) {
-    throw new Error(`crm-worker exited prematurely (code ${worker.exitCode})`);
-  }
+  await waitForWorkerReady(worker, restateAdminPort);
   console.log(`[e2e] crm-worker running (PID ${worker.pid})`);
 
   // ── 6. Set environment for test workers ───────────────────────────
-  // VITE_CONVEX_URL is handled by playwright.config.ts webServer.env
   process.env.E2E_CONVEX_URL = convexUrl;
   process.env.E2E_ROBOT_PRIVATE_KEY = privateKeyPem;
 

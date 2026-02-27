@@ -1,8 +1,8 @@
 import { UserButton, useAuth } from "@clerk/clerk-react";
 import {
-  Navigate,
   createFileRoute,
   Link,
+  Navigate,
   Outlet,
   useNavigate,
   useRouterState,

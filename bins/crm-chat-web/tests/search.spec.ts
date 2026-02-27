@@ -37,7 +37,10 @@ test.describe("Search — Backend (Data Integrity)", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:search-test-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:search-test-${Date.now()}`
+    );
     chatId = `${clientId}:search-chat`;
 
     const robot = getRobotClient();
@@ -70,16 +73,34 @@ test.describe("Search — Backend (Data Integrity)", () => {
     const msg2Id = `${chatId}:search-msg-2`;
     const msg3Id = `${chatId}:search-msg-3`;
 
-    await seedMessage(userId, clientId, chatId, msg1Id, "Meeting with John about project alpha");
-    await seedMessage(userId, clientId, chatId, msg2Id, "Quarterly budget review scheduled");
-    await seedMessage(userId, clientId, chatId, msg3Id, "Don't forget to send the invoice");
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msg1Id,
+      "Meeting with John about project alpha"
+    );
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msg2Id,
+      "Quarterly budget review scheduled"
+    );
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msg3Id,
+      "Don't forget to send the invoice"
+    );
 
     // Verify messages were stored via Convex query
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; text?: string }>;
+    })) as Array<{ messageId: string; text?: string }>;
 
     const msg1 = msgs.find((m) => m.messageId === msg1Id);
     const msg2 = msgs.find((m) => m.messageId === msg2Id);
@@ -95,10 +116,10 @@ test.describe("Search — Backend (Data Integrity)", () => {
     await seedMessage(userId, clientId, chatId, msgId, undefined);
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; text?: string }>;
+    })) as Array<{ messageId: string; text?: string }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
@@ -138,7 +159,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     // Click the search button in the header
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await expect(searchButton).toBeVisible({ timeout: 10_000 });
     await searchButton.click();
 
@@ -152,7 +175,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await searchButton.click();
 
     const dialog = page.locator('[role="dialog"]');
@@ -171,35 +196,47 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await searchButton.click();
 
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // "All messages" scope button should be visible and active (primary color)
-    await expect(dialog.locator('button:has-text("All messages")')).toBeVisible();
+    await expect(
+      dialog.locator('button:has-text("All messages")')
+    ).toBeVisible();
   });
 
   test("semantic search toggle works", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await searchButton.click();
 
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Find the semantic search toggle (Sparkles icon button)
-    const semanticBtn = dialog.locator('button[aria-label*="semantic"], button[aria-label*="Semantic"]');
+    const semanticBtn = dialog.locator(
+      'button[aria-label*="semantic"], button[aria-label*="Semantic"]'
+    );
     if (await semanticBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       // Should start as not pressed
-      await expect(semanticBtn).toHaveAttribute("aria-pressed", "false", { timeout: 5000 });
+      await expect(semanticBtn).toHaveAttribute("aria-pressed", "false", {
+        timeout: 5000,
+      });
 
       // Toggle it
       await semanticBtn.click();
-      await expect(semanticBtn).toHaveAttribute("aria-pressed", "true", { timeout: 5000 });
+      await expect(semanticBtn).toHaveAttribute("aria-pressed", "true", {
+        timeout: 5000,
+      });
     }
   });
 
@@ -207,7 +244,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await searchButton.click();
 
     const dialog = page.locator('[role="dialog"]');
@@ -222,9 +261,18 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.waitForTimeout(3000);
 
     // Check for error or empty state — either is valid since ES is broken
-    const hasError = await dialog.locator("text=Search failed").isVisible().catch(() => false);
-    const hasNoResults = await dialog.locator("text=No results found").isVisible().catch(() => false);
-    const isLoading = await dialog.locator(".animate-spin").isVisible().catch(() => false);
+    const hasError = await dialog
+      .locator("text=Search failed")
+      .isVisible()
+      .catch(() => false);
+    const hasNoResults = await dialog
+      .locator("text=No results found")
+      .isVisible()
+      .catch(() => false);
+    const isLoading = await dialog
+      .locator(".animate-spin")
+      .isVisible()
+      .catch(() => false);
 
     // At least one state should be shown (not blank)
     expect(hasError || hasNoResults || isLoading).toBe(true);
@@ -234,7 +282,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const searchButton = page.locator('button:has(span:text("Search messages"))');
+    const searchButton = page.locator(
+      'button:has(span:text("Search messages"))'
+    );
     await searchButton.click();
 
     const dialog = page.locator('[role="dialog"]');

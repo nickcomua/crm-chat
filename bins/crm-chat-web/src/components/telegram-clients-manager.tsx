@@ -192,7 +192,10 @@ function ClientCard({
   const isConnected = isClientConnected(client);
 
   return (
-    <Card className="group transition-shadow hover:shadow-md">
+    <Card
+      className="group transition-shadow hover:shadow-md"
+      data-testid="client-card"
+    >
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
         <div className="space-y-1">
           <CardTitle className="font-medium text-sm">
@@ -221,6 +224,7 @@ function ClientCard({
             </Button>
           )}
           <Button
+            aria-label="Delete client"
             className="h-7 w-7 text-muted-foreground hover:text-destructive"
             onClick={onDelete}
             size="icon"

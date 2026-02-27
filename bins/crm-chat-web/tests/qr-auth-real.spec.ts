@@ -1,13 +1,9 @@
+import { existsSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
 import { getSessionEnv } from "./env";
-import {
-  api,
-  getConvexUserId,
-  getRobotClient,
-  pollUntil,
-} from "./helpers";
+import { api, getConvexUserId, getRobotClient, waitForPendingScanners } from "./helpers";
 
 /**
  * Real QR Auth Tests
@@ -31,14 +27,22 @@ const QR_CODE_TIMEOUT = 30_000;
 test.describe.configure({ mode: "serial" });
 
 const session = getSessionEnv();
+const sessionAvailable = session?.sessionFile
+  ? existsSync(session.sessionFile)
+  : false;
 
-let userId: string;
+let _userId: string;
 
 test.describe("QR Auth — Real Telegram (Backend)", () => {
-  test.skip(!session, "Skipping: TG_SESSION_FILE_1 not set");
+  test.skip(
+    !sessionAvailable,
+    "Skipping: TG_SESSION_FILE_1 not set or file missing"
+  );
 
   test.beforeAll(async ({ browser }) => {
-    if (!session) return;
+    if (!session) {
+      return;
+    }
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
@@ -48,11 +52,13 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
     await page.waitForTimeout(1000);
 
-    userId = await getConvexUserId(page);
+    _userId = await getConvexUserId(page);
     await page.close();
   });
 
-  test("QrAuth task is created when Add Client is clicked", async ({ page }) => {
+  test("QrAuth task is created when Add Client is clicked", async ({
+    page,
+  }) => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
     await page.waitForSelector("text=Telegram Clients", { timeout: 10_000 });
@@ -61,27 +67,47 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.click('button:has-text("Add Client")');
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
-    // Wait for the task to be created
-    await page.waitForTimeout(2000);
-
-    // Query backend for QrAuth tasks
+    // Poll backend for QrAuth task creation (any status — worker may pick it up fast)
     const robot = getRobotClient();
-    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{ task: { type: string; step?: string }; status: string }>;
+    const deadline = Date.now() + 15_000;
+    let qrTasks: Array<{ taskType: string; status: string }> = [];
 
-    const qrTasks = tasks.filter((t) => t.task.type === "QrAuth");
+    while (Date.now() < deadline) {
+      const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
+        userId: _userId,
+      })) as Array<{ taskType: string; status: string }>;
+      qrTasks = tasks.filter((t) => t.taskType === "QrAuth");
+      if (qrTasks.length >= 1) {
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
 
-    // There should be at least one QrAuth task (Pending or Dispatched)
+    // There should be at least one QrAuth task (any status)
     expect(qrTasks.length).toBeGreaterThanOrEqual(1);
 
-    // Close dialog to clean up
-    await page.click('[role="dialog"] [data-slot="dialog-close"]');
-    await expect(page.locator('[role="dialog"]')).toBeHidden({ timeout: 10_000 });
+    // Close dialog to clean up (may have auto-closed if worker processed quickly)
+    const dialog = page.locator('[role="dialog"]');
+    if (await dialog.isVisible()) {
+      const closeBtn = dialog.locator('[data-slot="dialog-close"]');
+      if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await closeBtn.click();
+      }
+    }
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
+
+    // Wait for QrAuth task to drain before the next test
+    await waitForNoQrAuthTasks();
   });
 
-  test("QrAuth task transitions to Token step with valid QR URL", async ({ page }) => {
-    test.setTimeout(60_000);
+  test("QrAuth task transitions to Token step with valid QR URL", async ({
+    page,
+  }) => {
+    // Scanner drain (30s) + QR token generation (30s) can exceed the default 30s test timeout
+    test.setTimeout(90_000);
+
+    // Drain pending ChatScanner tasks so the worker can process QrAuth
+    await waitForPendingScanners();
 
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
@@ -106,7 +132,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     );
 
     expect(decoded).not.toBeNull();
-    expect(decoded!.data).toMatch(TG_LOGIN_URL_PATTERN);
+    expect(decoded?.data).toMatch(TG_LOGIN_URL_PATTERN);
 
     // Verify backend task is in Token step
     const robot = getRobotClient();
@@ -128,7 +154,9 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
 
     // Clean up
     await page.click('[role="dialog"] [data-slot="dialog-close"]');
-    await expect(page.locator('[role="dialog"]')).toBeHidden({ timeout: 10_000 });
+    await expect(page.locator('[role="dialog"]')).toBeHidden({
+      timeout: 10_000,
+    });
 
     // Wait for cleanup
     await waitForNoQrAuthTasks();
@@ -146,16 +174,21 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     // Wait for task to be created
     await page.waitForTimeout(3000);
 
-    // Cancel via the Cancel button in the dialog
-    const cancelBtn = page.locator('[role="dialog"] button:has-text("Cancel")');
-    if (await cancelBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await cancelBtn.click();
-    } else {
-      // Close via X button
-      await page.click('[role="dialog"] [data-slot="dialog-close"]');
+    // Cancel — dialog may have auto-closed if worker processed task quickly
+    const dialog = page.locator('[role="dialog"]');
+    if (await dialog.isVisible()) {
+      const cancelBtn = dialog.locator('button:has-text("Cancel")');
+      if (await cancelBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await cancelBtn.click();
+      } else {
+        const closeBtn = dialog.locator('[data-slot="dialog-close"]');
+        if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await closeBtn.click();
+        }
+      }
     }
 
-    await expect(page.locator('[role="dialog"]')).toBeHidden({ timeout: 10_000 });
+    await expect(dialog).toBeHidden({ timeout: 10_000 });
 
     // Backend should have no remaining QrAuth tasks
     await waitForNoQrAuthTasks();
@@ -171,11 +204,13 @@ async function waitForNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{ task: { type: string }; status: string }>;
+    // queryWorkerTasks returns ALL statuses (Pending, Dispatched, Running, Cancelled)
+    // — unlike pendingForWorker which only shows Pending tasks.
+    const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
+      userId: _userId,
+    })) as Array<{ taskType: string; status: string }>;
 
-    const qrTasks = tasks.filter((t) => t.task.type === "QrAuth");
+    const qrTasks = tasks.filter((t) => t.taskType === "QrAuth");
     if (qrTasks.length === 0) {
       return;
     }

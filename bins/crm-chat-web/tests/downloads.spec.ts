@@ -28,7 +28,10 @@ test.describe("Downloads — Backend", () => {
     await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:dl-backend-${Date.now()}`);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:dl-backend-${Date.now()}`
+    );
     chatId = `${clientId}:dl-chat`;
 
     const robot = getRobotClient();
@@ -63,13 +66,13 @@ test.describe("Downloads — Backend", () => {
     await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
       telegramFileId: `test-pending-${Date.now()}`,
       fileName: "test.jpg",
-      fileSize: 12345,
+      fileSize: 12_345,
     });
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
       telegramFileId: `test-failed-${Date.now()}`,
       fileName: "video.mp4",
-      fileSize: 99999,
+      fileSize: 99_999,
       error: "Connection timed out",
     });
 
@@ -97,13 +100,23 @@ test.describe("Downloads — Backend", () => {
     await seedMessage(userId, clientId, chatId, msgId, "Retry test");
 
     const fileId = `test-retry-${Date.now()}`;
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Document", "Failed", {
-      telegramFileId: fileId,
-      error: "Network error",
-    });
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Document",
+      "Failed",
+      {
+        telegramFileId: fileId,
+        error: "Network error",
+      }
+    );
 
     const robot = getRobotClient();
-    await robot.mutation(api.testHelpers.retryDownload, { telegramFileId: fileId });
+    await robot.mutation(api.testHelpers.retryDownload, {
+      telegramFileId: fileId,
+    });
 
     // Query the media and check status changed
     const media = (await robot.query(api.testHelpers.queryMediaByStatus, {
@@ -121,12 +134,22 @@ test.describe("Downloads — Backend", () => {
     await seedMessage(userId, clientId, chatId, msgId, "Cancel test");
 
     const fileId = `test-cancel-${Date.now()}`;
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Sticker", "Pending", {
-      telegramFileId: fileId,
-    });
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Sticker",
+      "Pending",
+      {
+        telegramFileId: fileId,
+      }
+    );
 
     const robot = getRobotClient();
-    await robot.mutation(api.testHelpers.cancelDownload, { telegramFileId: fileId });
+    await robot.mutation(api.testHelpers.cancelDownload, {
+      telegramFileId: fileId,
+    });
 
     // Verify status changed to Skipped
     const media = (await robot.query(api.testHelpers.queryMediaByStatus, {
@@ -171,7 +194,7 @@ test.describe("Downloads — UI", () => {
     await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
       telegramFileId: `ui-pending-${Date.now()}`,
       fileName: "queued-photo.jpg",
-      fileSize: 50000,
+      fileSize: 50_000,
     });
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
@@ -208,19 +231,36 @@ test.describe("Downloads — UI", () => {
       userId,
       statuses: ["Pending", "Failed", "Stored"],
     })) as Record<string, number>;
-    expect(counts.Pending, "Backend should have Pending media").toBeGreaterThanOrEqual(1);
-    expect(counts.Failed, "Backend should have Failed media").toBeGreaterThanOrEqual(1);
-    expect(counts.Stored, "Backend should have Stored media").toBeGreaterThanOrEqual(1);
+    expect(
+      counts.Pending,
+      "Backend should have Pending media"
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      counts.Failed,
+      "Backend should have Failed media"
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      counts.Stored,
+      "Backend should have Stored media"
+    ).toBeGreaterThanOrEqual(1);
 
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
-    await expect(page.locator("h2:has-text('Downloads')")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("h2:has-text('Downloads')")).toBeVisible({
+      timeout: 15_000,
+    });
 
     // All three sections should render (Queued=Pending, Failed, Recent=Stored)
-    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("h3:has-text('Recent')")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.locator("h3:has-text('Recent')")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test("failed media shows error and retry button", async ({ page }) => {
@@ -228,10 +268,14 @@ test.describe("Downloads — UI", () => {
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
     // Wait for the Failed section to render (Clerk auth + Convex subscription)
-    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({
+      timeout: 15_000,
+    });
 
     // Error message should be visible
-    await expect(page.locator("text=Server unavailable")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Server unavailable")).toBeVisible({
+      timeout: 5000,
+    });
 
     // Retry button should exist
     const retryBtn = page.locator('button:has-text("Retry")');
@@ -243,7 +287,9 @@ test.describe("Downloads — UI", () => {
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
     // Wait for the Queued section to render (Clerk auth + Convex subscription)
-    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({
+      timeout: 15_000,
+    });
 
     const cancelBtn = page.locator('button:has-text("Cancel")');
     await expect(cancelBtn.first()).toBeVisible();
@@ -262,18 +308,24 @@ test.describe("Downloads — UI", () => {
     await page.waitForURL(/\/#\/chats\//, { timeout: 10_000 });
   });
 
-  test("retry button changes media from Failed to Pending", async ({ page }) => {
+  test("retry button changes media from Failed to Pending", async ({
+    page,
+  }) => {
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
     // Wait for the Failed section to render
-    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("h3:has-text('Failed')")).toBeVisible({
+      timeout: 15_000,
+    });
 
     const retryBtn = page.locator('button:has-text("Retry")').first();
     await retryBtn.click();
 
     // After retry, the failed item should move to Queued.
     // The Queued section should appear (or already be visible from other Pending items).
-    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("h3:has-text('Queued')")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

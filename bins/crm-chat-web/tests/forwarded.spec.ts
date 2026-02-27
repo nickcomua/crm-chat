@@ -57,20 +57,26 @@ test.describe("Forwarded Messages — Backend", () => {
   test("stores forwardedFrom on a message", async () => {
     const msgId = `${chatId}:msg-fwd-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Forwarded content", {
-      forwardedFrom: { senderName: "Alice Wonderland", date: 1700000000000 },
+      forwardedFrom: {
+        senderName: "Alice Wonderland",
+        date: 1_700_000_000_000,
+      },
     });
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; forwardedFrom?: { senderName: string; date?: number } }>;
+    })) as Array<{
+      messageId: string;
+      forwardedFrom?: { senderName: string; date?: number };
+    }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
     expect(msg?.forwardedFrom).toBeTruthy();
     expect(msg?.forwardedFrom?.senderName).toBe("Alice Wonderland");
-    expect(msg?.forwardedFrom?.date).toBe(1700000000000);
+    expect(msg?.forwardedFrom?.date).toBe(1_700_000_000_000);
   });
 
   test("forwardedFrom without date stores senderName only", async () => {
@@ -80,10 +86,13 @@ test.describe("Forwarded Messages — Backend", () => {
     });
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; forwardedFrom?: { senderName: string; date?: number } }>;
+    })) as Array<{
+      messageId: string;
+      forwardedFrom?: { senderName: string; date?: number };
+    }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg?.forwardedFrom?.senderName).toBe("Bob");
@@ -95,10 +104,10 @@ test.describe("Forwarded Messages — Backend", () => {
     await seedMessage(userId, clientId, chatId, msgId, "Not forwarded");
 
     const robot = getRobotClient();
-    const msgs = await robot.query(api.testHelpers.queryMessages, {
+    const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
-    }) as Array<{ messageId: string; forwardedFrom?: unknown }>;
+    })) as Array<{ messageId: string; forwardedFrom?: unknown }>;
 
     const msg = msgs.find((m) => m.messageId === msgId);
     expect(msg).toBeTruthy();
@@ -131,14 +140,31 @@ test.describe("Forwarded Messages — UI", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-fwd`, "Check out this message!", {
-      forwardedFrom: { senderName: "Alice Wonderland", date: 1700000000000 },
-      timestamp: Date.now(),
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-fwd`,
+      "Check out this message!",
+      {
+        forwardedFrom: {
+          senderName: "Alice Wonderland",
+          date: 1_700_000_000_000,
+        },
+        timestamp: Date.now(),
+      }
+    );
 
-    await seedMessage(userId, clientId, chatId, `${chatId}:ui-normal`, "Just a normal message", {
-      timestamp: Date.now() - 1000,
-    });
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      `${chatId}:ui-normal`,
+      "Just a normal message",
+      {
+        timestamp: Date.now() - 1000,
+      }
+    );
 
     await page.close();
   });
@@ -154,7 +180,9 @@ test.describe("Forwarded Messages — UI", () => {
     }
   });
 
-  test("renders 'Forwarded from' header on forwarded message", async ({ page }) => {
+  test("renders 'Forwarded from' header on forwarded message", async ({
+    page,
+  }) => {
     await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
 
     const fwdMsg = page.locator(`[data-message-id="${chatId}:ui-fwd"]`);

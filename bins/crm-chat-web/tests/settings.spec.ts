@@ -52,9 +52,9 @@ test.describe("Settings — Backend", () => {
 
     // Query the client and verify status
     const robot = getRobotClient();
-    const client = await robot.query(api.clients.getForWorker, {
+    const client = (await robot.query(api.clients.getForWorker, {
       clientId: connectedClientId,
-    }) as { status: { type: string } } | null;
+    })) as { status: { type: string } } | null;
 
     expect(client).toBeTruthy();
     expect(client?.status.type).toBe("Connected");
@@ -62,11 +62,14 @@ test.describe("Settings — Backend", () => {
 
   test("client list returns registered clients", async () => {
     // Register a second client
-    errorClientId = (await getRobotClient().mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId: `telegram:settings-error-${Date.now()}`,
-      kind: "Telegram",
-    })) as string;
+    errorClientId = (await getRobotClient().mutation(
+      api.clients.workerRegisterConnected,
+      {
+        userId,
+        telegramId: `telegram:settings-error-${Date.now()}`,
+        kind: "Telegram",
+      }
+    )) as string;
 
     // Set it to Error status via a direct patch (robot can do this)
     // Since there's no direct "setError" mutation, we verify both exist
@@ -98,7 +101,9 @@ test.describe("Settings — Backend", () => {
     expect(before).toBeTruthy();
 
     // Delete it
-    await robot.mutation(api.testHelpers.deleteClient, { clientId: tempClientId });
+    await robot.mutation(api.testHelpers.deleteClient, {
+      clientId: tempClientId,
+    });
 
     // Verify it's gone
     const after = await robot.query(api.clients.getForWorker, {
@@ -117,10 +122,14 @@ test.describe("Settings — Backend", () => {
     const robot = getRobotClient();
 
     // Verify chats exist before deletion
-    const chatsBefore = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chatsBefore = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
     }>;
-    const ourChatsBefore = chatsBefore.filter((c) => c.chatId.startsWith(tempClientId));
+    const ourChatsBefore = chatsBefore.filter((c) =>
+      c.chatId.startsWith(tempClientId)
+    );
     expect(ourChatsBefore.length).toBeGreaterThanOrEqual(1);
 
     await robot.mutation(api.testHelpers.deleteClient, {
@@ -134,10 +143,14 @@ test.describe("Settings — Backend", () => {
     expect(client).toBeNull();
 
     // Chats belonging to deleted client should also be gone
-    const chatsAfter = (await robot.query(api.testHelpers.queryChats, { userId })) as Array<{
+    const chatsAfter = (await robot.query(api.testHelpers.queryChats, {
+      userId,
+    })) as Array<{
       chatId: string;
     }>;
-    const ourChatsAfter = chatsAfter.filter((c) => c.chatId.startsWith(tempClientId));
+    const ourChatsAfter = chatsAfter.filter((c) =>
+      c.chatId.startsWith(tempClientId)
+    );
     expect(ourChatsAfter.length).toBe(0);
   });
 });
@@ -167,19 +180,27 @@ test.describe("Settings — UI", () => {
     if (testClientId) {
       try {
         const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId: testClientId });
+        await robot.mutation(api.testHelpers.deleteClient, {
+          clientId: testClientId,
+        });
       } catch {
         // best-effort
       }
     }
   });
 
-  test("settings page renders with 'Telegram Clients' header", async ({ page }) => {
+  test("settings page renders with 'Telegram Clients' header", async ({
+    page,
+  }) => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
-    await expect(page.locator("text=Telegram Clients")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("text=Your connected Telegram accounts")).toBeVisible();
+    await expect(page.locator("text=Telegram Clients")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      page.locator("text=Your connected Telegram accounts")
+    ).toBeVisible();
   });
 
   test("shows connected client with status badge", async ({ page }) => {
@@ -187,7 +208,9 @@ test.describe("Settings — UI", () => {
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
     // At least one client card should be visible with "Connected" status
-    await expect(page.locator("text=Connected").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Connected").first()).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test("'Add Client' button is visible", async ({ page }) => {
@@ -233,7 +256,9 @@ test.describe("Settings — UI", () => {
     await expect(deleteButtons.last()).toBeVisible({ timeout: 5000 });
   });
 
-  test("client card shows settings button for connected clients", async ({ page }) => {
+  test("client card shows settings button for connected clients", async ({
+    page,
+  }) => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
@@ -246,7 +271,9 @@ test.describe("Settings — UI", () => {
 
     await connectedCard.hover();
 
-    const settingsBtn = connectedCard.locator('button[aria-label="Client settings"]');
+    const settingsBtn = connectedCard.locator(
+      'button[aria-label="Client settings"]'
+    );
     await expect(settingsBtn).toBeVisible({ timeout: 5000 });
   });
 
@@ -262,7 +289,9 @@ test.describe("Settings — UI", () => {
 
     await connectedCard.hover();
 
-    const settingsBtn = connectedCard.locator('button[aria-label="Client settings"]');
+    const settingsBtn = connectedCard.locator(
+      'button[aria-label="Client settings"]'
+    );
     await expect(settingsBtn).toBeVisible({ timeout: 5000 });
     await settingsBtn.click();
 

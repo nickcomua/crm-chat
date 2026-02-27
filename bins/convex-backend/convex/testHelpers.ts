@@ -388,3 +388,25 @@ export const deleteAllForUser = mutation({
 		return null;
 	},
 });
+
+/** Query all worker tasks for a user (any status). For E2E assertions. */
+export const queryWorkerTasks = query({
+	args: { userId: v.string() },
+	returns: v.array(
+		v.object({
+			status: v.string(),
+			taskType: v.string(),
+		}),
+	),
+	handler: async (ctx, { userId }) => {
+		await requireWorker(ctx);
+		const tasks = await ctx.db
+			.query("workerTasks")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+		return tasks.map((t) => ({
+			status: t.status,
+			taskType: t.task.type,
+		}));
+	},
+});
