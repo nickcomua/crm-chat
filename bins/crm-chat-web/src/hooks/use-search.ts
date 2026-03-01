@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@clerk/clerk-react";
 import { createApiClient } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
 
@@ -27,10 +28,6 @@ interface UseSearchOptions {
   size?: number;
 }
 
-function getStoredToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
 export function useSearch({
   q,
   scope,
@@ -39,10 +36,12 @@ export function useSearch({
   from = 0,
   enabled = true,
 }: UseSearchOptions) {
+  const { getToken } = useAuth();
+
   return useQuery({
     queryKey: ["search", q, scope, semantic, size, from],
     queryFn: async () => {
-      const token = getStoredToken();
+      const token = getToken ? await getToken() : null;
       if (!token) {
         throw new Error("Not authenticated");
       }
@@ -106,6 +105,7 @@ export function useSearchAll(q: string, options?: Partial<UseSearchOptions>) {
 
 export function usePrefetchSearch() {
   const queryClient = useQueryClient();
+  const { getToken } = useAuth();
 
   return async (params: UseSearchOptions) => {
     const { q, scope, semantic = false, size = 20, from = 0 } = params;
@@ -113,7 +113,7 @@ export function usePrefetchSearch() {
     await queryClient.prefetchQuery({
       queryKey: ["search", q, scope, semantic, size, from],
       queryFn: async () => {
-        const token = getStoredToken();
+        const token = getToken ? await getToken() : null;
         if (!token) {
           throw new Error("Not authenticated");
         }
