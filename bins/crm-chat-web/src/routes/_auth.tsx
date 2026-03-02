@@ -177,6 +177,7 @@ function AuthLayout(): React.ReactNode {
               navigate({
                 to: "/chats/$chatId",
                 params: { chatId: result.chatId },
+                search: result.messageId ? { messageId: result.messageId } : undefined,
               });
             }}
             open={searchOpen}
