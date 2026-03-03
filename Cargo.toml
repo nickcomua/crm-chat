@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "bins/convex-backend",
-  "bins/es-proxy",
   "libs/hack",
   "libs/messanger-interface",
   "libs/messanger-telegram",

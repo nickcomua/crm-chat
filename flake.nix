@@ -209,7 +209,6 @@
               ./Cargo.lock
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
-              (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./bins/convex-backend)
               # Include .ts/.js files needed by convex-backend build.rs (convex-typegen)
               (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
@@ -258,12 +257,6 @@
           crm-chat-fmt = craneLib.cargoFmt {
             inherit src;
           };
-
-          # crm-chat-toml-fmt = craneLib.taploFmt {
-          #   src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
-          #   # taplo arguments can be further customized below as needed
-          #   taploExtraArgs = "--config ./taplo.toml";
-          # };
 
           crm-chat-audit = craneLib.cargoAudit {
             inherit src advisory-db;
@@ -327,6 +320,9 @@
             contents = [crm-worker pkgs.cacert];
 
             config = {
+              Env = [
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
               Cmd = ["/bin/crm-worker"];
             };
           };
