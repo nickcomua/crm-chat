@@ -25,10 +25,6 @@
 
     # Swagger UI fetched below via pkgs.fetchurl to preserve zip format
 
-    # sccache = {
-    #   url = "github:mozilla/sccache";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
 
     # Child flakes
     crm-chat-web-app = {
@@ -59,7 +55,6 @@
     fenix,
     advisory-db,
     bun2nix,
-    # sccache,
     crm-chat-web-app,
     ...
   } @ inputs:
@@ -69,7 +64,6 @@
           inherit system;
           overlays = [ bun2nix.overlays.default ];
         #   config.allowUnfree = true;
-        #   # overlays = [ sccache.overlays.default ];
         };
         # pkgs = nixpkgs.legacyPackages.${system};
 
@@ -331,9 +325,6 @@
 
         devShells.default = craneLib.devShell {
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
-          SCCACHE_CACHE_SIZE="20G";
-          SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
             export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
@@ -360,7 +351,6 @@
             llvmPackages.libclang
             pkgs.lld
             sqlite
-            sccache
           ];
         };
       }
