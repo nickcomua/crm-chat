@@ -47,11 +47,11 @@ export default defineConfig({
       },
       dependencies: ["setup"],
       testIgnore: [
-        /scan-chats\.spec/,
-        /media-rendering\.spec/,
-        /media-visual\.spec/,
-        /qr-auth\.spec/,
-        /qr-auth-real\.spec/,
+        /e2e-telegram\/scan-chats\.spec/,
+        /e2e-telegram\/media-rendering\.spec/,
+        /e2e-telegram\/media-visual\.spec/,
+        /e2e-telegram\/qr-auth\.spec/,
+        /e2e-telegram\/qr-auth-real\.spec/,
       ],
     },
     // Real-TG specs run sequentially via dependency chain.
@@ -60,7 +60,7 @@ export default defineConfig({
     // causing ChatScanner to stall during message fetching.
     {
       name: "tg-scan",
-      testMatch: /scan-chats\.spec\.ts/,
+      testMatch: /e2e-telegram\/scan-chats\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/.auth/user.json",
@@ -69,7 +69,7 @@ export default defineConfig({
     },
     {
       name: "tg-qr-auth",
-      testMatch: /qr-auth\.spec\.ts/,
+      testMatch: /e2e-telegram\/qr-auth\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/.auth/user.json",
@@ -78,7 +78,7 @@ export default defineConfig({
     },
     {
       name: "tg-qr-auth-real",
-      testMatch: /qr-auth-real\.spec\.ts/,
+      testMatch: /e2e-telegram\/qr-auth-real\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/.auth/user.json",
@@ -87,7 +87,7 @@ export default defineConfig({
     },
     {
       name: "tg-media-render",
-      testMatch: /media-rendering\.spec\.ts/,
+      testMatch: /e2e-telegram\/media-rendering\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/.auth/user.json",
@@ -96,7 +96,7 @@ export default defineConfig({
     },
     {
       name: "tg-media-visual",
-      testMatch: /media-visual\.spec\.ts/,
+      testMatch: /e2e-telegram\/media-visual\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/.auth/user.json",

@@ -12,7 +12,7 @@ test.describe("Scroll to Message", () => {
   let userId: string;
   // Target message in the first page (should scroll without loadMore).
   let firstPageTargetId: string;
-  // Target message that requires loading a second page.
+  // Target message near the top of the list (oldest messages).
   let deepTargetId: string;
 
   test.beforeAll(async ({ browser }) => {
@@ -22,7 +22,6 @@ test.describe("Scroll to Message", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
     const robot = getRobotClient();
@@ -46,8 +45,8 @@ test.describe("Scroll to Message", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    // Create 70 messages (PAGE_SIZE is 50, so messages 1–20 require a second page).
-    // Messages sorted by ts desc → first page = messages 70–21, second page = 20–1.
+    // Create 70 messages. PAGE_SIZE is currently 8000, so all 70 fit in one page.
+    // To actually test loadMore, we'd need >8000 messages.
     const baseTs = Date.now() - 400_000;
     for (let i = 1; i <= 70; i++) {
       const msgId = `${clientId}:${chatId}:msg-${i}`;
@@ -65,9 +64,9 @@ test.describe("Scroll to Message", () => {
       });
     }
 
-    // Message 60 is in the first page (newest 50 are 21–70).
     firstPageTargetId = `${clientId}:${chatId}:msg-60`;
-    // Message 10 is in the second page (requires loadMore).
+    // With PAGE_SIZE=8000, msg-10 also loads in the first page. This test
+    // still validates scroll-to-target but does NOT exercise loadMore.
     deepTargetId = `${clientId}:${chatId}:msg-10`;
 
     await page.close();
@@ -95,19 +94,20 @@ test.describe("Scroll to Message", () => {
     await expect(targetEl).toBeVisible({ timeout: 10_000 });
     await expect(targetEl).toContainText("Test message number 60");
 
-    // The highlight ring should be applied to the bubble.
+    // Verified: message-list.tsx:173 — highlight uses "ring-2 ring-primary ring-offset-2"
     const bubble = targetEl.locator(".ring-primary");
     await expect(bubble).toBeVisible({ timeout: 5000 });
   });
 
-  test("scrolls to a message requiring loadMore (second page)", async ({
+  test("scrolls to an older message near the top", async ({
     page,
   }) => {
     await page.goto(
       `/#/chats/${encodeURIComponent(chatId)}?messageId=${encodeURIComponent(deepTargetId)}`
     );
 
-    // This message is beyond the first page — the component must loadMore to find it.
+    // With PAGE_SIZE=8000 all 70 messages are in the first page, so this
+    // tests scroll-to-index but not loadMore pagination.
     const targetEl = page.locator(`[data-message-id="${deepTargetId}"]`);
     await expect(targetEl).toBeVisible({ timeout: 10_000 });
     await expect(targetEl).toContainText("Test message number 10");
