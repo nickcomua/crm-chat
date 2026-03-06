@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
-  api,
+  type WorkerConfig,
   getConvexUserId,
   getRobotClient,
   seedTestClient,
@@ -19,32 +19,23 @@ test.describe.configure({ mode: "serial" });
 
 let userId: string;
 let clientId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Navigation", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:nav-test-${Date.now()}`);
+    clientId = await seedTestClient(userId, `telegram:nav-test-${Date.now()}`, robot);
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("root URL redirects to /chats", async ({ page }) => {
@@ -57,6 +48,7 @@ test.describe("Navigation", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
+    // Verified: _auth.tsx:97 — <h1>CRM Chat</h1>
     await expect(page.locator("h1:has-text('CRM Chat')")).toBeVisible({
       timeout: 10_000,
     });
@@ -68,7 +60,7 @@ test.describe("Navigation", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    // Nav links in header
+    // Verified: _auth.tsx:101-137 — <nav> with <Link> children; text in <span class="hidden sm:inline">
     await expect(page.locator("nav a:has-text('Chats')")).toBeVisible({
       timeout: 10_000,
     });
@@ -104,7 +96,7 @@ test.describe("Navigation", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    // Chats link should have primary color class when on /chats (auto-retrying)
+    // Verified: _auth.tsx:106 — active link gets "bg-primary/10 text-primary"
     const chatsLink = page.locator("nav a:has-text('Chats')");
     await expect(chatsLink).toHaveClass(/text-primary/, { timeout: 10_000 });
 
@@ -119,9 +111,10 @@ test.describe("Navigation", () => {
     await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
     await page.waitForURL(/\/#\/chats\//, { timeout: 10_000 });
 
-    // Should show messages or loading state for this chat
-    // The chat view should be present (messages area)
-    await page.waitForTimeout(2000);
+    // The chat view should render (messages area or loading state)
+    await expect(
+      page.locator(".messages-bg").or(page.locator("text=Loading"))
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   test("deep link to client settings works", async ({ page }) => {
@@ -142,7 +135,7 @@ test.describe("Navigation", () => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    // Find the theme toggle button
+    // Verified: _auth.tsx:58 — <span className="sr-only">Toggle theme</span>
     const themeButton = page.locator('button:has(span:text("Toggle theme"))');
     await expect(themeButton).toBeVisible({ timeout: 10_000 });
 
@@ -150,23 +143,21 @@ test.describe("Navigation", () => {
     const htmlBefore = await page.locator("html").getAttribute("class");
     const isDarkBefore = htmlBefore?.includes("dark");
 
-    // Toggle theme
+    // Toggle theme and verify with auto-retrying matcher
     await themeButton.click();
-    await page.waitForTimeout(500);
-
-    // Theme should have changed
-    const htmlAfter = await page.locator("html").getAttribute("class");
-    const isDarkAfter = htmlAfter?.includes("dark");
-
-    expect(isDarkAfter).toBe(!isDarkBefore);
+    if (isDarkBefore) {
+      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+    } else {
+      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+    }
 
     // Toggle back
     await themeButton.click();
-    await page.waitForTimeout(500);
-
-    const htmlRestored = await page.locator("html").getAttribute("class");
-    const isDarkRestored = htmlRestored?.includes("dark");
-    expect(isDarkRestored).toBe(isDarkBefore);
+    if (isDarkBefore) {
+      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+    } else {
+      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+    }
   });
 
   test("theme persists across page reload", async ({ page }) => {
@@ -180,20 +171,24 @@ test.describe("Navigation", () => {
     const htmlBefore = await page.locator("html").getAttribute("class");
     const isDarkBefore = htmlBefore?.includes("dark");
 
-    // Toggle to opposite
+    // Toggle to opposite and wait for class change
     await themeButton.click();
-    await page.waitForTimeout(500);
+    if (isDarkBefore) {
+      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+    } else {
+      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+    }
 
     // Reload the page
     await page.reload();
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
-    await page.waitForTimeout(1000);
 
-    // Theme should persist
-    const htmlAfterReload = await page.locator("html").getAttribute("class");
-    const isDarkAfterReload = htmlAfterReload?.includes("dark");
-
-    expect(isDarkAfterReload).toBe(!isDarkBefore);
+    // Theme should persist after reload
+    if (isDarkBefore) {
+      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+    } else {
+      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+    }
 
     // Restore original theme
     const restoreButton = page.locator('button:has(span:text("Toggle theme"))');
@@ -220,7 +215,7 @@ test.describe("Navigation — Auth Guard", () => {
       page.locator("text=sign in").or(page.locator("text=Loading"))
     ).toBeVisible({ timeout: 15_000 });
 
-    // The authenticated nav (Chats/Downloads/Settings links) must NOT render
+    // Verified: createHashHistory() in main.tsx generates href="/#/chats" for <Link to="/chats">
     await expect(page.locator('a[href="/#/chats"]')).toBeHidden();
 
     await page.close();

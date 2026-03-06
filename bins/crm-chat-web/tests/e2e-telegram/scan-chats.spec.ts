@@ -1,15 +1,16 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
-import { getSessionEnv } from "./env";
+import { expect, test } from "../fixtures";
+import { getSessionEnv } from "../env";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   getSessionPath,
   pollUntil,
   writeOwnerFile,
-} from "./helpers";
+} from "../helpers";
 
 const SETTINGS_URL_PATTERN = /\/settings/;
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -22,9 +23,14 @@ const session = getSessionEnv();
 let registeredClientId: string | null = null;
 let copiedSessionPath: string | null = null;
 let convexUserId: string | null = null;
+let workerCfg: WorkerConfig;
 
 test.describe("Client Settings & Chat Scanning", () => {
-  test.beforeAll(async ({ browser }) => {
+  // biome-ignore lint/suspicious/noSkippedTests: requires real Telegram session
+  test.skip(!session, "Skipping: no TG session configured");
+
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     if (!session) {
       return;
     }
@@ -36,19 +42,18 @@ test.describe("Client Settings & Chat Scanning", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     convexUserId = await getConvexUserId(page);
 
     // Place session file where the subscriber expects it (same path logic as Rust)
     const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId);
+    copiedSessionPath = getSessionPath(telegramId, convexUserId, workerCfg.sessionDir);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     copyFileSync(session.sessionFile, copiedSessionPath);
     writeOwnerFile(copiedSessionPath, convexUserId);
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {
@@ -80,17 +85,11 @@ test.describe("Client Settings & Chat Scanning", () => {
     await page.close();
   });
 
-  test.afterAll(async () => {
-    // Don't delete the shared client — media-rendering and media-visual
-    // reuse it via the project dependency chain. media-visual cleans up last.
-  });
-
   test("settings page shows connected client with settings button", async ({
     page,
   }) => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     // Navigate to settings
     await page.locator('a[href="/#/settings"]').click({ timeout: 10_000 });
@@ -194,7 +193,6 @@ test.describe("Client Settings & Chat Scanning", () => {
     // Navigate to chats page — only scan-enabled chats should appear
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     if (enabledCount > 0) {
       // Chat list items are buttons inside .space-y-px
@@ -225,7 +223,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // Verify messages exist via robot API — query actual messages in the DB
     // rather than relying on the syncedMessages counter (which may not be set
     // if the final updateSyncProgress mutation races with task completion).
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
       // biome-ignore lint/style/noNonNullAssertion: set in beforeAll
       userId: convexUserId!,
@@ -264,7 +262,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // implemented: MessageSummary needs a forwardedFrom field, the
     // Telegram parser must call msg.forward_header(), and
     // workerOps.upsertMessage must accept and store forwardedFrom.
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
       // biome-ignore lint/style/noNonNullAssertion: set in beforeAll
       userId: convexUserId!,
@@ -325,7 +323,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // NOTE: We can't rely on the UI button disappearing because Convex may
     // batch the reactive updates (mutation + scanner completion) into a
     // single WebSocket message, so the UI never shows the intermediate state.
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     await pollUntil(
       page,
       async () => {

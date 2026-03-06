@@ -5,6 +5,7 @@ members = [
   "libs/messanger-interface",
   "libs/messanger-telegram",
   "bins/crm-worker",
+  "tests/e2e-telegram",
 ]
 exclude = [
   "libs/convex-typegen",

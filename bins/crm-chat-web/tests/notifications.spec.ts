@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
-  api,
+  type WorkerConfig,
   getConvexUserId,
   getRobotClient,
   seedNotification,
@@ -13,50 +13,45 @@ test.describe.configure({ mode: "serial" });
 
 let userId: string;
 let clientId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Notifications — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
     clientId = await seedTestClient(
       userId,
-      `telegram:notif-backend-${Date.now()}`
+      `telegram:notif-backend-${Date.now()}`,
+      robot
     );
 
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("seedNotification creates undismissed notification", async () => {
+    const robot = getRobotClient(workerCfg);
     const notifId = await seedNotification(
       userId,
       "Info",
-      "Test info notification"
+      "Test info notification",
+      robot
     );
     expect(notifId).toBeTruthy();
   });
 
   test("seeds notifications at all severity levels", async () => {
-    const infoId = await seedNotification(userId, "Info", "Info message");
-    const warnId = await seedNotification(userId, "Warning", "Warning message");
-    const errorId = await seedNotification(userId, "Error", "Error message");
+    const robot = getRobotClient(workerCfg);
+    const infoId = await seedNotification(userId, "Info", "Info message", robot);
+    const warnId = await seedNotification(userId, "Warning", "Warning message", robot);
+    const errorId = await seedNotification(userId, "Error", "Error message", robot);
 
     expect(infoId).toBeTruthy();
     expect(warnId).toBeTruthy();
@@ -68,46 +63,36 @@ test.describe("Notifications — Backend", () => {
 });
 
 test.describe("Notifications — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:notif-ui-${Date.now()}`);
+    clientId = await seedTestClient(userId, `telegram:notif-ui-${Date.now()}`, robot);
 
     // Seed notifications at all severities
-    await seedNotification(userId, "Error", "Connection lost to Telegram");
-    await seedNotification(userId, "Warning", "Rate limit approaching");
-    await seedNotification(userId, "Info", "Sync complete for 42 chats");
+    await seedNotification(userId, "Error", "Connection lost to Telegram", robot);
+    await seedNotification(userId, "Warning", "Rate limit approaching", robot);
+    await seedNotification(userId, "Info", "Sync complete for 42 chats", robot);
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("bell icon shows badge count", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    // Bell button should be visible
+    // Verified: right-sidebar.tsx:65 — <Button title="Notifications">
     const bellButton = page.locator('button[title="Notifications"]');
     await expect(bellButton).toBeVisible({ timeout: 10_000 });
 
-    // Badge count should be visible (we seeded 3 notifications)
+    // Verified: right-sidebar.tsx:70 — <span className="... bg-destructive ...">
     const badge = bellButton.locator("span.bg-destructive");
     await expect(badge).toBeVisible({ timeout: 10_000 });
 
@@ -166,7 +151,8 @@ test.describe("Notifications — UI", () => {
       timeout: 5000,
     });
 
-    // Each notification is a .group div; hover reveals the dismiss (X) button inside it
+    // Verified: notifications-panel.tsx:66 — each notification div has className="group ..."
+    // Hover reveals dismiss button via group-hover:opacity-100 (line 80)
     const notifCard = page
       .locator(".group")
       .filter({ hasText: "Connection lost to Telegram" })
@@ -211,7 +197,9 @@ test.describe("Notifications — UI", () => {
 
     const bellButton = page.locator('button[title="Notifications"]');
     await bellButton.click();
-    await page.waitForTimeout(1000);
+    await expect(page.locator("text=Notifications").first()).toBeVisible({
+      timeout: 5000,
+    });
 
     // Dismiss all visible notifications by hovering each .group card
     for (let i = 0; i < 10; i++) {
@@ -224,12 +212,14 @@ test.describe("Notifications — UI", () => {
       }
 
       // Hover the first card to reveal dismiss button, then click it
-      await notifCards.first().hover();
-      await notifCards.first().locator("button").last().click();
-      await page.waitForTimeout(500);
+      const firstCard = notifCards.first();
+      await firstCard.hover();
+      await firstCard.locator("button").last().click();
+      // Wait for the dismissed card to disappear before next iteration
+      await expect(firstCard).toBeHidden({ timeout: 5000 });
     }
 
-    // Should show empty state
+    // Verified: notifications-panel.tsx:53 — "All caught up" empty state text
     await expect(page.locator("text=All caught up")).toBeVisible({
       timeout: 10_000,
     });

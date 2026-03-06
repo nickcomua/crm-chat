@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -14,25 +15,27 @@ test.describe.configure({ mode: "serial" });
 let userId: string;
 let clientId: string;
 let chatId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Replies — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
+    const robot = getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
-      `telegram:replies-test-${Date.now()}`
+      `telegram:replies-test-${Date.now()}`,
+      robot
     );
     chatId = `${clientId}:replies-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -46,18 +49,8 @@ test.describe("Replies — Backend", () => {
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("stores reply fields on a message", async () => {
+    const robot = getRobotClient(workerCfg);
     const originalMsgId = `${chatId}:msg-original`;
     await seedMessage(
       userId,
@@ -67,7 +60,8 @@ test.describe("Replies — Backend", () => {
       "Original message",
       {
         timestamp: Date.now() - 5000,
-      }
+      },
+      robot
     );
 
     const replyMsgId = `${chatId}:msg-reply`;
@@ -75,9 +69,8 @@ test.describe("Replies — Backend", () => {
       replyToMessageId: originalMsgId,
       replyToText: "Original message",
       timestamp: Date.now(),
-    });
+    }, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -94,10 +87,10 @@ test.describe("Replies — Backend", () => {
   });
 
   test("message without reply has no reply fields", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-no-reply`;
-    await seedMessage(userId, clientId, chatId, msgId, "Not a reply");
+    await seedMessage(userId, clientId, chatId, msgId, "Not a reply", undefined, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -110,23 +103,24 @@ test.describe("Replies — Backend", () => {
 });
 
 test.describe("Replies — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
+    const robot = getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
-      `telegram:replies-ui-${Date.now()}`
+      `telegram:replies-ui-${Date.now()}`,
+      robot
     );
     chatId = `${clientId}:replies-ui-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -146,7 +140,8 @@ test.describe("Replies — UI", () => {
       "I said something important",
       {
         timestamp: Date.now() - 2000,
-      }
+      },
+      robot
     );
 
     await seedMessage(
@@ -159,21 +154,11 @@ test.describe("Replies — UI", () => {
         replyToMessageId: originalId,
         replyToText: "I said something important",
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("renders reply preview above message bubble", async ({ page }) => {
@@ -182,7 +167,7 @@ test.describe("Replies — UI", () => {
     const replyMsg = page.locator(`[data-message-id="${chatId}:ui-reply"]`);
     await expect(replyMsg).toBeVisible({ timeout: 10_000 });
 
-    // The reply preview should contain the original message text
+    // Verified: message-list.tsx:206 — data-testid="reply-preview"
     const replyPreview = replyMsg.locator('[data-testid="reply-preview"]');
     await expect(replyPreview).toBeVisible({ timeout: 5000 });
     await expect(replyPreview).toContainText("I said something important");
@@ -191,12 +176,13 @@ test.describe("Replies — UI", () => {
   test("reply preview text is truncated for long messages", async ({
     page,
   }) => {
+    const robot = getRobotClient(workerCfg);
     // Seed a reply to a very long message
     const longText = "A".repeat(200);
     const longMsgId = `${chatId}:ui-long-original`;
     await seedMessage(userId, clientId, chatId, longMsgId, longText, {
       timestamp: Date.now() - 1000,
-    });
+    }, robot);
     await seedMessage(
       userId,
       clientId,
@@ -207,7 +193,8 @@ test.describe("Replies — UI", () => {
         replyToMessageId: longMsgId,
         replyToText: longText,
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);

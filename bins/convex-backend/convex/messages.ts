@@ -194,6 +194,39 @@ export const upsert = mutation({
 	},
 });
 
+/** Full-text search across messages owned by the caller. */
+export const search = query({
+	args: {
+		query: v.string(),
+		chatId: v.optional(v.string()),
+		limit: v.optional(v.number()),
+	},
+	handler: async (ctx, args) => {
+		const caller = await requireHuman(ctx);
+		const take = Math.min(args.limit ?? 20, 100);
+
+		const results = await ctx.db
+			.query("messages")
+			.withSearchIndex("search_text", (s) => {
+				const base = s.search("text", args.query).eq("userId", caller.id);
+				if (args.chatId) {
+					return base.eq("chatId", args.chatId);
+				}
+				return base;
+			})
+			.take(take);
+		return results.map((msg) => ({
+			_id: msg._id,
+			messageId: msg.messageId,
+			chatId: msg.chatId,
+			text: msg.text,
+			senderId: msg.senderId,
+			timestamp: msg.timestamp,
+			outgoing: msg.outgoing,
+		}));
+	},
+});
+
 /** Soft-delete a message by external ID. Human-only (workers use workerOps.markMessageDeleted). */
 export const markDeleted = mutation({
 	args: { externalId: v.string() },

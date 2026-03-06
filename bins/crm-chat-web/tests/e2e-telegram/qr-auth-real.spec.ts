@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../fixtures";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient, waitForPendingScanners } from "./helpers";
+import { getSessionEnv } from "../env";
+import { type WorkerConfig, api, getConvexUserId, getRobotClient, waitForPendingScanners } from "../helpers";
 
 /**
  * Real QR Auth Tests
@@ -32,6 +32,7 @@ const sessionAvailable = session?.sessionFile
   : false;
 
 let _userId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("QR Auth — Real Telegram (Backend)", () => {
   test.skip(
@@ -39,7 +40,8 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     "Skipping: TG_SESSION_FILE_1 not set or file missing"
   );
 
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     if (!session) {
       return;
     }
@@ -50,7 +52,6 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     _userId = await getConvexUserId(page);
     await page.close();
@@ -68,7 +69,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
     // Poll backend for QrAuth task creation (any status — worker may pick it up fast)
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const deadline = Date.now() + 15_000;
     let qrTasks: Array<{ taskType: string; status: string }> = [];
 
@@ -80,7 +81,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
       if (qrTasks.length >= 1) {
         break;
       }
-      await page.waitForTimeout(500);
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     // There should be at least one QrAuth task (any status)
@@ -107,7 +108,8 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     test.setTimeout(90_000);
 
     // Drain pending ChatScanner tasks so the worker can process QrAuth
-    await waitForPendingScanners();
+    const robot = getRobotClient(workerCfg);
+    await waitForPendingScanners(undefined, robot);
 
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
@@ -135,7 +137,6 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     expect(decoded?.data).toMatch(TG_LOGIN_URL_PATTERN);
 
     // Verify backend task is in Token step
-    const robot = getRobotClient();
     const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
       maxMediaWorkflows: 0,
     })) as Array<{
@@ -171,8 +172,18 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.click('button:has-text("Add Client")');
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
-    // Wait for task to be created
-    await page.waitForTimeout(3000);
+    // Wait for QrAuth task to be created in the backend
+    const robot = getRobotClient(workerCfg);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
+        userId: _userId,
+      })) as Array<{ taskType: string }>;
+      if (tasks.some((t) => t.taskType === "QrAuth")) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
 
     // Cancel — dialog may have auto-closed if worker processed task quickly
     const dialog = page.locator('[role="dialog"]');
@@ -200,7 +211,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
 // ---------------------------------------------------------------------------
 
 async function waitForNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
-  const robot = getRobotClient();
+  const robot = getRobotClient(workerCfg);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -12,46 +13,35 @@ const SETTINGS_URL_PATTERN = /\/#\/settings/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Settings — Backend", () => {
   let connectedClientId: string;
   let errorClientId: string;
 
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
     await page.close();
   });
 
-  test.afterAll(async () => {
-    const robot = getRobotClient();
-    for (const id of [connectedClientId, errorClientId]) {
-      if (id) {
-        try {
-          await robot.mutation(api.testHelpers.deleteClient, { clientId: id });
-        } catch {
-          // best-effort
-        }
-      }
-    }
-  });
-
   test("registers a Connected client via robot API", async () => {
+    const robot = getRobotClient(workerCfg);
     connectedClientId = await seedTestClient(
       userId,
-      `telegram:settings-connected-${Date.now()}`
+      `telegram:settings-connected-${Date.now()}`,
+      robot
     );
     expect(connectedClientId).toBeTruthy();
 
     // Query the client and verify status
-    const robot = getRobotClient();
     const client = (await robot.query(api.clients.getForWorker, {
       clientId: connectedClientId,
     })) as { status: { type: string } } | null;
@@ -61,8 +51,9 @@ test.describe("Settings — Backend", () => {
   });
 
   test("client list returns registered clients", async () => {
+    const robot = getRobotClient(workerCfg);
     // Register a second client
-    errorClientId = (await getRobotClient().mutation(
+    errorClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {
         userId,
@@ -73,7 +64,6 @@ test.describe("Settings — Backend", () => {
 
     // Set it to Error status via a direct patch (robot can do this)
     // Since there's no direct "setError" mutation, we verify both exist
-    const robot = getRobotClient();
     const client1 = await robot.query(api.clients.getForWorker, {
       clientId: connectedClientId,
     });
@@ -86,13 +76,13 @@ test.describe("Settings — Backend", () => {
   });
 
   test("deleteClient removes client from DB", async () => {
+    const robot = getRobotClient(workerCfg);
     // Create a throwaway client to delete
     const tempClientId = await seedTestClient(
       userId,
-      `telegram:settings-delete-${Date.now()}`
+      `telegram:settings-delete-${Date.now()}`,
+      robot
     );
-
-    const robot = getRobotClient();
 
     // Verify it exists
     const before = await robot.query(api.clients.getForWorker, {
@@ -113,13 +103,13 @@ test.describe("Settings — Backend", () => {
   });
 
   test("deleteClient also removes associated chats", async () => {
+    const robot = getRobotClient(workerCfg);
     // seedTestClient creates a client + 3 chats. Verify deletion cascades.
     const tempClientId = await seedTestClient(
       userId,
-      `telegram:settings-cascade-${Date.now()}`
+      `telegram:settings-cascade-${Date.now()}`,
+      robot
     );
-
-    const robot = getRobotClient();
 
     // Verify chats exist before deletion
     const chatsBefore = (await robot.query(api.testHelpers.queryChats, {
@@ -158,35 +148,24 @@ test.describe("Settings — Backend", () => {
 test.describe("Settings — UI", () => {
   let testClientId: string;
 
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
     testClientId = await seedTestClient(
       userId,
-      `telegram:settings-ui-${Date.now()}`
+      `telegram:settings-ui-${Date.now()}`,
+      robot
     );
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (testClientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, {
-          clientId: testClientId,
-        });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("settings page renders with 'Telegram Clients' header", async ({
@@ -195,9 +174,11 @@ test.describe("Settings — UI", () => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
+    // Verified: telegram-clients-manager.tsx:100 — <h2>Telegram Clients</h2>
     await expect(page.locator("text=Telegram Clients")).toBeVisible({
       timeout: 10_000,
     });
+    // Verified: telegram-clients-manager.tsx:103
     await expect(
       page.locator("text=Your connected Telegram accounts")
     ).toBeVisible();
@@ -217,6 +198,7 @@ test.describe("Settings — UI", () => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
+    // Verified: telegram-clients-manager.tsx:111 — <Button>Add Client</Button>
     const addButton = page.locator('button:has-text("Add Client")');
     await expect(addButton.first()).toBeVisible({ timeout: 10_000 });
   });
@@ -228,7 +210,8 @@ test.describe("Settings — UI", () => {
     const addButton = page.locator('button:has-text("Add Client")').first();
     await addButton.click();
 
-    // Dialog should open with QR auth content
+    // Verified: telegram-clients-manager.tsx:171 — <DialogTitle>Add Telegram Client</DialogTitle>
+    // Verified: telegram-clients-manager.tsx:173 — "Scan this QR code..."
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
     await expect(dialog.locator("text=Add Telegram Client")).toBeVisible();
@@ -243,7 +226,7 @@ test.describe("Settings — UI", () => {
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
-    // Find a client card and hover over it
+    // Verified: telegram-clients-manager.tsx:196 — <Card className="group ...">
     const clientCard = page.locator(".group").first();
     await expect(clientCard).toBeVisible({ timeout: 10_000 });
     await clientCard.hover();
@@ -271,6 +254,7 @@ test.describe("Settings — UI", () => {
 
     await connectedCard.hover();
 
+    // Verified: telegram-clients-manager.tsx:212 — aria-label="Client settings"
     const settingsBtn = connectedCard.locator(
       'button[aria-label="Client settings"]'
     );

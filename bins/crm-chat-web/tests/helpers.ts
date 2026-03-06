@@ -4,9 +4,14 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
-import { getDynamicEnv, staticEnv } from "./env";
+import { getDynamicEnv } from "./env";
 
-const CHATS_URL_PATTERN = /\/#\/chats/;
+/** Per-worker config passed via fixtures — avoids process.env race conditions. */
+export interface WorkerConfig {
+  convexUrl: string;
+  robotPrivateKey: string;
+  sessionDir: string;
+}
 
 /**
  * Unwrap a Convex `result()` return value.
@@ -22,9 +27,12 @@ export function unwrapResult<T>(res: unknown): T {
 
 /**
  * Mint an RS256 JWT for robot authentication against the test Convex backend.
+ * Accepts optional config to avoid reading process.env (which races across workers).
  */
-export function mintRobotJwt(): string {
-  const { E2E_ROBOT_PRIVATE_KEY } = getDynamicEnv();
+export function mintRobotJwt(config?: WorkerConfig): string {
+  const privateKey = config
+    ? config.robotPrivateKey
+    : getDynamicEnv().E2E_ROBOT_PRIVATE_KEY;
 
   const header = { alg: "RS256", kid: "e2e-robot-key", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
@@ -42,19 +50,22 @@ export function mintRobotJwt(): string {
 
   const sign = crypto.createSign("RSA-SHA256");
   sign.update(signingInput);
-  const signature = sign.sign(E2E_ROBOT_PRIVATE_KEY, "base64url");
+  const signature = sign.sign(privateKey, "base64url");
 
   return `${signingInput}.${signature}`;
 }
 
 /**
  * Create a ConvexHttpClient authenticated as the robot service.
+ * Accepts optional config to avoid reading process.env (which races across workers).
  */
-export function getRobotClient(): ConvexHttpClient {
-  const { E2E_CONVEX_URL } = getDynamicEnv();
+export function getRobotClient(config?: WorkerConfig): ConvexHttpClient {
+  const convexUrl = config
+    ? config.convexUrl
+    : getDynamicEnv().E2E_CONVEX_URL;
 
-  const client = new ConvexHttpClient(E2E_CONVEX_URL);
-  client.setAuth(mintRobotJwt());
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(mintRobotJwt(config));
   return client;
 }
 
@@ -95,12 +106,14 @@ export async function getConvexUserId(page: Page): Promise<string> {
 /**
  * Register a Connected client via the robot API and create test chat data.
  * Returns the client ID.
+ * Pass a `robot` client to avoid process.env race conditions across workers.
  */
 export async function seedTestClient(
   userId: string,
-  telegramId: string
+  telegramId: string,
+  robot?: ConvexHttpClient
 ): Promise<string> {
-  const client = getRobotClient();
+  const client = robot ?? getRobotClient();
 
   // Register the client as Connected (returns bare v.id, not result-wrapped).
   const clientId = (await client.mutation(api.clients.workerRegisterConnected, {
@@ -143,24 +156,6 @@ export async function seedTestClient(
   return clientId;
 }
 
-/**
- * Log in via Clerk and navigate to the app.
- * Shared setup for all E2E tests that need authenticated access.
- */
-export async function clerkLogin(page: Page): Promise<void> {
-  const { TEST_CLERK_USERNAME, TEST_CLERK_PASSWORD } = staticEnv;
-
-  await page.goto("/");
-  await page.waitForSelector('input[name="identifier"]', { timeout: 10_000 });
-  await page.fill('input[name="identifier"]', TEST_CLERK_USERNAME);
-  await page.click("button.cl-formButtonPrimary");
-  await page.waitForSelector('input[name="password"]', { timeout: 10_000 });
-  await page.fill('input[name="password"]', TEST_CLERK_PASSWORD);
-  await page.click("button.cl-formButtonPrimary");
-  await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-  await page.waitForTimeout(3000);
-}
-
 // =============================================================================
 // Test data seeding helpers (use robot client → convex/testHelpers.ts mutations)
 // =============================================================================
@@ -181,10 +176,11 @@ type MediaStatus = "Pending" | "Downloading" | "Stored" | "Failed" | "Skipped";
 export async function seedNotification(
   userId: string,
   severity: Severity,
-  message: string
+  message: string,
+  robot?: ConvexHttpClient
 ): Promise<string> {
-  const robot = getRobotClient();
-  return (await robot.mutation(api.testHelpers.seedNotification, {
+  const client = robot ?? getRobotClient();
+  return (await client.mutation(api.testHelpers.seedNotification, {
     userId,
     severity,
     message,
@@ -206,10 +202,11 @@ export async function seedMediaRecord(
     fileSize?: number;
     error?: string;
     downloadedAt?: number;
-  }
+  },
+  robot?: ConvexHttpClient
 ): Promise<string> {
-  const robot = getRobotClient();
-  return (await robot.mutation(api.testHelpers.seedMediaRecord, {
+  const client = robot ?? getRobotClient();
+  return (await client.mutation(api.testHelpers.seedMediaRecord, {
     telegramFileId:
       opts?.telegramFileId ?? `test-file-${Date.now()}-${Math.random()}`,
     userId,
@@ -247,10 +244,11 @@ export async function seedMessage(
       count: number;
       recent: Array<{ userId: string }>;
     }>;
-  }
+  },
+  robot?: ConvexHttpClient
 ): Promise<void> {
-  const robot = getRobotClient();
-  await robot.mutation(api.testHelpers.seedMessage, {
+  const client = robot ?? getRobotClient();
+  await client.mutation(api.testHelpers.seedMessage, {
     messageId,
     externalId: opts?.externalId ?? `ext-${messageId}`,
     userId,
@@ -269,9 +267,12 @@ export async function seedMessage(
 }
 
 /** Delete all data for a user. Use for cleanup or empty-state tests. */
-export async function cleanupUser(userId: string): Promise<void> {
-  const robot = getRobotClient();
-  await robot.mutation(api.testHelpers.deleteAllForUser, { userId });
+export async function cleanupUser(
+  userId: string,
+  robot?: ConvexHttpClient
+): Promise<void> {
+  const client = robot ?? getRobotClient();
+  await client.mutation(api.testHelpers.deleteAllForUser, { userId });
 }
 
 /** Mirror Rust's sanitize_owner_id: replace non-alphanumeric (except - _) with _ */
@@ -292,8 +293,12 @@ const TELEGRAM_PREFIX_RE = /^telegram:/;
  * Example: identifier="telegram:+84779004206", ownerId="https://…|user123"
  *   → {E2E_SESSION_DIR}/{sanitized_owner}/telegram_+84779004206.session
  */
-export function getSessionPath(identifier: string, ownerId: string): string {
-  const baseDir = process.env.E2E_SESSION_DIR;
+export function getSessionPath(
+  identifier: string,
+  ownerId: string,
+  sessionDir?: string
+): string {
+  const baseDir = sessionDir ?? process.env.E2E_SESSION_DIR;
   if (!baseDir) {
     throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
   }
@@ -317,16 +322,23 @@ export function writeOwnerFile(sessionPath: string, ownerId: string): void {
 }
 
 /**
- * Poll a condition with configurable interval.
- * Individual checks are instant; overall bounded by test.setTimeout.
+ * Poll a condition with configurable interval and timeout.
+ * Throws with a descriptive message if the condition is not met within maxTimeMs.
  */
 export async function pollUntil(
-  page: Page,
+  _page: Page,
   condition: () => Promise<boolean>,
-  intervalMs = 5000
+  intervalMs = 5000,
+  maxTimeMs = 30_000
 ): Promise<void> {
+  const deadline = Date.now() + maxTimeMs;
   while (!(await condition())) {
-    await page.waitForTimeout(intervalMs);
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `pollUntil timed out after ${maxTimeMs}ms (interval: ${intervalMs}ms)`
+      );
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
 
@@ -337,13 +349,14 @@ export async function pollUntil(
  * QrAuth token generation can exceed the timeout.
  */
 export async function waitForPendingScanners(
-  timeoutMs = 30_000
+  timeoutMs = 30_000,
+  robot?: ConvexHttpClient
 ): Promise<void> {
-  const robot = getRobotClient();
+  const client = robot ?? getRobotClient();
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
+    const tasks = (await client.query(api.workerTasks.pendingForWorker, {
       maxMediaWorkflows: 0,
     })) as Array<{ task: { type: string } }>;
 

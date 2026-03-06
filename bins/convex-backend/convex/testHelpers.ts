@@ -389,6 +389,39 @@ export const deleteAllForUser = mutation({
 	},
 });
 
+/** Full-text search messages via Convex search index. Robot-accessible for E2E tests. */
+export const searchMessages = query({
+	args: {
+		searchText: v.string(),
+		userId: v.string(),
+		chatId: v.optional(v.string()),
+		limit: v.optional(v.number()),
+	},
+	handler: async (ctx, { searchText, userId, chatId, limit }) => {
+		await requireWorker(ctx);
+		const take = Math.min(limit ?? 20, 100);
+
+		const results = await ctx.db
+			.query("messages")
+			.withSearchIndex("search_text", (s) => {
+				const base = s.search("text", searchText).eq("userId", userId);
+				if (chatId) {
+					return base.eq("chatId", chatId);
+				}
+				return base;
+			})
+			.take(take);
+
+		return results.map((msg) => ({
+			messageId: msg.messageId,
+			chatId: msg.chatId,
+			text: msg.text,
+			senderId: msg.senderId,
+			timestamp: msg.timestamp,
+		}));
+	},
+});
+
 /** Query all worker tasks for a user (any status). For E2E assertions. */
 export const queryWorkerTasks = query({
 	args: { userId: v.string() },

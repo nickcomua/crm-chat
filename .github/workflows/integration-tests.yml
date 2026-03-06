@@ -1,10 +1,8 @@
 name: "integration-tests"
 on:
-  workflow_dispatch:
-  workflow_run:
-    workflows: ["docker"]
-    types:
-      - completed
+  push:
+    branches:
+      - "**"
 
 permissions:
   contents: read

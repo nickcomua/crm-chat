@@ -1,15 +1,16 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
-import { getSessionEnv } from "./env";
+import { expect, test } from "../fixtures";
+import { getSessionEnv } from "../env";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   getSessionPath,
   pollUntil,
   writeOwnerFile,
-} from "./helpers";
+} from "../helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const FILE_EXTENSION_RE = /\.[a-z0-9]+$/i;
@@ -23,9 +24,11 @@ const session = getSessionEnv();
 
 let registeredClientId: string | null = null;
 let copiedSessionPath: string | null = null;
+let workerCfg: WorkerConfig;
 
 test.describe("Media Rendering — Real Telegram Data", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     if (!session) {
       return;
     }
@@ -36,20 +39,19 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     const convexUserId = await getConvexUserId(page);
 
     // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
     const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId);
+    copiedSessionPath = getSessionPath(telegramId, convexUserId, workerCfg.sessionDir);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
       copyFileSync(session.sessionFile, copiedSessionPath);
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {
@@ -60,11 +62,6 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     )) as string;
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    // Don't delete the shared client — other real-TG specs may still need it.
-    // Session file is cleaned up by the last spec in the chain (media-visual).
   });
 
   test("enable scanning and wait for sync + media download", async ({

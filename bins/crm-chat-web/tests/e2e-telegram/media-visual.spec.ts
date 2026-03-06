@@ -1,15 +1,16 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
-import { getSessionEnv } from "./env";
+import { expect, test } from "../fixtures";
+import { getSessionEnv } from "../env";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   getSessionPath,
   pollUntil,
   writeOwnerFile,
-} from "./helpers";
+} from "../helpers";
 
 /**
  * Media Visual Tests
@@ -35,12 +36,14 @@ const session = getSessionEnv();
 
 let registeredClientId: string | null = null;
 let copiedSessionPath: string | null = null;
+let workerCfg: WorkerConfig;
 
 test.describe("Media Visual — Real Telegram Data", () => {
   // biome-ignore lint/suspicious/noSkippedTests: conditional skip for real TG session
   test.skip(!session, "Skipping: TG_SESSION_FILE_1 not set");
 
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     if (!session) {
       return;
     }
@@ -51,20 +54,19 @@ test.describe("Media Visual — Real Telegram Data", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     const convexUserId = await getConvexUserId(page);
 
     // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
     const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId);
+    copiedSessionPath = getSessionPath(telegramId, convexUserId, workerCfg.sessionDir);
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
       copyFileSync(session.sessionFile, copiedSessionPath);
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {
@@ -75,27 +77,6 @@ test.describe("Media Visual — Real Telegram Data", () => {
     )) as string;
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    // Last spec in the real-TG chain — clean up shared client + session file
-    if (registeredClientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, {
-          clientId: registeredClientId,
-        });
-      } catch {
-        // best-effort
-      }
-    }
-    if (copiedSessionPath) {
-      try {
-        rmSync(copiedSessionPath, { force: true });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("wait for media sync to complete", async ({ page }) => {

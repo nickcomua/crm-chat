@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -14,25 +15,27 @@ test.describe.configure({ mode: "serial" });
 let userId: string;
 let clientId: string;
 let chatId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Reactions — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
+    const robot = getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
-      `telegram:reactions-test-${Date.now()}`
+      `telegram:reactions-test-${Date.now()}`,
+      robot
     );
     chatId = `${clientId}:reactions-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -46,18 +49,8 @@ test.describe("Reactions — Backend", () => {
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("stores reactions on a message", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Hello!", {
       reactions: [
@@ -68,10 +61,9 @@ test.describe("Reactions — Backend", () => {
         },
         { emoji: "👍", count: 1, recent: [{ userId: "user-c" }] },
       ],
-    });
+    }, robot);
 
     // Query the message and verify reactions
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -89,10 +81,11 @@ test.describe("Reactions — Backend", () => {
   });
 
   test("updates reaction count on existing message", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-2`;
     await seedMessage(userId, clientId, chatId, msgId, "Update me", {
       reactions: [{ emoji: "😂", count: 1, recent: [{ userId: "user-a" }] }],
-    });
+    }, robot);
 
     // Update with new count
     await seedMessage(userId, clientId, chatId, msgId, "Update me", {
@@ -103,9 +96,8 @@ test.describe("Reactions — Backend", () => {
           recent: [{ userId: "user-a" }, { userId: "user-b" }],
         },
       ],
-    });
+    }, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -119,10 +111,10 @@ test.describe("Reactions — Backend", () => {
   });
 
   test("message without reactions has no reactions field", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-no-react`;
-    await seedMessage(userId, clientId, chatId, msgId, "No reactions here");
+    await seedMessage(userId, clientId, chatId, msgId, "No reactions here", undefined, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -135,23 +127,24 @@ test.describe("Reactions — Backend", () => {
 });
 
 test.describe("Reactions — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
+    const robot = getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
-      `telegram:reactions-ui-${Date.now()}`
+      `telegram:reactions-ui-${Date.now()}`,
+      robot
     );
     chatId = `${clientId}:reactions-ui-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -175,7 +168,8 @@ test.describe("Reactions — UI", () => {
           { emoji: "😂", count: 7, recent: [{ userId: "u2" }] },
         ],
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     await seedMessage(
@@ -186,21 +180,11 @@ test.describe("Reactions — UI", () => {
       "No reactions",
       {
         timestamp: Date.now() - 1000,
-      }
+      },
+      robot
     );
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("renders reaction badges on a message", async ({ page }) => {
@@ -210,8 +194,8 @@ test.describe("Reactions — UI", () => {
     const msgEl = page.locator(`[data-message-id="${chatId}:ui-msg-1"]`);
     await expect(msgEl).toBeVisible({ timeout: 10_000 });
 
-    // Verify reaction badges are rendered (scope to reactions container
-    // to avoid matching timestamp text like "02:27 AM" for digits)
+    // Verified: message-list.tsx:124 — data-testid="reactions"
+    // Scoped to reactions container to avoid matching timestamp digits
     const reactions = msgEl.locator('[data-testid="reactions"]');
     await expect(reactions).toBeVisible({ timeout: 5000 });
 
@@ -244,6 +228,7 @@ test.describe("Reactions — UI", () => {
     const reactionContainer = msgEl.locator('[data-testid="reactions"]');
     await expect(reactionContainer).toBeVisible({ timeout: 5000 });
 
+    // Verified: message-list.tsx:134 — data-testid="reaction-badge"
     const badges = reactionContainer.locator('[data-testid="reaction-badge"]');
     await expect(badges).toHaveCount(2);
   });

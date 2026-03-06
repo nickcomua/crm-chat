@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -14,22 +15,23 @@ test.describe.configure({ mode: "serial" });
 let userId: string;
 let clientId: string;
 let chatId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Forwarded Messages — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:fwd-test-${Date.now()}`);
+    clientId = await seedTestClient(userId, `telegram:fwd-test-${Date.now()}`, robot);
     chatId = `${clientId}:fwd-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -43,27 +45,16 @@ test.describe("Forwarded Messages — Backend", () => {
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("stores forwardedFrom on a message", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-fwd-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Forwarded content", {
       forwardedFrom: {
         senderName: "Alice Wonderland",
         date: 1_700_000_000_000,
       },
-    });
+    }, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -80,12 +71,12 @@ test.describe("Forwarded Messages — Backend", () => {
   });
 
   test("forwardedFrom without date stores senderName only", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-fwd-nodate`;
     await seedMessage(userId, clientId, chatId, msgId, "Forwarded, no date", {
       forwardedFrom: { senderName: "Bob" },
-    });
+    }, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -100,10 +91,10 @@ test.describe("Forwarded Messages — Backend", () => {
   });
 
   test("normal message has no forwardedFrom", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-normal`;
-    await seedMessage(userId, clientId, chatId, msgId, "Not forwarded");
+    await seedMessage(userId, clientId, chatId, msgId, "Not forwarded", undefined, robot);
 
-    const robot = getRobotClient();
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
       limit: 10,
@@ -116,20 +107,20 @@ test.describe("Forwarded Messages — Backend", () => {
 });
 
 test.describe("Forwarded Messages — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:fwd-ui-${Date.now()}`);
+    clientId = await seedTestClient(userId, `telegram:fwd-ui-${Date.now()}`, robot);
     chatId = `${clientId}:fwd-ui-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -152,7 +143,8 @@ test.describe("Forwarded Messages — UI", () => {
           date: 1_700_000_000_000,
         },
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     await seedMessage(
@@ -163,21 +155,11 @@ test.describe("Forwarded Messages — UI", () => {
       "Just a normal message",
       {
         timestamp: Date.now() - 1000,
-      }
+      },
+      robot
     );
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("renders 'Forwarded from' header on forwarded message", async ({
@@ -188,7 +170,7 @@ test.describe("Forwarded Messages — UI", () => {
     const fwdMsg = page.locator(`[data-message-id="${chatId}:ui-fwd"]`);
     await expect(fwdMsg).toBeVisible({ timeout: 10_000 });
 
-    // Should show forwarded from header
+    // Verified: message-list.tsx:188 — data-testid="forwarded-from"
     const fwdHeader = fwdMsg.locator('[data-testid="forwarded-from"]');
     await expect(fwdHeader).toBeVisible({ timeout: 5000 });
     await expect(fwdHeader).toContainText("Alice Wonderland");

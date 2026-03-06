@@ -1,10 +1,12 @@
-import { expect, test } from "@playwright/test";
-import { api, getConvexUserId, getRobotClient } from "./helpers";
+import { expect, test } from "./fixtures";
+import { type WorkerConfig, api, getConvexUserId, getRobotClient } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 
 // Run tests sequentially — they share seeded data.
 test.describe.configure({ mode: "serial" });
+
+let workerCfg: WorkerConfig;
 
 test.describe("Scroll to Message", () => {
   let clientId: string;
@@ -15,7 +17,8 @@ test.describe("Scroll to Message", () => {
   // Target message near the top of the list (oldest messages).
   let deepTargetId: string;
 
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
@@ -24,7 +27,7 @@ test.describe("Scroll to Message", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
 
     // Create test client.
     clientId = (await robot.mutation(api.clients.workerRegisterConnected, {
@@ -70,18 +73,6 @@ test.describe("Scroll to Message", () => {
     deepTargetId = `${clientId}:${chatId}:msg-10`;
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (!clientId) {
-      return;
-    }
-    try {
-      const robot = getRobotClient();
-      await robot.mutation(api.testHelpers.deleteClient, { clientId });
-    } catch {
-      // Best-effort cleanup.
-    }
   });
 
   test("scrolls to a message in the first page", async ({ page }) => {

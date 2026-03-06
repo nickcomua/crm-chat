@@ -1,7 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../fixtures";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { api, getRobotClient, waitForPendingScanners } from "./helpers";
+import { type WorkerConfig, api, getRobotClient, waitForPendingScanners } from "../helpers";
 
 // URL patterns for navigation
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -11,12 +11,14 @@ const TG_LOGIN_URL_PATTERN = /^tg:\/\/login\?token=.+/;
 // Telegram subscriber needs time to claim the auth and fetch the QR token
 const QR_CODE_TIMEOUT = 30_000;
 
+let workerCfg: WorkerConfig;
+
 /**
  * Poll until no QrAuth worker tasks remain (Pending, Dispatched, or Running).
  * Uses the robot client to query the task list.
  */
 async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
-  const robot = getRobotClient();
+  const robot = getRobotClient(workerCfg);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -38,11 +40,11 @@ async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
 test.describe.configure({ mode: "serial" });
 
 test.describe("QR Code Authentication", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, workerBackend }) => {
+    workerCfg = workerBackend;
     // Auth is handled by storageState from auth.setup.ts
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     // Navigate to settings
     await page.locator('a[href="/#/settings"]').click({ timeout: 10_000 });
@@ -102,7 +104,8 @@ test.describe("QR Code Authentication", () => {
   }) => {
     // Drain pending ChatScanner tasks from tg-scan so the worker can
     // pick up our QrAuth task without contention.
-    await waitForPendingScanners();
+    const robot = getRobotClient(workerCfg);
+    await waitForPendingScanners(undefined, robot);
 
     // Click Add Client button
     await page.click('button:has-text("Add Client")');

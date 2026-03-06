@@ -1,27 +1,25 @@
-import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// ── Port allocation ─────────────────────────────────────────────────
-// Playwright starts webServer BEFORE globalSetup, so ports must be
-// allocated here (at config eval time) and passed via env vars.
-// globalSetup reads them instead of allocating its own.
-if (!process.env.E2E_CONVEX_PORT) {
-  const ports: number[] = JSON.parse(
-    execSync("node tests/find-ports.mjs 6", {
-      encoding: "utf-8",
-      cwd: import.meta.dirname,
-    }).trim()
-  );
-  process.env.E2E_CONVEX_PORT = String(ports[0]);
-  process.env.E2E_SITE_PORT = String(ports[1]);
-  process.env.E2E_RESTATE_INGRESS_PORT = String(ports[2]);
-  process.env.E2E_RESTATE_ADMIN_PORT = String(ports[3]);
-  process.env.E2E_WORKER_PORT = String(ports[4]);
-  process.env.E2E_VITE_PORT = String(ports[5]);
+// ── Load .env at config time ────────────────────────────────────────
+// Ensure env vars from .env are available for globalSetup validation
+// and for the workerBackend fixture (which loads them independently too).
+const ROOT = path.resolve(import.meta.dirname, "../..");
+const envFile = path.join(ROOT, ".env");
+if (existsSync(envFile)) {
+  for (const line of readFileSync(envFile, "utf-8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) continue;
+    const key = trimmed.slice(0, eqIndex);
+    const value = trimmed.slice(eqIndex + 1).replace(/^["']|["']$/g, "");
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
 }
-
-const CONVEX_PORT = Number(process.env.E2E_CONVEX_PORT);
-const TEST_PORT = Number(process.env.E2E_VITE_PORT) || 5174;
 
 export default defineConfig({
   globalSetup: "./tests/global-setup.ts",
@@ -34,7 +32,7 @@ export default defineConfig({
   reporter: "html",
   timeout: 30_000,
   use: {
-    baseURL: process.env.TEST_BASE_URL ?? `http://localhost:${TEST_PORT}`,
+    baseURL: process.env.TEST_BASE_URL,
     trace: "on-first-retry",
   },
   projects: [
@@ -104,14 +102,4 @@ export default defineConfig({
       dependencies: ["tg-media-render"],
     },
   ],
-  webServer: process.env.TEST_BASE_URL
-    ? undefined
-    : {
-        command: `bunx vite build && bunx vite preview --port ${TEST_PORT}`,
-        url: `http://localhost:${TEST_PORT}`,
-        reuseExistingServer: !process.env.CI,
-        env: {
-          VITE_CONVEX_URL: `http://localhost:${CONVEX_PORT}`,
-        },
-      },
 });

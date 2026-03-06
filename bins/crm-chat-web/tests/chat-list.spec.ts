@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -13,25 +14,27 @@ test.describe.configure({ mode: "serial" });
 
 let userId: string;
 let clientId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Chat List — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
     userId = await getConvexUserId(page);
     await page.close();
   });
 
   test("seeded chats appear in list query ordered by timestamp", async () => {
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
-      `telegram:chatlist-backend-${Date.now()}`
+      `telegram:chatlist-backend-${Date.now()}`,
+      robot
     );
 
     // seedTestClient creates 3 chats:
@@ -58,10 +61,11 @@ test.describe("Chat List — Backend", () => {
   });
 
   test("last message preview is returned for seeded chats", async () => {
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
-      `telegram:chatlist-preview-${Date.now()}`
+      `telegram:chatlist-preview-${Date.now()}`,
+      robot
     );
     const chatId = `${cId}:chat-pinned-1`;
 
@@ -74,7 +78,8 @@ test.describe("Chat List — Backend", () => {
       "Hello from test",
       {
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     const lastMessages = (await robot.query(api.testHelpers.queryLastPerChat, {
@@ -88,10 +93,11 @@ test.describe("Chat List — Backend", () => {
   });
 
   test("pinnedName update persists", async () => {
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
-      `telegram:chatlist-rename-${Date.now()}`
+      `telegram:chatlist-rename-${Date.now()}`,
+      robot
     );
     const chatId = `${cId}:chat-pinned-1`;
 
@@ -120,19 +126,21 @@ test.describe("Chat List — Backend", () => {
 });
 
 test.describe("Chat List — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
+    const robot = getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
     userId = await getConvexUserId(page);
 
     clientId = await seedTestClient(
       userId,
-      `telegram:chatlist-ui-${Date.now()}`
+      `telegram:chatlist-ui-${Date.now()}`,
+      robot
     );
 
     // Seed messages for chat previews
@@ -145,7 +153,8 @@ test.describe("Chat List — UI", () => {
       "Hey, how are you?",
       {
         timestamp: Date.now(),
-      }
+      },
+      robot
     );
 
     const teamChatId = `${clientId}:chat-unpinned-1`;
@@ -157,21 +166,11 @@ test.describe("Chat List — UI", () => {
       "Meeting at 3pm",
       {
         timestamp: Date.now() - 3_600_000,
-      }
+      },
+      robot
     );
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
   });
 
   test("renders seeded chats with names and last message previews", async ({
@@ -214,7 +213,7 @@ test.describe("Chat List — UI", () => {
       timeout: 10_000,
     });
 
-    // Type in search
+    // Verified: chat-list.tsx:205 renders placeholder="Search chats..."
     const searchInput = page.locator('input[placeholder*="Search"]');
     await searchInput.fill("Bob");
 
@@ -268,7 +267,7 @@ test.describe("Chat List — UI", () => {
 
   test("deleting client removes its chats from the backend", async () => {
     // Verify chats exist before deletion
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const chatsBefore = (await robot.query(api.testHelpers.queryChats, {
       userId,
     })) as Array<{
@@ -296,7 +295,8 @@ test.describe("Chat List — UI", () => {
     // Re-seed for any downstream tests
     clientId = await seedTestClient(
       userId,
-      `telegram:chatlist-ui-reseed-${Date.now()}`
+      `telegram:chatlist-ui-reseed-${Date.now()}`,
+      robot
     );
   });
 });

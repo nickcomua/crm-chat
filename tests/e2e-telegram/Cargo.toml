@@ -1,0 +1,13 @@
+[package]
+name = "e2e-telegram"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end integration tests for Telegram client (requires real credentials)"
+publish = false
+
+[dev-dependencies]
+messanger-interface = { path = "../../libs/messanger-interface" }
+messanger-telegram = { path = "../../libs/messanger-telegram" }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+serial_test = "3"

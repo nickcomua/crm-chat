@@ -17,8 +17,8 @@ export const staticEnv = createEnv({
 });
 
 /**
- * Dynamic env vars — set by globalSetup after container/subscriber start.
- * Call this from test code (helpers, specs), NOT from globalSetup itself.
+ * Dynamic env vars — set by the workerBackend fixture after container start.
+ * Available in test code (helpers, specs) once the fixture has initialized.
  */
 export function getDynamicEnv(): {
   E2E_CONVEX_URL: string;
@@ -28,7 +28,7 @@ export function getDynamicEnv(): {
   const key = process.env.E2E_ROBOT_PRIVATE_KEY;
   if (!(url && key)) {
     throw new Error(
-      "E2E_CONVEX_URL / E2E_ROBOT_PRIVATE_KEY not set — is globalSetup running?"
+      "E2E_CONVEX_URL / E2E_ROBOT_PRIVATE_KEY not set — has the workerBackend fixture initialized?"
     );
   }
   return { E2E_CONVEX_URL: url, E2E_ROBOT_PRIVATE_KEY: key };

@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
+  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
@@ -16,25 +17,27 @@ test.describe.configure({ mode: "serial" });
 let userId: string;
 let clientId: string;
 let chatId: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Downloads — Backend", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     userId = await getConvexUserId(page);
+    const robot = getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
-      `telegram:dl-backend-${Date.now()}`
+      `telegram:dl-backend-${Date.now()}`,
+      robot
     );
     chatId = `${clientId}:dl-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -48,43 +51,32 @@ test.describe("Downloads — Backend", () => {
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("seeds media at various statuses", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-msg-1`;
-    await seedMessage(userId, clientId, chatId, msgId, "Photo message");
+    await seedMessage(userId, clientId, chatId, msgId, "Photo message", undefined, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
       telegramFileId: `test-pending-${Date.now()}`,
       fileName: "test.jpg",
       fileSize: 12_345,
-    });
+    }, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
       telegramFileId: `test-failed-${Date.now()}`,
       fileName: "video.mp4",
       fileSize: 99_999,
       error: "Connection timed out",
-    });
+    }, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Audio", "Stored", {
       telegramFileId: `test-stored-${Date.now()}`,
       fileName: "audio.ogg",
       fileSize: 5000,
       downloadedAt: Date.now(),
-    });
+    }, robot);
 
     // Verify counts
-    const robot = getRobotClient();
     const counts = (await robot.query(api.testHelpers.queryMediaCountByStatus, {
       userId,
       statuses: ["Pending", "Failed", "Stored"],
@@ -96,8 +88,9 @@ test.describe("Downloads — Backend", () => {
   });
 
   test("retryDownload changes Failed to Pending", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-retry-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Retry test");
+    await seedMessage(userId, clientId, chatId, msgId, "Retry test", undefined, robot);
 
     const fileId = `test-retry-${Date.now()}`;
     await seedMediaRecord(
@@ -110,10 +103,10 @@ test.describe("Downloads — Backend", () => {
       {
         telegramFileId: fileId,
         error: "Network error",
-      }
+      },
+      robot
     );
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.retryDownload, {
       telegramFileId: fileId,
     });
@@ -130,8 +123,9 @@ test.describe("Downloads — Backend", () => {
   });
 
   test("cancelDownload changes Pending to Skipped", async () => {
+    const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-cancel-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Cancel test");
+    await seedMessage(userId, clientId, chatId, msgId, "Cancel test", undefined, robot);
 
     const fileId = `test-cancel-${Date.now()}`;
     await seedMediaRecord(
@@ -143,10 +137,10 @@ test.describe("Downloads — Backend", () => {
       "Pending",
       {
         telegramFileId: fileId,
-      }
+      },
+      robot
     );
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.cancelDownload, {
       telegramFileId: fileId,
     });
@@ -163,20 +157,20 @@ test.describe("Downloads — Backend", () => {
 });
 
 test.describe("Downloads — UI", () => {
-  test.beforeAll(async ({ browser }) => {
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
+    const robot = getRobotClient(workerCfg);
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:dl-ui-${Date.now()}`);
+    clientId = await seedTestClient(userId, `telegram:dl-ui-${Date.now()}`, robot);
     chatId = `${clientId}:dl-ui-chat`;
 
-    const robot = getRobotClient();
     await robot.mutation(api.testHelpers.seedChat, {
       chatId,
       userId,
@@ -189,44 +183,33 @@ test.describe("Downloads — UI", () => {
 
     // Seed messages and media at various statuses
     const msgId = `${chatId}:dl-ui-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Media message");
+    await seedMessage(userId, clientId, chatId, msgId, "Media message", undefined, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
       telegramFileId: `ui-pending-${Date.now()}`,
       fileName: "queued-photo.jpg",
       fileSize: 50_000,
-    });
+    }, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
       telegramFileId: `ui-failed-${Date.now()}`,
       fileName: "failed-video.mp4",
       error: "Server unavailable",
-    });
+    }, robot);
 
     await seedMediaRecord(userId, clientId, chatId, msgId, "Audio", "Stored", {
       telegramFileId: `ui-stored-${Date.now()}`,
       fileName: "complete-audio.ogg",
       fileSize: 8000,
       downloadedAt: Date.now(),
-    });
+    }, robot);
 
     await page.close();
   });
 
-  test.afterAll(async () => {
-    if (clientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.testHelpers.deleteClient, { clientId });
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
   test("downloads page renders status sections", async ({ page }) => {
     // Verify backend has the seeded data before checking UI
-    const robot = getRobotClient();
+    const robot = getRobotClient(workerCfg);
     const counts = (await robot.query(api.testHelpers.queryMediaCountByStatus, {
       userId,
       statuses: ["Pending", "Failed", "Stored"],
@@ -247,11 +230,13 @@ test.describe("Downloads — UI", () => {
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
+    // Verified: download-manager.tsx:464 — <h2>Downloads</h2>
     await expect(page.locator("h2:has-text('Downloads')")).toBeVisible({
       timeout: 15_000,
     });
 
-    // All three sections should render (Queued=Pending, Failed, Recent=Stored)
+    // Verified: download-manager.tsx Section component renders <h3> with title prop
+    // Queued (line 492), Failed (line 502), Recent (line 513)
     await expect(page.locator("h3:has-text('Queued')")).toBeVisible({
       timeout: 15_000,
     });
@@ -277,7 +262,7 @@ test.describe("Downloads — UI", () => {
       timeout: 5000,
     });
 
-    // Retry button should exist
+    // Verified: download-manager.tsx:336 — FailedRow renders <button>Retry</button>
     const retryBtn = page.locator('button:has-text("Retry")');
     await expect(retryBtn.first()).toBeVisible();
   });
@@ -291,6 +276,7 @@ test.describe("Downloads — UI", () => {
       timeout: 15_000,
     });
 
+    // Verified: download-manager.tsx:219 — CancelButton renders <button>Cancel</button>
     const cancelBtn = page.locator('button:has-text("Cancel")');
     await expect(cancelBtn.first()).toBeVisible();
   });
@@ -299,8 +285,8 @@ test.describe("Downloads — UI", () => {
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
 
-    // Scope to main content (excludes nav links like "Chats")
-    // Each download item has a "Chat" link that navigates to the message in context
+    // Verified: download-manager.tsx:168 — GoToChatButton renders <Link>Chat</Link>
+    // Scoped to <main> (_auth.tsx:170) to exclude nav links like "Chats"
     const chatLink = page.locator('main a:text("Chat")').first();
     await expect(chatLink).toBeVisible({ timeout: 10_000 });
     await chatLink.click();
