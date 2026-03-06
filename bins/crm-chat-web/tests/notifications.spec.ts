@@ -1,10 +1,10 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   getConvexUserId,
   getRobotClient,
   seedNotification,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -49,9 +49,24 @@ test.describe("Notifications — Backend", () => {
 
   test("seeds notifications at all severity levels", async () => {
     const robot = getRobotClient(workerCfg);
-    const infoId = await seedNotification(userId, "Info", "Info message", robot);
-    const warnId = await seedNotification(userId, "Warning", "Warning message", robot);
-    const errorId = await seedNotification(userId, "Error", "Error message", robot);
+    const infoId = await seedNotification(
+      userId,
+      "Info",
+      "Info message",
+      robot
+    );
+    const warnId = await seedNotification(
+      userId,
+      "Warning",
+      "Warning message",
+      robot
+    );
+    const errorId = await seedNotification(
+      userId,
+      "Error",
+      "Error message",
+      robot
+    );
 
     expect(infoId).toBeTruthy();
     expect(warnId).toBeTruthy();
@@ -74,10 +89,19 @@ test.describe("Notifications — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:notif-ui-${Date.now()}`, robot);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:notif-ui-${Date.now()}`,
+      robot
+    );
 
     // Seed notifications at all severities
-    await seedNotification(userId, "Error", "Connection lost to Telegram", robot);
+    await seedNotification(
+      userId,
+      "Error",
+      "Connection lost to Telegram",
+      robot
+    );
     await seedNotification(userId, "Warning", "Rate limit approaching", robot);
     await seedNotification(userId, "Info", "Sync complete for 42 chats", robot);
 
@@ -202,21 +226,29 @@ test.describe("Notifications — UI", () => {
     });
 
     // Dismiss all visible notifications by hovering each .group card
+    // Scope to the notifications panel (z-50 fixed sidebar) to avoid matching
+    // chat list items that also use .group
+    const panel = page.locator(".z-50").filter({
+      has: page.locator("text=Notifications"),
+    });
     for (let i = 0; i < 10; i++) {
-      const notifCards = page
+      const notifCards = panel
         .locator(".group")
         .filter({ has: page.locator("button") });
-      const count = await notifCards.count();
-      if (count === 0) {
+      const countBefore = await notifCards.count();
+      if (countBefore === 0) {
         break;
       }
 
-      // Hover the first card to reveal dismiss button, then click it
+      // Hover the first card to reveal dismiss button, then force-click it
+      // (the button has opacity-0 → group-hover:opacity-100 CSS which can
+      //  cause Playwright's actionability check to fail intermittently)
       const firstCard = notifCards.first();
       await firstCard.hover();
-      await firstCard.locator("button").last().click();
-      // Wait for the dismissed card to disappear before next iteration
-      await expect(firstCard).toBeHidden({ timeout: 5000 });
+      await firstCard.locator("button").last().click({ force: true });
+      // Wait for card count to decrease (firstCard re-resolves to the next
+      // card after dismiss, so toBeHidden would never pass)
+      await expect(notifCards).toHaveCount(countBefore - 1, { timeout: 5000 });
     }
 
     // Verified: notifications-panel.tsx:53 — "All caught up" empty state text

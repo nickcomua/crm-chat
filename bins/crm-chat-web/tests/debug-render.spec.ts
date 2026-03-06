@@ -1,11 +1,11 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
-  seedTestClient,
   seedMessage,
+  seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 /**
@@ -14,7 +14,10 @@ import {
  */
 let workerCfg: WorkerConfig;
 
-test("debug: investigate seeded data visibility", async ({ browser, workerBackend }) => {
+test("debug: investigate seeded data visibility", async ({
+  browser,
+  workerBackend,
+}) => {
   workerCfg = workerBackend;
   const context = await browser.newContext({
     storageState: "tests/.auth/user.json",
@@ -29,18 +32,33 @@ test("debug: investigate seeded data visibility", async ({ browser, workerBacken
 
   // 2. Seed a test client + chats via robot
   const robot = getRobotClient(workerCfg);
-  const clientId = await seedTestClient(userId, `telegram:debug-${Date.now()}`, robot);
+  const clientId = await seedTestClient(
+    userId,
+    `telegram:debug-${Date.now()}`,
+    robot
+  );
   console.log("[DEBUG] seedTestClient returned clientId:", clientId);
 
   // 3. Seed a message
   const aliceChatId = `${clientId}:chat-pinned-1`;
-  await seedMessage(userId, clientId, aliceChatId, `${aliceChatId}:msg-1`, "Debug message", {
-    timestamp: Date.now(),
-  }, robot);
+  await seedMessage(
+    userId,
+    clientId,
+    aliceChatId,
+    `${aliceChatId}:msg-1`,
+    "Debug message",
+    {
+      timestamp: Date.now(),
+    },
+    robot
+  );
 
   // 4. Query backend to confirm data exists
   const chats = await robot.query(api.testHelpers.queryChats, { userId });
-  console.log("[DEBUG] Robot queryChats result:", JSON.stringify(chats, null, 2));
+  console.log(
+    "[DEBUG] Robot queryChats result:",
+    JSON.stringify(chats, null, 2)
+  );
 
   // 5. Check what browser sees — evaluate Convex state
   const browserInfo = await page.evaluate(() => {
@@ -62,12 +80,17 @@ test("debug: investigate seeded data visibility", async ({ browser, workerBacken
 
   // 8. Dump page text content
   const bodyText = await page.evaluate(() => document.body.innerText);
-  console.log("[DEBUG] Page body text (first 2000 chars):", bodyText.slice(0, 2000));
+  console.log(
+    "[DEBUG] Page body text (first 2000 chars):",
+    bodyText.slice(0, 2000)
+  );
 
   // 9. Check for any console errors
   const errors: string[] = [];
   page.on("console", (msg) => {
-    if (msg.type() === "error") errors.push(msg.text());
+    if (msg.type() === "error") {
+      errors.push(msg.text());
+    }
   });
 
   // 10. Reload and wait again
@@ -75,9 +98,17 @@ test("debug: investigate seeded data visibility", async ({ browser, workerBacken
   await page.waitForURL(/\/#\/chats/, { timeout: 10_000 });
   await page.waitForTimeout(3000);
 
-  const bodyTextAfterReload = await page.evaluate(() => document.body.innerText);
-  console.log("[DEBUG] Page body after reload (first 2000 chars):", bodyTextAfterReload.slice(0, 2000));
-  await page.screenshot({ path: "/tmp/debug-render-after-reload.png", fullPage: true });
+  const bodyTextAfterReload = await page.evaluate(
+    () => document.body.innerText
+  );
+  console.log(
+    "[DEBUG] Page body after reload (first 2000 chars):",
+    bodyTextAfterReload.slice(0, 2000)
+  );
+  await page.screenshot({
+    path: "/tmp/debug-render-after-reload.png",
+    fullPage: true,
+  });
 
   // 11. Check if Alice appears
   const aliceVisible = await page.locator("text=Alice").count();
@@ -87,8 +118,15 @@ test("debug: investigate seeded data visibility", async ({ browser, workerBacken
 
   // 12. Check network — look at WebSocket connections
   const perfEntries = await page.evaluate(() => {
-    return performance.getEntriesByType("resource")
-      .filter((r: any) => r.name.includes("convex") || r.name.includes("ws") || r.name.includes("3210") || r.name.includes(":"))
+    return performance
+      .getEntriesByType("resource")
+      .filter(
+        (r: any) =>
+          r.name.includes("convex") ||
+          r.name.includes("ws") ||
+          r.name.includes("3210") ||
+          r.name.includes(":")
+      )
       .slice(0, 20)
       .map((r: any) => ({ name: r.name, type: r.initiatorType }));
   });
@@ -99,5 +137,7 @@ test("debug: investigate seeded data visibility", async ({ browser, workerBacken
   await page.close();
 
   // Force fail so we see all output
-  expect(aliceVisible, "Alice should be visible after seeding").toBeGreaterThan(0);
+  expect(aliceVisible, "Alice should be visible after seeding").toBeGreaterThan(
+    0
+  );
 });

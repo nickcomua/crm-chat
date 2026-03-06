@@ -1,10 +1,10 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -53,14 +53,11 @@ test.describe("Settings — Backend", () => {
   test("client list returns registered clients", async () => {
     const robot = getRobotClient(workerCfg);
     // Register a second client
-    errorClientId = (await robot.mutation(
-      api.clients.workerRegisterConnected,
-      {
-        userId,
-        telegramId: `telegram:settings-error-${Date.now()}`,
-        kind: "Telegram",
-      }
-    )) as string;
+    errorClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
+      userId,
+      telegramId: `telegram:settings-error-${Date.now()}`,
+      kind: "Telegram",
+    })) as string;
 
     // Set it to Error status via a direct patch (robot can do this)
     // Since there's no direct "setError" mutation, we verify both exist

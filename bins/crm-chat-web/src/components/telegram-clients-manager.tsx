@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
 import { Plus, QrCode, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, type Id, onResultError } from "@/lib/convex";

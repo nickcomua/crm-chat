@@ -1,14 +1,14 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "../fixtures";
 import { getSessionEnv } from "../env";
+import { expect, test } from "../fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   getSessionPath,
   pollUntil,
+  type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
 
@@ -44,7 +44,11 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
     // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
     const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId, workerCfg.sessionDir);
+    copiedSessionPath = getSessionPath(
+      telegramId,
+      convexUserId,
+      workerCfg.sessionDir
+    );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
       copyFileSync(session.sessionFile, copiedSessionPath);

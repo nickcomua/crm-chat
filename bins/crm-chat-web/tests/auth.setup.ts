@@ -19,7 +19,7 @@ setup("authenticate", async ({ page }) => {
       >;
       return w.Clerk?.user?.id ?? null;
     },
-    { timeout: 10_000 },
+    { timeout: 10_000 }
   );
   await page.context().storageState({ path: AUTH_FILE });
 });

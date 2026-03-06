@@ -1,7 +1,12 @@
-import { expect, test } from "../fixtures";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { type WorkerConfig, api, getRobotClient, waitForPendingScanners } from "../helpers";
+import { expect, test } from "../fixtures";
+import {
+  api,
+  getRobotClient,
+  type WorkerConfig,
+  waitForPendingScanners,
+} from "../helpers";
 
 // URL patterns for navigation
 const CHATS_URL_PATTERN = /\/#\/chats/;

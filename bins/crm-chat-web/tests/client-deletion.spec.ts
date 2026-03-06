@@ -1,10 +1,10 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 /**
@@ -65,7 +65,7 @@ test.describe("Client Deletion", () => {
     // 1. Worker discovers a session file and registers the client
     const clientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
-      { userId, telegramId, kind: "Telegram" },
+      { userId, telegramId, kind: "Telegram" }
     )) as string;
 
     // 2. User deletes the client
@@ -81,7 +81,7 @@ test.describe("Client Deletion", () => {
     //    and calls workerRegisterConnected again with the same telegramId
     const recreatedId = (await robot.mutation(
       api.clients.workerRegisterConnected,
-      { userId, telegramId, kind: "Telegram" },
+      { userId, telegramId, kind: "Telegram" }
     )) as string;
 
     // 5. The client should NOT exist — it was deleted by the user.

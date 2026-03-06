@@ -1,11 +1,11 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 /**
@@ -110,7 +110,15 @@ test.describe("Search — Backend (Data Integrity)", () => {
   test("messages with empty text are stored as undefined", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:search-empty-text`;
-    await seedMessage(userId, clientId, chatId, msgId, undefined, undefined, robot);
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      undefined,
+      undefined,
+      robot
+    );
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
@@ -202,12 +210,12 @@ test.describe("Search — Convex Full-Text", () => {
 
     // Should find the two messages containing "quarterly"
     const matchingTexts = results.map((r) => r.text);
-    expect(
-      matchingTexts.some((t) => t?.includes("quarterly revenue"))
-    ).toBe(true);
-    expect(
-      matchingTexts.some((t) => t?.includes("quarterly board"))
-    ).toBe(true);
+    expect(matchingTexts.some((t) => t?.includes("quarterly revenue"))).toBe(
+      true
+    );
+    expect(matchingTexts.some((t) => t?.includes("quarterly board"))).toBe(
+      true
+    );
   });
 
   test("search scoped to a chat only returns messages from that chat", async () => {
@@ -246,9 +254,9 @@ test.describe("Search — Convex Full-Text", () => {
       expect(r.chatId).toBe(chatId);
     }
     // Should NOT include the message from chatId2
-    expect(
-      scopedResults.some((r) => r.text?.includes("report is ready"))
-    ).toBe(false);
+    expect(scopedResults.some((r) => r.text?.includes("report is ready"))).toBe(
+      false
+    );
   });
 
   test("search with no matching text returns empty results", async () => {
@@ -288,7 +296,11 @@ test.describe("Search — UI (Dialog Shell)", () => {
 
     userId = await getConvexUserId(page);
     const robot = getRobotClient(workerCfg);
-    clientId = await seedTestClient(userId, `telegram:search-ui-${Date.now()}`, robot);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:search-ui-${Date.now()}`,
+      robot
+    );
 
     await page.close();
   });
@@ -310,7 +322,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: input should auto-focus and accept queries
-  test.fixme("search input is auto-focused and accepts text", async ({ page }) => {
+  test.fixme("search input is auto-focused and accepts text", async ({
+    page,
+  }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
@@ -330,7 +344,9 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: scope buttons should render with default selection
-  test.fixme("scope buttons render with 'All messages' default", async ({ page }) => {
+  test.fixme("scope buttons render with 'All messages' default", async ({
+    page,
+  }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 

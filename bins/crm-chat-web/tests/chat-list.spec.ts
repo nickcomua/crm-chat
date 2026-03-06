@@ -1,11 +1,11 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;

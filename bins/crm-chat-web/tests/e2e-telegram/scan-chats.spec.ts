@@ -1,14 +1,14 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "../fixtures";
 import { getSessionEnv } from "../env";
+import { expect, test } from "../fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   getSessionPath,
   pollUntil,
+  type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
 
@@ -47,7 +47,11 @@ test.describe("Client Settings & Chat Scanning", () => {
 
     // Place session file where the subscriber expects it (same path logic as Rust)
     const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId, workerCfg.sessionDir);
+    copiedSessionPath = getSessionPath(
+      telegramId,
+      convexUserId,
+      workerCfg.sessionDir
+    );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     copyFileSync(session.sessionFile, copiedSessionPath);
     writeOwnerFile(copiedSessionPath, convexUserId);

@@ -1,5 +1,10 @@
 import { expect, test } from "./fixtures";
-import { type WorkerConfig, api, getConvexUserId, getRobotClient } from "./helpers";
+import {
+  api,
+  getConvexUserId,
+  getRobotClient,
+  type WorkerConfig,
+} from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 
@@ -90,9 +95,7 @@ test.describe("Scroll to Message", () => {
     await expect(bubble).toBeVisible({ timeout: 5000 });
   });
 
-  test("scrolls to an older message near the top", async ({
-    page,
-  }) => {
+  test("scrolls to an older message near the top", async ({ page }) => {
     await page.goto(
       `/#/chats/${encodeURIComponent(chatId)}?messageId=${encodeURIComponent(deepTargetId)}`
     );

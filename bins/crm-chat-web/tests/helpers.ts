@@ -60,9 +60,7 @@ export function mintRobotJwt(config?: WorkerConfig): string {
  * Accepts optional config to avoid reading process.env (which races across workers).
  */
 export function getRobotClient(config?: WorkerConfig): ConvexHttpClient {
-  const convexUrl = config
-    ? config.convexUrl
-    : getDynamicEnv().E2E_CONVEX_URL;
+  const convexUrl = config ? config.convexUrl : getDynamicEnv().E2E_CONVEX_URL;
 
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(mintRobotJwt(config));

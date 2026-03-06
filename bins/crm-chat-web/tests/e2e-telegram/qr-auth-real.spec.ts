@@ -1,9 +1,15 @@
 import { existsSync } from "node:fs";
-import { expect, test } from "../fixtures";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
 import { getSessionEnv } from "../env";
-import { type WorkerConfig, api, getConvexUserId, getRobotClient, waitForPendingScanners } from "../helpers";
+import { expect, test } from "../fixtures";
+import {
+  api,
+  getConvexUserId,
+  getRobotClient,
+  type WorkerConfig,
+  waitForPendingScanners,
+} from "../helpers";
 
 /**
  * Real QR Auth Tests

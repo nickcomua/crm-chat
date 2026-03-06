@@ -1,9 +1,9 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 /**
@@ -33,7 +33,11 @@ test.describe("Navigation", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:nav-test-${Date.now()}`, robot);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:nav-test-${Date.now()}`,
+      robot
+    );
 
     await page.close();
   });
@@ -146,7 +150,9 @@ test.describe("Navigation", () => {
     // Toggle theme and verify with auto-retrying matcher
     await themeButton.click();
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+        timeout: 5000,
+      });
     } else {
       await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
     }
@@ -156,7 +162,9 @@ test.describe("Navigation", () => {
     if (isDarkBefore) {
       await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
     } else {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+        timeout: 5000,
+      });
     }
   });
 
@@ -174,7 +182,9 @@ test.describe("Navigation", () => {
     // Toggle to opposite and wait for class change
     await themeButton.click();
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+        timeout: 5000,
+      });
     } else {
       await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
     }
@@ -185,7 +195,9 @@ test.describe("Navigation", () => {
 
     // Theme should persist after reload
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+        timeout: 5000,
+      });
     } else {
       await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
     }

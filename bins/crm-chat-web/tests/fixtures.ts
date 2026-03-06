@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -353,19 +354,29 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       console.log(`[${wid}] crm-worker running (PID ${worker.pid})`);
 
       // ── 7. Build and start Vite preview ───────────────────────────
-      console.log(`[${wid}] Building frontend...`);
-      const buildResult = spawnSync("bunx", ["vite", "build"], {
-        cwd: WEB_DIR,
-        env: {
-          ...process.env,
-          VITE_CONVEX_URL: convexUrl,
-          // Map TEST_CLERK_* to VITE_TEST_* so AutoSignIn activates
-          VITE_TEST_USERNAME: process.env.TEST_CLERK_USERNAME ?? "",
-          VITE_TEST_PASSWORD: process.env.TEST_CLERK_PASSWORD ?? "",
-        },
-        stdio: "pipe",
-        encoding: "utf-8",
-      });
+      // Each worker builds to its own temp directory so parallel workers
+      // don't overwrite each other's VITE_CONVEX_URL baked into the bundle.
+      const outDir = path.join(
+        os.tmpdir(),
+        `crm-e2e-dist-${wid}-${Date.now()}`
+      );
+      console.log(`[${wid}] Building frontend to ${outDir}...`);
+      const buildResult = spawnSync(
+        "bunx",
+        ["vite", "build", "--outDir", outDir],
+        {
+          cwd: WEB_DIR,
+          env: {
+            ...process.env,
+            VITE_CONVEX_URL: convexUrl,
+            // Map TEST_CLERK_* to VITE_TEST_* so AutoSignIn activates
+            VITE_TEST_USERNAME: process.env.TEST_CLERK_USERNAME ?? "",
+            VITE_TEST_PASSWORD: process.env.TEST_CLERK_PASSWORD ?? "",
+          },
+          stdio: "pipe",
+          encoding: "utf-8",
+        }
+      );
       if (buildResult.status !== 0) {
         throw new Error(
           `vite build failed:\n${buildResult.stdout}\n${buildResult.stderr}`
@@ -375,7 +386,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       console.log(`[${wid}] Starting Vite preview on port ${vitePort}...`);
       const vitePreview = spawn(
         "bunx",
-        ["vite", "preview", "--port", String(vitePort)],
+        ["vite", "preview", "--port", String(vitePort), "--outDir", outDir],
         {
           cwd: WEB_DIR,
           env: { ...process.env, VITE_CONVEX_URL: convexUrl },
@@ -436,6 +447,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       await restateContainer.stop();
       console.log(`[${wid}] Stopping Convex container...`);
       await container.stop();
+
+      // Remove per-worker build directory
+      try {
+        rmSync(outDir, { recursive: true, force: true });
+      } catch {}
+
       console.log(`[${wid}] Cleanup complete`);
     },
     { scope: "worker" },

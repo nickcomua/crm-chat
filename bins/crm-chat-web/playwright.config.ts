@@ -10,9 +10,13 @@ const envFile = path.join(ROOT, ".env");
 if (existsSync(envFile)) {
   for (const line of readFileSync(envFile, "utf-8").split("\n")) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
     const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) continue;
+    if (eqIndex === -1) {
+      continue;
+    }
     const key = trimmed.slice(0, eqIndex);
     const value = trimmed.slice(eqIndex + 1).replace(/^["']|["']$/g, "");
     if (!process.env[key]) {

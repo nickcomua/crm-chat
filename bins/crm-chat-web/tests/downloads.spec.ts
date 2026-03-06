@@ -1,12 +1,12 @@
 import { expect, test } from "./fixtures";
 import {
-  type WorkerConfig,
   api,
   getConvexUserId,
   getRobotClient,
   seedMediaRecord,
   seedMessage,
   seedTestClient,
+  type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -54,27 +54,62 @@ test.describe("Downloads — Backend", () => {
   test("seeds media at various statuses", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-msg-1`;
-    await seedMessage(userId, clientId, chatId, msgId, "Photo message", undefined, robot);
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Photo message",
+      undefined,
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
-      telegramFileId: `test-pending-${Date.now()}`,
-      fileName: "test.jpg",
-      fileSize: 12_345,
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Photo",
+      "Pending",
+      {
+        telegramFileId: `test-pending-${Date.now()}`,
+        fileName: "test.jpg",
+        fileSize: 12_345,
+      },
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
-      telegramFileId: `test-failed-${Date.now()}`,
-      fileName: "video.mp4",
-      fileSize: 99_999,
-      error: "Connection timed out",
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Video",
+      "Failed",
+      {
+        telegramFileId: `test-failed-${Date.now()}`,
+        fileName: "video.mp4",
+        fileSize: 99_999,
+        error: "Connection timed out",
+      },
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Audio", "Stored", {
-      telegramFileId: `test-stored-${Date.now()}`,
-      fileName: "audio.ogg",
-      fileSize: 5000,
-      downloadedAt: Date.now(),
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Audio",
+      "Stored",
+      {
+        telegramFileId: `test-stored-${Date.now()}`,
+        fileName: "audio.ogg",
+        fileSize: 5000,
+        downloadedAt: Date.now(),
+      },
+      robot
+    );
 
     // Verify counts
     const counts = (await robot.query(api.testHelpers.queryMediaCountByStatus, {
@@ -90,7 +125,15 @@ test.describe("Downloads — Backend", () => {
   test("retryDownload changes Failed to Pending", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-retry-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Retry test", undefined, robot);
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Retry test",
+      undefined,
+      robot
+    );
 
     const fileId = `test-retry-${Date.now()}`;
     await seedMediaRecord(
@@ -125,7 +168,15 @@ test.describe("Downloads — Backend", () => {
   test("cancelDownload changes Pending to Skipped", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-cancel-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Cancel test", undefined, robot);
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Cancel test",
+      undefined,
+      robot
+    );
 
     const fileId = `test-cancel-${Date.now()}`;
     await seedMediaRecord(
@@ -168,7 +219,11 @@ test.describe("Downloads — UI", () => {
 
     const robot = getRobotClient(workerCfg);
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(userId, `telegram:dl-ui-${Date.now()}`, robot);
+    clientId = await seedTestClient(
+      userId,
+      `telegram:dl-ui-${Date.now()}`,
+      robot
+    );
     chatId = `${clientId}:dl-ui-chat`;
 
     await robot.mutation(api.testHelpers.seedChat, {
@@ -183,26 +238,61 @@ test.describe("Downloads — UI", () => {
 
     // Seed messages and media at various statuses
     const msgId = `${chatId}:dl-ui-msg`;
-    await seedMessage(userId, clientId, chatId, msgId, "Media message", undefined, robot);
+    await seedMessage(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Media message",
+      undefined,
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Photo", "Pending", {
-      telegramFileId: `ui-pending-${Date.now()}`,
-      fileName: "queued-photo.jpg",
-      fileSize: 50_000,
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Photo",
+      "Pending",
+      {
+        telegramFileId: `ui-pending-${Date.now()}`,
+        fileName: "queued-photo.jpg",
+        fileSize: 50_000,
+      },
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Video", "Failed", {
-      telegramFileId: `ui-failed-${Date.now()}`,
-      fileName: "failed-video.mp4",
-      error: "Server unavailable",
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Video",
+      "Failed",
+      {
+        telegramFileId: `ui-failed-${Date.now()}`,
+        fileName: "failed-video.mp4",
+        error: "Server unavailable",
+      },
+      robot
+    );
 
-    await seedMediaRecord(userId, clientId, chatId, msgId, "Audio", "Stored", {
-      telegramFileId: `ui-stored-${Date.now()}`,
-      fileName: "complete-audio.ogg",
-      fileSize: 8000,
-      downloadedAt: Date.now(),
-    }, robot);
+    await seedMediaRecord(
+      userId,
+      clientId,
+      chatId,
+      msgId,
+      "Audio",
+      "Stored",
+      {
+        telegramFileId: `ui-stored-${Date.now()}`,
+        fileName: "complete-audio.ogg",
+        fileSize: 8000,
+        downloadedAt: Date.now(),
+      },
+      robot
+    );
 
     await page.close();
   });
