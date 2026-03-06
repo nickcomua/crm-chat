@@ -62,7 +62,8 @@ echo "[rebuild-jwks] JWKS built (kid=$ROBOT_KID)"
 
 # ── 4. Update .env with ROBOT_JWKS ───────────────────────────────────
 if grep -q '^ROBOT_JWKS=' "$ENV_FILE" 2>/dev/null; then
-  grep -v '^ROBOT_JWKS=' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+  grep -v '^ROBOT_JWKS=' "$ENV_FILE" > "$ENV_FILE.tmp" || true
+  mv "$ENV_FILE.tmp" "$ENV_FILE"
 fi
 
 echo "ROBOT_JWKS=\"${JWKS_DATA_URI}\"" >> "$ENV_FILE"

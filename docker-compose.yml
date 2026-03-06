@@ -86,7 +86,7 @@ services:
   web:
     image: nick395/crm-chat-web:latest
     environment:
-      - VITE_CONVEX_URL=${VITE_CONVEX_URL:-localhost:${PORT:-3210}}
+      - VITE_CONVEX_URL=${VITE_CONVEX_URL:-http://localhost:${PORT:-3210}}
       - VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
       - VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
       - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}

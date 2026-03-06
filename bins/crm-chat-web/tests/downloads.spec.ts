@@ -48,7 +48,7 @@ test.describe("Downloads — Backend", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await page.close();
+    await context.close();
   });
 
   test("seeds media at various statuses", async () => {
@@ -294,7 +294,7 @@ test.describe("Downloads — UI", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("downloads page renders status sections", async ({ page }) => {

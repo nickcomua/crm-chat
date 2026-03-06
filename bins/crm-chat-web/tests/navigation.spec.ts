@@ -39,7 +39,7 @@ test.describe("Navigation", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("root URL redirects to /chats", async ({ page }) => {

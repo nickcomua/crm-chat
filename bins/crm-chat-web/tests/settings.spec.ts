@@ -29,7 +29,7 @@ test.describe("Settings — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    await page.close();
+    await context.close();
   });
 
   test("registers a Connected client via robot API", async () => {
@@ -162,7 +162,7 @@ test.describe("Settings — UI", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("settings page renders with 'Telegram Clients' header", async ({

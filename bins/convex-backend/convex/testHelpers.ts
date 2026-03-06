@@ -59,6 +59,7 @@ export const seedChat = mutation({
 				isPinned: args.isPinned,
 				pinnedName: args.pinnedName,
 				lastMessageTimestamp: args.lastMessageTimestamp,
+				scanEnabled: args.isPinned,
 			});
 		} else {
 			await ctx.db.insert("chats", {
@@ -155,7 +156,9 @@ export const deleteClient = mutation({
 			.withIndex("by_userId", (q) => q.eq("userId", client.userId))
 			.collect();
 		for (const t of tasks) {
-			await ctx.db.delete(t._id);
+			if ("clientId" in t.task && t.task.clientId === clientId) {
+				await ctx.db.delete(t._id);
+			}
 		}
 
 		// Delete chats for this client

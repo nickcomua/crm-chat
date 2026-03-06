@@ -46,7 +46,7 @@ test.describe("Reactions — Backend", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await page.close();
+    await context.close();
   });
 
   test("stores reactions on a message", async () => {
@@ -216,7 +216,7 @@ test.describe("Reactions — UI", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("renders reaction badges on a message", async ({ page }) => {

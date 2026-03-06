@@ -26,7 +26,7 @@ test.describe("Chat List — Backend", () => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
     userId = await getConvexUserId(page);
-    await page.close();
+    await context.close();
   });
 
   test("seeded chats appear in list query ordered by timestamp", async () => {
@@ -170,7 +170,7 @@ test.describe("Chat List — UI", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("renders seeded chats with names and last message previews", async ({

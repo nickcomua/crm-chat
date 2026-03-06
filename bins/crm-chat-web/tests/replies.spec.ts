@@ -46,7 +46,7 @@ test.describe("Replies — Backend", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await page.close();
+    await context.close();
   });
 
   test("stores reply fields on a message", async () => {
@@ -175,7 +175,7 @@ test.describe
         robot
       );
 
-      await page.close();
+      await context.close();
     });
 
     test("renders reply preview above message bubble", async ({ page }) => {

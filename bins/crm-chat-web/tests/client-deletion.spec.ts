@@ -36,7 +36,7 @@ test.beforeAll(async ({ browser, workerBackend }) => {
   await page.goto("/");
   await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
   userId = await getConvexUserId(page);
-  await page.close();
+  await context.close();
 });
 
 test.describe("Client Deletion", () => {

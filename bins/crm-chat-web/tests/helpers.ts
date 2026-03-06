@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
@@ -313,6 +313,7 @@ export function getSessionPath(
  */
 export function writeOwnerFile(sessionPath: string, ownerId: string): void {
   const dir = path.dirname(sessionPath);
+  mkdirSync(dir, { recursive: true });
   const ownerFile = path.join(dir, ".owner");
   if (!existsSync(ownerFile)) {
     writeFileSync(ownerFile, ownerId);

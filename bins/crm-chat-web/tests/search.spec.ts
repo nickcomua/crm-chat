@@ -55,7 +55,7 @@ test.describe("Search — Backend (Data Integrity)", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await page.close();
+    await context.close();
   });
 
   test("seeded messages with known text are stored correctly", async () => {
@@ -198,7 +198,7 @@ test.describe("Search — Convex Full-Text", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("search returns messages matching a keyword", async () => {
@@ -302,7 +302,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   // Waiting for Convex search: dialog should open and show title

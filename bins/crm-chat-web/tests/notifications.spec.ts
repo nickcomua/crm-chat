@@ -33,7 +33,7 @@ test.describe("Notifications — Backend", () => {
       robot
     );
 
-    await page.close();
+    await context.close();
   });
 
   test("seedNotification creates undismissed notification", async () => {
@@ -105,7 +105,7 @@ test.describe("Notifications — UI", () => {
     await seedNotification(userId, "Warning", "Rate limit approaching", robot);
     await seedNotification(userId, "Info", "Sync complete for 42 chats", robot);
 
-    await page.close();
+    await context.close();
   });
 
   test("bell icon shows badge count", async ({ page }) => {

@@ -77,7 +77,7 @@ test.describe("Scroll to Message", () => {
     // still validates scroll-to-target but does NOT exercise loadMore.
     deepTargetId = `${clientId}:${chatId}:msg-10`;
 
-    await page.close();
+    await context.close();
   });
 
   test("scrolls to a message in the first page", async ({ page }) => {

@@ -46,7 +46,7 @@ test.describe("Forwarded Messages — Backend", () => {
       lastMessageTimestamp: Date.now(),
     });
 
-    await page.close();
+    await context.close();
   });
 
   test("stores forwardedFrom on a message", async () => {
@@ -192,7 +192,7 @@ test.describe
         robot
       );
 
-      await page.close();
+      await context.close();
     });
 
     test("renders 'Forwarded from' header on forwarded message", async ({

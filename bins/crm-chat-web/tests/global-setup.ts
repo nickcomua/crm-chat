@@ -56,8 +56,15 @@ export default async function globalSetup(): Promise<void> {
     stdio: "pipe",
     encoding: "utf-8",
   });
+  if (bunResult.error) {
+    throw new Error(
+      `bun install could not be started: ${bunResult.error.message}`
+    );
+  }
   if (bunResult.status !== 0) {
-    throw new Error(`bun install failed:\n${bunResult.stderr}`);
+    throw new Error(
+      `bun install failed:\n${bunResult.stdout}\n${bunResult.stderr}`
+    );
   }
 
   // Build crm-worker binary (expensive — do once)
@@ -77,8 +84,15 @@ export default async function globalSetup(): Promise<void> {
       },
     }
   );
+  if (buildResult.error) {
+    throw new Error(
+      `cargo build could not be started: ${buildResult.error.message}`
+    );
+  }
   if (buildResult.status !== 0) {
-    throw new Error(`cargo build failed:\n${buildResult.stderr}`);
+    throw new Error(
+      `cargo build failed:\n${buildResult.stdout}\n${buildResult.stderr}`
+    );
   }
 
   // Expose binary path for worker fixtures
