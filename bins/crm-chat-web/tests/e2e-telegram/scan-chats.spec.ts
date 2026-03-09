@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { getSessionEnv } from "../env";
+import { env } from "../env";
 import { expect, test } from "../fixtures";
 import {
   api,
@@ -8,6 +8,7 @@ import {
   getRobotClient,
   getSessionPath,
   pollUntil,
+  type Id,
   type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
@@ -18,20 +19,18 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 // Run tests sequentially — they share a single Clerk test account and TG client
 test.describe.configure({ mode: "serial" });
 
-const session = getSessionEnv();
-
-let registeredClientId: string | null = null;
+let registeredClientId: Id<"clients"> | null = null;
 let copiedSessionPath: string | null = null;
 let convexUserId: string | null = null;
 let workerCfg: WorkerConfig;
 
 test.describe("Client Settings & Chat Scanning", () => {
   // biome-ignore lint/suspicious/noSkippedTests: requires real Telegram session
-  test.skip(!session, "Skipping: no TG session configured");
+  test.skip(!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1), "Skipping: no TG session configured");
 
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!session) {
+    if (!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1)) {
       return;
     }
 
@@ -46,14 +45,14 @@ test.describe("Client Settings & Chat Scanning", () => {
     convexUserId = await getConvexUserId(page);
 
     // Place session file where the subscriber expects it (same path logic as Rust)
-    const telegramId = `telegram:${session.userId}`;
+    const telegramId = `telegram:${env.TG_USER_ID_1}`;
     copiedSessionPath = getSessionPath(
       telegramId,
       convexUserId,
       workerCfg.sessionDir
     );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
-    copyFileSync(session.sessionFile, copiedSessionPath);
+    copyFileSync(env.TG_SESSION_FILE_1!, copiedSessionPath);
     writeOwnerFile(copiedSessionPath, convexUserId);
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
@@ -65,7 +64,7 @@ test.describe("Client Settings & Chat Scanning", () => {
         telegramId,
         kind: "Telegram",
       }
-    )) as string;
+    )) as Id<"clients">;
 
     // Enable scanning on first 3 chats immediately after registration.
     // This gives ChatScanner tasks a ~15s head start (time of tests 1-5)

@@ -5,6 +5,7 @@ import {
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -13,7 +14,7 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
+let clientId: Id<"clients">;
 let chatId: string;
 let workerCfg: WorkerConfig;
 
@@ -58,13 +59,13 @@ test.describe("Forwarded Messages — Backend", () => {
       chatId,
       msgId,
       "Forwarded content",
+      robot,
       {
         forwardedFrom: {
           senderName: "Alice Wonderland",
           date: 1_700_000_000_000,
         },
-      },
-      robot
+      }
     );
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
@@ -91,10 +92,10 @@ test.describe("Forwarded Messages — Backend", () => {
       chatId,
       msgId,
       "Forwarded, no date",
+      robot,
       {
         forwardedFrom: { senderName: "Bob" },
-      },
-      robot
+      }
     );
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
@@ -119,7 +120,6 @@ test.describe("Forwarded Messages — Backend", () => {
       chatId,
       msgId,
       "Not forwarded",
-      undefined,
       robot
     );
 
@@ -170,14 +170,14 @@ test.describe
         chatId,
         `${chatId}:ui-fwd`,
         "Check out this message!",
+        robot,
         {
           forwardedFrom: {
             senderName: "Alice Wonderland",
             date: 1_700_000_000_000,
           },
           timestamp: Date.now(),
-        },
-        robot
+        }
       );
 
       await seedMessage(
@@ -186,10 +186,10 @@ test.describe
         chatId,
         `${chatId}:ui-normal`,
         "Just a normal message",
+        robot,
         {
           timestamp: Date.now() - 1000,
-        },
-        robot
+        }
       );
 
       await context.close();

@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
-import { anyApi } from "convex/server";
-import { getDynamicEnv } from "./env";
+import { api } from "crm-chat-convex-backend/convex/_generated/api";
+import type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
@@ -27,12 +27,9 @@ export function unwrapResult<T>(res: unknown): T {
 
 /**
  * Mint an RS256 JWT for robot authentication against the test Convex backend.
- * Accepts optional config to avoid reading process.env (which races across workers).
  */
-export function mintRobotJwt(config?: WorkerConfig): string {
-  const privateKey = config
-    ? config.robotPrivateKey
-    : getDynamicEnv().E2E_ROBOT_PRIVATE_KEY;
+export function mintRobotJwt(config: WorkerConfig): string {
+  const privateKey = config.robotPrivateKey;
 
   const header = { alg: "RS256", kid: "e2e-robot-key", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
@@ -57,18 +54,15 @@ export function mintRobotJwt(config?: WorkerConfig): string {
 
 /**
  * Create a ConvexHttpClient authenticated as the robot service.
- * Accepts optional config to avoid reading process.env (which races across workers).
  */
-export function getRobotClient(config?: WorkerConfig): ConvexHttpClient {
-  const convexUrl = config ? config.convexUrl : getDynamicEnv().E2E_CONVEX_URL;
-
-  const client = new ConvexHttpClient(convexUrl);
+export function getRobotClient(config: WorkerConfig): ConvexHttpClient {
+  const client = new ConvexHttpClient(config.convexUrl);
   client.setAuth(mintRobotJwt(config));
   return client;
 }
 
-// Re-export anyApi for use in tests (avoids path alias issues)
-export const api = anyApi;
+// Re-export typed api and Id for use in tests (avoids path alias issues)
+export { api, type Id };
 
 const CLERK_ISSUER_DOMAIN = "https://noted-rabbit-14.clerk.accounts.dev";
 
@@ -109,16 +103,15 @@ export async function getConvexUserId(page: Page): Promise<string> {
 export async function seedTestClient(
   userId: string,
   telegramId: string,
-  robot?: ConvexHttpClient
-): Promise<string> {
-  const client = robot ?? getRobotClient();
+  robot: ConvexHttpClient
+): Promise<Id<"clients">> {
+  const client = robot;
 
-  // Register the client as Connected (returns bare v.id, not result-wrapped).
-  const clientId = (await client.mutation(api.clients.workerRegisterConnected, {
+  const clientId = await client.mutation(api.clients.workerRegisterConnected, {
     userId,
     telegramId,
     kind: "Telegram",
-  })) as string;
+  });
 
   // Create some test chats
   await client.mutation(api.testHelpers.seedChat, {
@@ -175,9 +168,9 @@ export async function seedNotification(
   userId: string,
   severity: Severity,
   message: string,
-  robot?: ConvexHttpClient
+  robot: ConvexHttpClient
 ): Promise<string> {
-  const client = robot ?? getRobotClient();
+  const client = robot;
   return (await client.mutation(api.testHelpers.seedNotification, {
     userId,
     severity,
@@ -188,11 +181,12 @@ export async function seedNotification(
 /** Seed a media record at any status. Returns the media ID. */
 export async function seedMediaRecord(
   userId: string,
-  clientId: string,
+  clientId: Id<"clients">,
   chatId: string,
   messageId: string,
   kind: MediaKind,
   status: MediaStatus,
+  robot: ConvexHttpClient,
   opts?: {
     telegramFileId?: string;
     mimeType?: string;
@@ -200,10 +194,9 @@ export async function seedMediaRecord(
     fileSize?: number;
     error?: string;
     downloadedAt?: number;
-  },
-  robot?: ConvexHttpClient
+  }
 ): Promise<string> {
-  const client = robot ?? getRobotClient();
+  const client = robot;
   return (await client.mutation(api.testHelpers.seedMediaRecord, {
     telegramFileId:
       opts?.telegramFileId ?? `test-file-${Date.now()}-${Math.random()}`,
@@ -224,10 +217,11 @@ export async function seedMediaRecord(
 /** Seed a message with optional reply/forward/reaction fields. */
 export async function seedMessage(
   userId: string,
-  clientId: string,
+  clientId: Id<"clients">,
   chatId: string,
   messageId: string,
   text: string | undefined,
+  robot: ConvexHttpClient,
   opts?: {
     externalId?: string;
     senderId?: string;
@@ -242,10 +236,9 @@ export async function seedMessage(
       count: number;
       recent: Array<{ userId: string }>;
     }>;
-  },
-  robot?: ConvexHttpClient
+  }
 ): Promise<void> {
-  const client = robot ?? getRobotClient();
+  const client = robot;
   await client.mutation(api.testHelpers.seedMessage, {
     messageId,
     externalId: opts?.externalId ?? `ext-${messageId}`,
@@ -267,9 +260,9 @@ export async function seedMessage(
 /** Delete all data for a user. Use for cleanup or empty-state tests. */
 export async function cleanupUser(
   userId: string,
-  robot?: ConvexHttpClient
+  robot: ConvexHttpClient
 ): Promise<void> {
-  const client = robot ?? getRobotClient();
+  const client = robot;
   await client.mutation(api.testHelpers.deleteAllForUser, { userId });
 }
 
@@ -348,10 +341,10 @@ export async function pollUntil(
  * QrAuth token generation can exceed the timeout.
  */
 export async function waitForPendingScanners(
-  timeoutMs = 30_000,
-  robot?: ConvexHttpClient
+  robot: ConvexHttpClient,
+  timeoutMs = 30_000
 ): Promise<void> {
-  const client = robot ?? getRobotClient();
+  const client = robot;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

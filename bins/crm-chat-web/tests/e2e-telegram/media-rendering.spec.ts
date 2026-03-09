@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { getSessionEnv } from "../env";
+import { env } from "../env";
 import { expect, test } from "../fixtures";
 import {
   api,
@@ -8,6 +8,7 @@ import {
   getRobotClient,
   getSessionPath,
   pollUntil,
+  type Id,
   type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
@@ -20,16 +21,14 @@ const DOWNLOADS_URL_PATTERN = /\/#\/downloads/;
 // Run tests sequentially — they depend on subscriber sync completing first
 test.describe.configure({ mode: "serial" });
 
-const session = getSessionEnv();
-
-let registeredClientId: string | null = null;
+let registeredClientId: Id<"clients"> | null = null;
 let copiedSessionPath: string | null = null;
 let workerCfg: WorkerConfig;
 
 test.describe("Media Rendering — Real Telegram Data", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!session) {
+    if (!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1)) {
       return;
     }
 
@@ -43,7 +42,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     const convexUserId = await getConvexUserId(page);
 
     // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
-    const telegramId = `telegram:${session.userId}`;
+    const telegramId = `telegram:${env.TG_USER_ID_1}`;
     copiedSessionPath = getSessionPath(
       telegramId,
       convexUserId,
@@ -51,7 +50,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
-      copyFileSync(session.sessionFile, copiedSessionPath);
+      copyFileSync(env.TG_SESSION_FILE_1!, copiedSessionPath);
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
@@ -63,7 +62,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
         telegramId,
         kind: "Telegram",
       }
-    )) as string;
+    )) as Id<"clients">;
 
     await page.close();
   });

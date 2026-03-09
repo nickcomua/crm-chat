@@ -4,6 +4,7 @@ import {
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -66,7 +67,7 @@ test.describe("Client Deletion", () => {
     const clientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       { userId, telegramId, kind: "Telegram" }
-    )) as string;
+    )) as Id<"clients">;
 
     // 2. User deletes the client
     await robot.mutation(api.testHelpers.deleteClient, { clientId });
@@ -82,7 +83,7 @@ test.describe("Client Deletion", () => {
     const recreatedId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       { userId, telegramId, kind: "Telegram" }
-    )) as string;
+    )) as Id<"clients">;
 
     // 5. The client should NOT exist — it was deleted by the user.
     //    Currently fails: workerRegisterConnected has no deletion awareness.

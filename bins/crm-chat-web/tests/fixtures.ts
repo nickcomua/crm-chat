@@ -1,11 +1,24 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import { $ } from "zx";
+import { env } from "./env.ts";
+
+// Use /bin/sh instead of bash to avoid sourcing ~/.bashrc, which can fail
+// in nix environments (e.g. `fnm: command not found`) and mangle PATH.
+$.shell = "/bin/sh";
+$.prefix = "";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(TESTS_DIR, "..");
@@ -35,69 +48,43 @@ function ensureDockerHost(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Load .env from repo root (only sets vars not already in process.env)
-// ---------------------------------------------------------------------------
-function loadEnvFile(): void {
-  const envFile = path.join(ROOT, ".env");
-  if (!existsSync(envFile)) {
-    return;
-  }
-  const contents = readFileSync(envFile, "utf-8");
-  for (const line of contents.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) {
-      continue;
-    }
-    const key = trimmed.slice(0, eqIndex);
-    const value = trimmed.slice(eqIndex + 1).replace(/^["']|["']$/g, "");
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Run `bunx convex <args>` against a test backend
-// ---------------------------------------------------------------------------
-function convexCmd(args: string[], convexUrl: string, adminKey: string): void {
-  // Strip CONVEX_DEPLOYMENT and any existing CONVEX_SELF_HOSTED_* from the
-  // inherited env so our explicit values always win — even if .env.local in
-  // CONVEX_DIR sets them.  The subprocess env vars we pass below take
-  // precedence over anything the Convex CLI reads from .env.local, so we no
-  // longer need the old rename-and-restore dance (which raced when multiple
-  // workers called this in parallel).
-  const {
-    CONVEX_DEPLOYMENT: _cd,
-    CONVEX_SELF_HOSTED_URL: _csu,
-    CONVEX_SELF_HOSTED_ADMIN_KEY: _csa,
-    ...cleanEnv
-  } = process.env;
-
-  const result = spawnSync("bunx", ["convex", ...args], {
-    cwd: CONVEX_DIR,
-    env: {
-      ...cleanEnv,
-      CONVEX_SELF_HOSTED_URL: convexUrl,
-      CONVEX_SELF_HOSTED_ADMIN_KEY: adminKey,
-    },
-    stdio: "pipe",
-    encoding: "utf-8",
-  });
-
-  if (result.status !== 0) {
-    throw new Error(
-      `bunx convex ${args.join(" ")} failed (exit ${result.status}):\n${result.stderr}`
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Helper: Poll Restate admin API until the worker deployment is registered
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Helper: Wait for a ChildProcess to exit
+// ---------------------------------------------------------------------------
+function onExit(proc: ChildProcess): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (proc.exitCode !== null) {
+      resolve(proc.exitCode);
+    } else {
+      proc.on("exit", (code) => resolve(code));
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Gracefully kill a process (SIGTERM → SIGKILL after timeout)
+// ---------------------------------------------------------------------------
+async function killProcess(
+  proc: ChildProcess,
+  timeoutMs = 5000
+): Promise<void> {
+  if (proc.exitCode !== null) {
+    return;
+  }
+  proc.kill(); // SIGTERM
+  await Promise.race([
+    onExit(proc),
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        proc.kill("SIGKILL");
+        resolve();
+      }, timeoutMs)
+    ),
+  ]);
+}
+
 async function waitForWorkerReady(
   worker: ChildProcess,
   adminPort: number
@@ -153,29 +140,6 @@ async function pollUntilReady(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Gracefully kill a child process (SIGTERM → SIGKILL after timeout)
-// ---------------------------------------------------------------------------
-async function killProcess(
-  proc: ChildProcess,
-  timeoutMs = 5000
-): Promise<void> {
-  if (proc.exitCode !== null) {
-    return;
-  }
-  proc.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve();
-    }, timeoutMs);
-    proc.on("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Helper: Tear down all resources created during setup
 // ---------------------------------------------------------------------------
 async function teardownResources(
@@ -191,7 +155,7 @@ async function teardownResources(
   console.log(`[${wid}] Tearing down...`);
 
   if (resources.vitePreview) {
-    resources.vitePreview.kill("SIGTERM");
+    resources.vitePreview.kill();
   }
 
   if (resources.worker) {
@@ -241,21 +205,22 @@ interface WorkerFixtures {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   // Override baseURL so page.goto("/") uses the fixture's Vite preview URL
   baseURL: async ({ workerBackend }, use) => {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(workerBackend.baseURL);
   },
   workerBackend: [
     // biome-ignore lint/correctness/noEmptyPattern: Playwright fixture API requires destructured arg
+    // eslint-disable-next-line no-empty-pattern
     async ({}, use) => {
-      loadEnvFile();
       ensureDockerHost();
 
       const wid = `worker-${process.pid}`;
 
       // ── 0. Allocate ports ─────────────────────────────────────────
       const ports: number[] = JSON.parse(
-        spawnSync("node", [path.join(TESTS_DIR, "find-ports.mjs"), "6"], {
-          encoding: "utf-8",
-        }).stdout.trim()
+        (
+          await $({ quiet: true })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 6`
+        ).stdout.trim()
       );
       const [
         convexPort,
@@ -269,8 +234,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         `[${wid}] Ports — convex:${convexPort} site:${sitePort} restate-ingress:${restateIngressPort} restate-admin:${restateAdminPort} worker:${workerServicePort} vite:${vitePort}`
       );
 
-      // Track resources so the finally block can clean up after a
-      // partial setup failure (e.g. container started but deploy throws).
       let container: StartedTestContainer | undefined;
       let restateContainer: StartedTestContainer | undefined;
       let worker: ChildProcess | undefined;
@@ -375,26 +338,29 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const jwksDataUri = `data:application/json;base64,${jwksB64}`;
         console.log(`[${wid}] Robot keypair generated`);
 
-        // ── 4. Deploy Convex functions ────────────────────────────────
+        // ── 4. Set Convex env vars and deploy ─────────────────────────
+        // Write a temp env file so `bunx convex` uses our test backend
+        // instead of .env.local (which has CONVEX_DEPLOYMENT for dev).
+        const convexEnvFile = path.join(
+          os.tmpdir(),
+          `crm-e2e-convex-env-${wid}-${Date.now()}`
+        );
+        writeFileSync(
+          convexEnvFile,
+          `CONVEX_SELF_HOSTED_URL=${convexUrl}\nCONVEX_SELF_HOSTED_ADMIN_KEY=${adminKey}\n`
+        );
+        const convexEnv = {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+        };
+        const convex$ = $({ cwd: CONVEX_DIR, env: convexEnv });
+
         console.log(`[${wid}] Setting Convex env vars...`);
-        convexCmd(
-          [
-            "env",
-            "set",
-            "CLERK_JWT_ISSUER_DOMAIN",
-            "https://noted-rabbit-14.clerk.accounts.dev",
-          ],
-          convexUrl,
-          adminKey
-        );
-        convexCmd(
-          ["env", "set", "ROBOT_JWKS", jwksDataUri],
-          convexUrl,
-          adminKey
-        );
+        await convex$`bunx convex env set --env-file ${convexEnvFile} CLERK_JWT_ISSUER_DOMAIN https://noted-rabbit-14.clerk.accounts.dev`;
+        await convex$`bunx convex env set --env-file ${convexEnvFile} ROBOT_JWKS ${jwksDataUri}`;
 
         console.log(`[${wid}] Deploying Convex functions...`);
-        convexCmd(["deploy"], convexUrl, adminKey);
+        await convex$`bunx convex deploy --env-file ${convexEnvFile}`;
         console.log(`[${wid}] Deploy complete`);
 
         // ── 5. Create session directory ───────────────────────────────
@@ -420,13 +386,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const workerLogFd = openSync(workerLogPath, "w");
         worker = spawn(workerBin, [], {
           env: {
-            PATH: process.env.PATH,
+            PATH: process.env.PATH ?? "",
             CONVEX_URL: convexUrl,
             ROBOT_JWT_PRIVATE_KEY: privateKeyPem,
             ROBOT_ID: "e2e-robot",
             ROBOT_KID: "e2e-robot-key",
-            TG_ID: process.env.TG_ID,
-            TG_HASH: process.env.TG_HASH,
+            TG_ID: env.TG_ID,
+            TG_HASH: env.TG_HASH,
             TG_SESSION_DIR: sessionDir,
             RESTATE_SERVICE_PORT: String(workerServicePort),
             RESTATE_ADMIN_URL: `http://localhost:${restateAdminPort}`,
@@ -445,36 +411,37 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         // don't overwrite each other's VITE_CONVEX_URL baked into the bundle.
         outDir = path.join(os.tmpdir(), `crm-e2e-dist-${wid}-${Date.now()}`);
         console.log(`[${wid}] Building frontend to ${outDir}...`);
-        const buildResult = spawnSync(
-          "bunx",
-          ["vite", "build", "--outDir", outDir],
-          {
-            cwd: WEB_DIR,
-            env: {
-              ...process.env,
-              VITE_CONVEX_URL: convexUrl,
-              // Map TEST_CLERK_* to VITE_TEST_* so AutoSignIn activates
-              VITE_TEST_USERNAME: process.env.TEST_CLERK_USERNAME ?? "",
-              VITE_TEST_PASSWORD: process.env.TEST_CLERK_PASSWORD ?? "",
-            },
-            stdio: "pipe",
-            encoding: "utf-8",
-          }
-        );
-        if (buildResult.status !== 0) {
-          throw new Error(
-            `vite build failed:\n${buildResult.stdout}\n${buildResult.stderr}`
-          );
-        }
+        await $({
+          cwd: WEB_DIR,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: process.env.HOME ?? "",
+            VITE_CONVEX_URL: convexUrl,
+            VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
+            VITE_TEST_USERNAME: env.TEST_CLERK_USERNAME,
+            VITE_TEST_PASSWORD: env.TEST_CLERK_PASSWORD,
+          },
+        })`bunx vite build --outDir ${outDir}`;
 
         console.log(`[${wid}] Starting Vite preview on port ${vitePort}...`);
         vitePreview = spawn(
           "bunx",
-          ["vite", "preview", "--port", String(vitePort), "--outDir", outDir],
+          [
+            "vite",
+            "preview",
+            "--port",
+            String(vitePort),
+            "--outDir",
+            outDir,
+          ],
           {
             cwd: WEB_DIR,
-            env: { ...process.env, VITE_CONVEX_URL: convexUrl },
-            stdio: "pipe",
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: process.env.HOME ?? "",
+              VITE_CONVEX_URL: convexUrl,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
           }
         );
 
@@ -483,6 +450,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         console.log(`[${wid}] Vite preview ready at ${baseURL}`);
 
         // ── Yield to tests ────────────────────────────────────────────
+        // eslint-disable-next-line react-hooks/rules-of-hooks
         await use({
           convexUrl,
           robotPrivateKey: privateKeyPem,
@@ -501,7 +469,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         });
       }
     },
-    { scope: "worker" },
+    { scope: "worker", timeout: 180_000 },
   ],
 });
 

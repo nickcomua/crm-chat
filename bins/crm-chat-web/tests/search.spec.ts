@@ -5,6 +5,7 @@ import {
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -22,7 +23,7 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
+let clientId: Id<"clients">;
 let chatId: string;
 let workerCfg: WorkerConfig;
 
@@ -70,7 +71,6 @@ test.describe("Search — Backend (Data Integrity)", () => {
       chatId,
       msg1Id,
       "Meeting with John about project alpha",
-      undefined,
       robot
     );
     await seedMessage(
@@ -79,7 +79,6 @@ test.describe("Search — Backend (Data Integrity)", () => {
       chatId,
       msg2Id,
       "Quarterly budget review scheduled",
-      undefined,
       robot
     );
     await seedMessage(
@@ -88,7 +87,6 @@ test.describe("Search — Backend (Data Integrity)", () => {
       chatId,
       msg3Id,
       "Don't forget to send the invoice",
-      undefined,
       robot
     );
 
@@ -115,7 +113,6 @@ test.describe("Search — Backend (Data Integrity)", () => {
       clientId,
       chatId,
       msgId,
-      undefined,
       undefined,
       robot
     );
@@ -167,7 +164,6 @@ test.describe("Search — Convex Full-Text", () => {
       chatId,
       `${chatId}:ft-msg-1`,
       "Discussing the quarterly revenue forecast with finance team",
-      undefined,
       robot
     );
     await seedMessage(
@@ -176,7 +172,6 @@ test.describe("Search — Convex Full-Text", () => {
       chatId,
       `${chatId}:ft-msg-2`,
       "Please review the contract draft before Thursday",
-      undefined,
       robot
     );
     await seedMessage(
@@ -185,7 +180,6 @@ test.describe("Search — Convex Full-Text", () => {
       chatId,
       `${chatId}:ft-msg-3`,
       "Reminder about the quarterly board meeting next week",
-      undefined,
       robot
     );
     await seedMessage(
@@ -194,7 +188,6 @@ test.describe("Search — Convex Full-Text", () => {
       chatId,
       `${chatId}:ft-msg-4`,
       "Updated the project timeline in the shared document",
-      undefined,
       robot
     );
 
@@ -238,7 +231,6 @@ test.describe("Search — Convex Full-Text", () => {
       chatId2,
       `${chatId2}:ft-msg-other`,
       "The quarterly report is ready",
-      undefined,
       robot
     );
 

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { getSessionEnv } from "../env";
+import { env } from "../env";
 import { expect, test } from "../fixtures";
 import {
   api,
@@ -32,9 +32,8 @@ const QR_CODE_TIMEOUT = 30_000;
 
 test.describe.configure({ mode: "serial" });
 
-const session = getSessionEnv();
-const sessionAvailable = session?.sessionFile
-  ? existsSync(session.sessionFile)
+const sessionAvailable = env.TG_SESSION_FILE_1
+  ? existsSync(env.TG_SESSION_FILE_1)
   : false;
 
 let _userId: string;
@@ -48,7 +47,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
 
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!session) {
+    if (!sessionAvailable) {
       return;
     }
 
@@ -115,7 +114,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
 
     // Drain pending ChatScanner tasks so the worker can process QrAuth
     const robot = getRobotClient(workerCfg);
-    await waitForPendingScanners(undefined, robot);
+    await waitForPendingScanners(robot);
 
     await page.goto("/#/settings");
     await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });

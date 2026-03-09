@@ -5,6 +5,7 @@ import {
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -13,7 +14,7 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
+let clientId: Id<"clients">;
 let chatId: string;
 let workerCfg: WorkerConfig;
 
@@ -58,6 +59,7 @@ test.describe("Reactions — Backend", () => {
       chatId,
       msgId,
       "Hello!",
+      robot,
       {
         reactions: [
           {
@@ -67,8 +69,7 @@ test.describe("Reactions — Backend", () => {
           },
           { emoji: "👍", count: 1, recent: [{ userId: "user-c" }] },
         ],
-      },
-      robot
+      }
     );
 
     // Query the message and verify reactions
@@ -97,10 +98,10 @@ test.describe("Reactions — Backend", () => {
       chatId,
       msgId,
       "Update me",
+      robot,
       {
         reactions: [{ emoji: "😂", count: 1, recent: [{ userId: "user-a" }] }],
-      },
-      robot
+      }
     );
 
     // Update with new count
@@ -110,6 +111,7 @@ test.describe("Reactions — Backend", () => {
       chatId,
       msgId,
       "Update me",
+      robot,
       {
         reactions: [
           {
@@ -118,8 +120,7 @@ test.describe("Reactions — Backend", () => {
             recent: [{ userId: "user-a" }, { userId: "user-b" }],
           },
         ],
-      },
-      robot
+      }
     );
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
@@ -143,7 +144,6 @@ test.describe("Reactions — Backend", () => {
       chatId,
       msgId,
       "No reactions here",
-      undefined,
       robot
     );
 
@@ -194,14 +194,14 @@ test.describe("Reactions — UI", () => {
       chatId,
       `${chatId}:ui-msg-1`,
       "Message with reactions",
+      robot,
       {
         reactions: [
           { emoji: "❤️", count: 3, recent: [{ userId: "u1" }] },
           { emoji: "😂", count: 7, recent: [{ userId: "u2" }] },
         ],
         timestamp: Date.now(),
-      },
-      robot
+      }
     );
 
     await seedMessage(
@@ -210,10 +210,10 @@ test.describe("Reactions — UI", () => {
       chatId,
       `${chatId}:ui-msg-2`,
       "No reactions",
+      robot,
       {
         timestamp: Date.now() - 1000,
-      },
-      robot
+      }
     );
 
     await context.close();

@@ -4,6 +4,7 @@ import {
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -16,8 +17,8 @@ let userId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Settings — Backend", () => {
-  let connectedClientId: string;
-  let errorClientId: string;
+  let connectedClientId: Id<"clients">;
+  let errorClientId: Id<"clients">;
 
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
@@ -57,7 +58,7 @@ test.describe("Settings — Backend", () => {
       userId,
       telegramId: `telegram:settings-error-${Date.now()}`,
       kind: "Telegram",
-    })) as string;
+    })) as Id<"clients">;
 
     // Set it to Error status via a direct patch (robot can do this)
     // Since there's no direct "setError" mutation, we verify both exist
@@ -143,8 +144,6 @@ test.describe("Settings — Backend", () => {
 });
 
 test.describe("Settings — UI", () => {
-  let testClientId: string;
-
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
     const robot = getRobotClient(workerCfg);
@@ -156,7 +155,7 @@ test.describe("Settings — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    testClientId = await seedTestClient(
+    await seedTestClient(
       userId,
       `telegram:settings-ui-${Date.now()}`,
       robot

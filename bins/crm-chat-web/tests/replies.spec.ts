@@ -5,6 +5,7 @@ import {
   getRobotClient,
   seedMessage,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -13,7 +14,7 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
+let clientId: Id<"clients">;
 let chatId: string;
 let workerCfg: WorkerConfig;
 
@@ -58,10 +59,10 @@ test.describe("Replies — Backend", () => {
       chatId,
       originalMsgId,
       "Original message",
+      robot,
       {
         timestamp: Date.now() - 5000,
-      },
-      robot
+      }
     );
 
     const replyMsgId = `${chatId}:msg-reply`;
@@ -71,12 +72,12 @@ test.describe("Replies — Backend", () => {
       chatId,
       replyMsgId,
       "This is a reply",
+      robot,
       {
         replyToMessageId: originalMsgId,
         replyToText: "Original message",
         timestamp: Date.now(),
-      },
-      robot
+      }
     );
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
@@ -103,7 +104,6 @@ test.describe("Replies — Backend", () => {
       chatId,
       msgId,
       "Not a reply",
-      undefined,
       robot
     );
 
@@ -155,10 +155,10 @@ test.describe
         chatId,
         originalId,
         "I said something important",
+        robot,
         {
           timestamp: Date.now() - 2000,
-        },
-        robot
+        }
       );
 
       await seedMessage(
@@ -167,12 +167,12 @@ test.describe
         chatId,
         `${chatId}:ui-reply`,
         "Yes, I agree!",
+        robot,
         {
           replyToMessageId: originalId,
           replyToText: "I said something important",
           timestamp: Date.now(),
-        },
-        robot
+        }
       );
 
       await context.close();
@@ -203,10 +203,10 @@ test.describe
         chatId,
         longMsgId,
         longText,
+        robot,
         {
           timestamp: Date.now() - 1000,
-        },
-        robot
+        }
       );
       await seedMessage(
         userId,
@@ -214,12 +214,12 @@ test.describe
         chatId,
         `${chatId}:ui-long-reply`,
         "Reply to long",
+        robot,
         {
           replyToMessageId: longMsgId,
           replyToText: longText,
           timestamp: Date.now(),
-        },
-        robot
+        }
       );
 
       await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);

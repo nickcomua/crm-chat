@@ -3,6 +3,7 @@ import {
   getConvexUserId,
   getRobotClient,
   seedTestClient,
+  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -18,7 +19,7 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
+let clientId: Id<"clients">;
 let workerCfg: WorkerConfig;
 
 test.describe("Navigation", () => {

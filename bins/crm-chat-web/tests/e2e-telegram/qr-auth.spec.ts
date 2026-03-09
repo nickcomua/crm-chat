@@ -110,7 +110,7 @@ test.describe("QR Code Authentication", () => {
     // Drain pending ChatScanner tasks from tg-scan so the worker can
     // pick up our QrAuth task without contention.
     const robot = getRobotClient(workerCfg);
-    await waitForPendingScanners(undefined, robot);
+    await waitForPendingScanners(robot);
 
     // Click Add Client button
     await page.click('button:has-text("Add Client")');

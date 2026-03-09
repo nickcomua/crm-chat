@@ -12,7 +12,6 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 test.describe.configure({ mode: "serial" });
 
 let userId: string;
-let clientId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Notifications — Backend", () => {
@@ -27,7 +26,7 @@ test.describe("Notifications — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(
+    await seedTestClient(
       userId,
       `telegram:notif-backend-${Date.now()}`,
       robot
@@ -89,7 +88,7 @@ test.describe("Notifications — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    clientId = await seedTestClient(
+    await seedTestClient(
       userId,
       `telegram:notif-ui-${Date.now()}`,
       robot
