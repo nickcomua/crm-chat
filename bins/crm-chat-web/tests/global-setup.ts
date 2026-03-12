@@ -33,7 +33,7 @@ function loadEnvFile(): void {
   }
 }
 
-export default async function globalSetup(): Promise<void> {
+export default function globalSetup(): void {
   loadEnvFile();
 
   // Validate required env vars
@@ -43,6 +43,8 @@ export default async function globalSetup(): Promise<void> {
     "VITE_CLERK_PUBLISHABLE_KEY",
     "TG_ID",
     "TG_HASH",
+    "TG_SESSION_FILE_1",
+    "TG_USER_ID_1",
   ]) {
     if (!process.env[v]) {
       throw new Error(`[e2e] Required env var ${v} is not set`);

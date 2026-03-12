@@ -26,11 +26,7 @@ test.describe("Notifications — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    await seedTestClient(
-      userId,
-      `telegram:notif-backend-${Date.now()}`,
-      robot
-    );
+    await seedTestClient(userId, `telegram:notif-backend-${Date.now()}`, robot);
 
     await context.close();
   });
@@ -88,11 +84,7 @@ test.describe("Notifications — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    await seedTestClient(
-      userId,
-      `telegram:notif-ui-${Date.now()}`,
-      robot
-    );
+    await seedTestClient(userId, `telegram:notif-ui-${Date.now()}`, robot);
 
     // Seed notifications at all severities
     await seedNotification(

@@ -61,8 +61,8 @@ export function getRobotClient(config: WorkerConfig): ConvexHttpClient {
   return client;
 }
 
-// Re-export typed api and Id for use in tests (avoids path alias issues)
-export { api, type Id };
+export { api } from "crm-chat-convex-backend/convex/_generated/api";
+export type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 
 const CLERK_ISSUER_DOMAIN = "https://noted-rabbit-14.clerk.accounts.dev";
 

@@ -7,8 +7,8 @@ import {
   getConvexUserId,
   getRobotClient,
   getSessionPath,
-  pollUntil,
   type Id,
+  pollUntil,
   type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
@@ -21,16 +21,13 @@ const DOWNLOADS_URL_PATTERN = /\/#\/downloads/;
 // Run tests sequentially — they depend on subscriber sync completing first
 test.describe.configure({ mode: "serial" });
 
-let registeredClientId: Id<"clients"> | null = null;
-let copiedSessionPath: string | null = null;
+let registeredClientId: Id<"clients">;
+let copiedSessionPath: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Media Rendering — Real Telegram Data", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1)) {
-      return;
-    }
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
@@ -50,7 +47,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
-      copyFileSync(env.TG_SESSION_FILE_1!, copiedSessionPath);
+      copyFileSync(env.TG_SESSION_FILE_1, copiedSessionPath);
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
@@ -149,11 +146,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     page,
   }) => {
     const chatWithPhoto = await findChatWith(page, 'img[alt="Shared media"]');
-    if (!chatWithPhoto) {
-      // biome-ignore lint/suspicious/noSkippedTests: photos may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithPhoto, "No photo media found in test data").toBeTruthy();
 
     // Validate every visible photo has actually loaded (not broken/black)
     const photos = page.locator('img[alt="Shared media"]');
@@ -180,11 +173,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
   test("videos are playable (metadata loads)", async ({ page }) => {
     const chatWithVideo = await findChatWith(page, "video:not([autoplay])");
-    if (!chatWithVideo) {
-      // biome-ignore lint/suspicious/noSkippedTests: videos may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithVideo, "No video media found in test data").toBeTruthy();
 
     // Find videos (non-autoplay = Video/VideoNote, not Animation)
     const videos = page.locator("video:not([autoplay])");
@@ -227,11 +216,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     page,
   }) => {
     const chatWithAudio = await findChatWith(page, "audio[controls]");
-    if (!chatWithAudio) {
-      // biome-ignore lint/suspicious/noSkippedTests: audio may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithAudio, "No audio media found in test data").toBeTruthy();
 
     const audios = page.locator("audio[controls]");
     const first = audios.first();
@@ -271,11 +256,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
       page,
       'button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))'
     );
-    if (!chatWithDoc) {
-      // biome-ignore lint/suspicious/noSkippedTests: documents may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithDoc, "No document media found in test data").toBeTruthy();
 
     // Match filenames like "report.pdf", "image.png", etc.
     const docName = page.locator(
@@ -291,11 +272,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
   test("stickers load as images with content", async ({ page }) => {
     const chatWithSticker = await findChatWith(page, 'img[alt="Sticker"]');
-    if (!chatWithSticker) {
-      // biome-ignore lint/suspicious/noSkippedTests: stickers may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithSticker, "No sticker media found in test data").toBeTruthy();
 
     const stickers = page.locator('img[alt="Sticker"]');
     const first = stickers.first();
@@ -317,11 +294,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
   test("animations autoplay as looping video", async ({ page }) => {
     const chatWithAnim = await findChatWith(page, "video[autoplay][loop]");
-    if (!chatWithAnim) {
-      // biome-ignore lint/suspicious/noSkippedTests: animations may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithAnim, "No animation media found in test data").toBeTruthy();
 
     const anim = page.locator("video[autoplay][loop]").first();
     await expect(anim).toBeVisible({ timeout: 10_000 });
@@ -362,11 +335,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
   test("photo lightbox opens fullscreen on click", async ({ page }) => {
     const chatWithPhoto = await findChatWith(page, 'img[alt="Shared media"]');
-    if (!chatWithPhoto) {
-      // biome-ignore lint/suspicious/noSkippedTests: photos may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(chatWithPhoto, "No photo media found in test data").toBeTruthy();
 
     const img = page.locator('img[alt="Shared media"]').first();
     await expect(img).toBeVisible({ timeout: 10_000 });

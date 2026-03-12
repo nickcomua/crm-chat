@@ -2,8 +2,8 @@ import { expect, test } from "./fixtures";
 import {
   getConvexUserId,
   getRobotClient,
-  seedTestClient,
   type Id,
+  seedTestClient,
   type WorkerConfig,
 } from "./helpers";
 
@@ -15,6 +15,14 @@ import {
  */
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
+const SETTINGS_URL_PATTERN = /\/#\/settings/;
+const DOWNLOADS_URL_PATTERN = /\/#\/downloads/;
+const CHAT_DETAIL_URL_PATTERN = /\/#\/chats\//;
+const CLIENT_URL_PATTERN = /\/#\/client\//;
+const TEXT_PRIMARY_RE = /text-primary/;
+const TEXT_MUTED_RE = /text-muted-foreground/;
+const DARK_CLASS_RE = /dark/;
+const CLERK_RE = /clerk/;
 
 test.describe.configure({ mode: "serial" });
 
@@ -75,7 +83,7 @@ test.describe("Navigation", () => {
 
   test("Chats nav link navigates to /chats", async ({ page }) => {
     await page.goto("/#/settings");
-    await page.waitForURL(/\/#\/settings/, { timeout: 10_000 });
+    await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
 
     await page.locator("nav a:has-text('Chats')").click();
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
@@ -86,7 +94,7 @@ test.describe("Navigation", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     await page.locator("nav a:has-text('Downloads')").click();
-    await page.waitForURL(/\/#\/downloads/, { timeout: 10_000 });
+    await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
   });
 
   test("Settings nav link navigates to /settings", async ({ page }) => {
@@ -94,7 +102,7 @@ test.describe("Navigation", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     await page.locator("nav a:has-text('Settings')").click();
-    await page.waitForURL(/\/#\/settings/, { timeout: 10_000 });
+    await page.waitForURL(SETTINGS_URL_PATTERN, { timeout: 10_000 });
   });
 
   test("active nav link is highlighted", async ({ page }) => {
@@ -103,18 +111,18 @@ test.describe("Navigation", () => {
 
     // Verified: _auth.tsx:106 — active link gets "bg-primary/10 text-primary"
     const chatsLink = page.locator("nav a:has-text('Chats')");
-    await expect(chatsLink).toHaveClass(/text-primary/, { timeout: 10_000 });
+    await expect(chatsLink).toHaveClass(TEXT_PRIMARY_RE, { timeout: 10_000 });
 
     // Downloads link should NOT have primary color
     const downloadsLink = page.locator("nav a:has-text('Downloads')");
-    await expect(downloadsLink).toHaveClass(/text-muted-foreground/);
+    await expect(downloadsLink).toHaveClass(TEXT_MUTED_RE);
   });
 
   test("deep link to chat works", async ({ page }) => {
     const chatId = `${clientId}:chat-pinned-1`;
 
     await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
-    await page.waitForURL(/\/#\/chats\//, { timeout: 10_000 });
+    await page.waitForURL(CHAT_DETAIL_URL_PATTERN, { timeout: 10_000 });
 
     // The chat view should render (messages area or loading state)
     await expect(
@@ -124,7 +132,7 @@ test.describe("Navigation", () => {
 
   test("deep link to client settings works", async ({ page }) => {
     await page.goto(`/#/client/${clientId}`);
-    await page.waitForURL(/\/#\/client\//, { timeout: 10_000 });
+    await page.waitForURL(CLIENT_URL_PATTERN, { timeout: 10_000 });
 
     // Should show client settings page with "Chat Scanning" section
     await expect(
@@ -151,19 +159,23 @@ test.describe("Navigation", () => {
     // Toggle theme and verify with auto-retrying matcher
     await themeButton.click();
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+      await expect(page.locator("html")).not.toHaveClass(DARK_CLASS_RE, {
         timeout: 5000,
       });
     } else {
-      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).toHaveClass(DARK_CLASS_RE, {
+        timeout: 5000,
+      });
     }
 
     // Toggle back
     await themeButton.click();
     if (isDarkBefore) {
-      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).toHaveClass(DARK_CLASS_RE, {
+        timeout: 5000,
+      });
     } else {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+      await expect(page.locator("html")).not.toHaveClass(DARK_CLASS_RE, {
         timeout: 5000,
       });
     }
@@ -183,11 +195,13 @@ test.describe("Navigation", () => {
     // Toggle to opposite and wait for class change
     await themeButton.click();
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+      await expect(page.locator("html")).not.toHaveClass(DARK_CLASS_RE, {
         timeout: 5000,
       });
     } else {
-      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).toHaveClass(DARK_CLASS_RE, {
+        timeout: 5000,
+      });
     }
 
     // Reload the page
@@ -196,11 +210,13 @@ test.describe("Navigation", () => {
 
     // Theme should persist after reload
     if (isDarkBefore) {
-      await expect(page.locator("html")).not.toHaveClass(/dark/, {
+      await expect(page.locator("html")).not.toHaveClass(DARK_CLASS_RE, {
         timeout: 5000,
       });
     } else {
-      await expect(page.locator("html")).toHaveClass(/dark/, { timeout: 5000 });
+      await expect(page.locator("html")).toHaveClass(DARK_CLASS_RE, {
+        timeout: 5000,
+      });
     }
 
     // Restore original theme
@@ -216,7 +232,7 @@ test.describe("Navigation — Auth Guard", () => {
     // (third-party cookies from clerk.accounts.dev), making the "fresh" context
     // still appear authenticated.
     const context = await browser.newContext();
-    await context.route(/clerk/, (route) => route.abort());
+    await context.route(CLERK_RE, (route) => route.abort());
 
     const page = await context.newPage();
     await page.goto("/#/chats");

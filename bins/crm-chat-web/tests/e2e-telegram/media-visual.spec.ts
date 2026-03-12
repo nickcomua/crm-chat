@@ -7,8 +7,8 @@ import {
   getConvexUserId,
   getRobotClient,
   getSessionPath,
-  pollUntil,
   type Id,
+  pollUntil,
   type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
@@ -24,7 +24,6 @@ import {
  * - Skipped media shows download button
  * - Document download button works
  *
- * Requires TG_SESSION_FILE_1 + TG_USER_ID_1 env vars.
  */
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -33,19 +32,13 @@ const DURATION_RE = /\d+:\d{2}/;
 
 test.describe.configure({ mode: "serial" });
 
-let registeredClientId: Id<"clients"> | null = null;
-let copiedSessionPath: string | null = null;
+let registeredClientId: Id<"clients">;
+let copiedSessionPath: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Media Visual — Real Telegram Data", () => {
-  // biome-ignore lint/suspicious/noSkippedTests: conditional skip for real TG session
-  test.skip(!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1), "Skipping: TG_SESSION_FILE_1 not set");
-
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1)) {
-      return;
-    }
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
@@ -65,7 +58,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
     );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
     if (!existsSync(copiedSessionPath)) {
-      copyFileSync(env.TG_SESSION_FILE_1!, copiedSessionPath);
+      copyFileSync(env.TG_SESSION_FILE_1, copiedSessionPath);
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
@@ -139,11 +132,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
   test("VideoNote has circular (rounded-full) styling", async ({ page }) => {
     // VideoNote videos have rounded-full class
     const found = await findChatWith(page, "video.rounded-full");
-    if (!found) {
-      // biome-ignore lint/suspicious/noSkippedTests: VideoNotes may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(found, "Media type not found in test data").toBeTruthy();
 
     const videoNote = page.locator("video.rounded-full").first();
     await expect(videoNote).toBeVisible({ timeout: 10_000 });
@@ -155,11 +144,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
 
   test("sticker images are constrained to 180px", async ({ page }) => {
     const found = await findChatWith(page, 'img[alt="Sticker"]');
-    if (!found) {
-      // biome-ignore lint/suspicious/noSkippedTests: stickers may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(found, "Media type not found in test data").toBeTruthy();
 
     const stickers = page.locator('img[alt="Sticker"]');
     const count = await stickers.count();
@@ -176,11 +161,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
 
   test("animations autoplay and loop silently", async ({ page }) => {
     const found = await findChatWith(page, "video[autoplay][loop][muted]");
-    if (!found) {
-      // biome-ignore lint/suspicious/noSkippedTests: animations may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(found, "Media type not found in test data").toBeTruthy();
 
     const anim = page.locator("video[autoplay][loop][muted]").first();
     await expect(anim).toBeVisible({ timeout: 10_000 });
@@ -197,11 +178,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
       page,
       'button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))'
     );
-    if (!found) {
-      // biome-ignore lint/suspicious/noSkippedTests: documents may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(found, "Media type not found in test data").toBeTruthy();
 
     const docButton = page
       .locator('button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))')
@@ -215,11 +192,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
 
   test("video duration overlay is displayed", async ({ page }) => {
     const found = await findChatWith(page, "video:not([autoplay])");
-    if (!found) {
-      // biome-ignore lint/suspicious/noSkippedTests: videos may not exist in test data
-      test.skip();
-      return;
-    }
+    expect(found, "Media type not found in test data").toBeTruthy();
 
     // Duration badge is a span with time format (e.g., "0:30")
     const durationBadge = page.locator(

@@ -209,9 +209,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(workerBackend.baseURL);
   },
   workerBackend: [
-    // biome-ignore lint/correctness/noEmptyPattern: Playwright fixture API requires destructured arg
-    // eslint-disable-next-line no-empty-pattern
-    async ({}, use) => {
+    async (_deps, use) => {
       ensureDockerHost();
 
       const wid = `worker-${process.pid}`;
@@ -219,7 +217,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // ── 0. Allocate ports ─────────────────────────────────────────
       const ports: number[] = JSON.parse(
         (
-          await $({ quiet: true })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 6`
+          await $({
+            quiet: true,
+          })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 6`
         ).stdout.trim()
       );
       const [
@@ -426,14 +426,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         console.log(`[${wid}] Starting Vite preview on port ${vitePort}...`);
         vitePreview = spawn(
           "bunx",
-          [
-            "vite",
-            "preview",
-            "--port",
-            String(vitePort),
-            "--outDir",
-            outDir,
-          ],
+          ["vite", "preview", "--port", String(vitePort), "--outDir", outDir],
           {
             cwd: WEB_DIR,
             env: {

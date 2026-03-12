@@ -3,13 +3,14 @@ import {
   api,
   getConvexUserId,
   getRobotClient,
-  seedTestClient,
   type Id,
+  seedTestClient,
   type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const SETTINGS_URL_PATTERN = /\/#\/settings/;
+const CLIENT_URL_PATTERN = /\/#\/client\//;
 
 test.describe.configure({ mode: "serial" });
 
@@ -155,11 +156,7 @@ test.describe("Settings — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    await seedTestClient(
-      userId,
-      `telegram:settings-ui-${Date.now()}`,
-      robot
-    );
+    await seedTestClient(userId, `telegram:settings-ui-${Date.now()}`, robot);
 
     await context.close();
   });
@@ -276,6 +273,6 @@ test.describe("Settings — UI", () => {
     await settingsBtn.click();
 
     // Should navigate to /client/<id>
-    await page.waitForURL(/\/#\/client\//, { timeout: 10_000 });
+    await page.waitForURL(CLIENT_URL_PATTERN, { timeout: 10_000 });
   });
 });

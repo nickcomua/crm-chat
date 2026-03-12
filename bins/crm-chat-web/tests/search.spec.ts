@@ -3,9 +3,9 @@ import {
   api,
   getConvexUserId,
   getRobotClient,
+  type Id,
   seedMessage,
   seedTestClient,
-  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -15,7 +15,7 @@ import {
  * Uses Convex's built-in searchIndex on the messages table.
  * 1. Backend: Verify seeded messages are stored correctly (data integrity)
  * 2. Backend: Verify Convex full-text search returns correct results
- * 3. UI: Search dialog tests (fixme — waiting for Convex search to be wired into UI)
+ * 3. UI: Search dialog tests (waiting for Convex search to be wired into UI)
  */
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -108,14 +108,7 @@ test.describe("Search — Backend (Data Integrity)", () => {
   test("messages with empty text are stored as undefined", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:search-empty-text`;
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      msgId,
-      undefined,
-      robot
-    );
+    await seedMessage(userId, clientId, chatId, msgId, undefined, robot);
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
@@ -298,7 +291,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: dialog should open and show title
-  test.fixme("search button opens search dialog", async ({ page }) => {
+  test("search button opens search dialog", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
@@ -314,9 +307,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: input should auto-focus and accept queries
-  test.fixme("search input is auto-focused and accepts text", async ({
-    page,
-  }) => {
+  test("search input is auto-focused and accepts text", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
@@ -336,9 +327,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: scope buttons should render with default selection
-  test.fixme("scope buttons render with 'All messages' default", async ({
-    page,
-  }) => {
+  test("scope buttons render with 'All messages' default", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
@@ -356,7 +345,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
   });
 
   // Waiting for Convex search: Escape should dismiss the search dialog
-  test.fixme("Escape closes search dialog", async ({ page }) => {
+  test("Escape closes search dialog", async ({ page }) => {
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 

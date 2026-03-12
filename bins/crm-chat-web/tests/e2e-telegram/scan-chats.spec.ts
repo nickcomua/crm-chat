@@ -7,8 +7,8 @@ import {
   getConvexUserId,
   getRobotClient,
   getSessionPath,
-  pollUntil,
   type Id,
+  pollUntil,
   type WorkerConfig,
   writeOwnerFile,
 } from "../helpers";
@@ -19,20 +19,14 @@ const CHATS_URL_PATTERN = /\/#\/chats/;
 // Run tests sequentially — they share a single Clerk test account and TG client
 test.describe.configure({ mode: "serial" });
 
-let registeredClientId: Id<"clients"> | null = null;
-let copiedSessionPath: string | null = null;
-let convexUserId: string | null = null;
+let registeredClientId: Id<"clients">;
+let copiedSessionPath: string;
+let convexUserId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Client Settings & Chat Scanning", () => {
-  // biome-ignore lint/suspicious/noSkippedTests: requires real Telegram session
-  test.skip(!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1), "Skipping: no TG session configured");
-
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!(env.TG_SESSION_FILE_1 && env.TG_USER_ID_1)) {
-      return;
-    }
 
     // Load storageState explicitly — browser.newPage() doesn't inherit project-level storageState
     const context = await browser.newContext({
@@ -52,7 +46,7 @@ test.describe("Client Settings & Chat Scanning", () => {
       workerCfg.sessionDir
     );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
-    copyFileSync(env.TG_SESSION_FILE_1!, copiedSessionPath);
+    copyFileSync(env.TG_SESSION_FILE_1, copiedSessionPath);
     writeOwnerFile(copiedSessionPath, convexUserId);
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
@@ -228,8 +222,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // if the final updateSyncProgress mutation races with task completion).
     const robot = getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
-      // biome-ignore lint/style/noNonNullAssertion: set in beforeAll
-      userId: convexUserId!,
+      userId: convexUserId,
     })) as Array<{
       chatId: string;
       clientId: string;
@@ -267,8 +260,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // workerOps.upsertMessage must accept and store forwardedFrom.
     const robot = getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
-      // biome-ignore lint/style/noNonNullAssertion: set in beforeAll
-      userId: convexUserId!,
+      userId: convexUserId,
     })) as Array<{
       chatId: string;
       clientId: string;
@@ -331,8 +323,7 @@ test.describe("Client Settings & Chat Scanning", () => {
       page,
       async () => {
         const chats = (await robot.query(api.testHelpers.queryChats, {
-          // biome-ignore lint/style/noNonNullAssertion: set in beforeAll
-          userId: convexUserId!,
+          userId: convexUserId,
         })) as Array<{
           chatId: string;
           clientId: string;

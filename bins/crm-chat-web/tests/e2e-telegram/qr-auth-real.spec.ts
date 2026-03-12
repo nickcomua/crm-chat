@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { env } from "../env";
 import { expect, test } from "../fixtures";
 import {
   api,
@@ -20,7 +18,6 @@ import {
  * 3. QR code contains a valid tg://login URL
  * 4. Backend task transitions through correct steps
  *
- * Requires TG_SESSION_FILE_1 + TG_USER_ID_1 env vars.
  * These tests do NOT complete the auth (that would require scanning the QR
  * code with a real phone), but verify the full pipeline up to the scan step.
  */
@@ -32,24 +29,12 @@ const QR_CODE_TIMEOUT = 30_000;
 
 test.describe.configure({ mode: "serial" });
 
-const sessionAvailable = env.TG_SESSION_FILE_1
-  ? existsSync(env.TG_SESSION_FILE_1)
-  : false;
-
 let _userId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("QR Auth — Real Telegram (Backend)", () => {
-  test.skip(
-    !sessionAvailable,
-    "Skipping: TG_SESSION_FILE_1 not set or file missing"
-  );
-
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    if (!sessionAvailable) {
-      return;
-    }
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",

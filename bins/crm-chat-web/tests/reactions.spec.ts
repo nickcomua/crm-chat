@@ -3,9 +3,9 @@ import {
   api,
   getConvexUserId,
   getRobotClient,
+  type Id,
   seedMessage,
   seedTestClient,
-  type Id,
   type WorkerConfig,
 } from "./helpers";
 
@@ -53,24 +53,16 @@ test.describe("Reactions — Backend", () => {
   test("stores reactions on a message", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-1`;
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      msgId,
-      "Hello!",
-      robot,
-      {
-        reactions: [
-          {
-            emoji: "❤️",
-            count: 3,
-            recent: [{ userId: "user-a" }, { userId: "user-b" }],
-          },
-          { emoji: "👍", count: 1, recent: [{ userId: "user-c" }] },
-        ],
-      }
-    );
+    await seedMessage(userId, clientId, chatId, msgId, "Hello!", robot, {
+      reactions: [
+        {
+          emoji: "❤️",
+          count: 3,
+          recent: [{ userId: "user-a" }, { userId: "user-b" }],
+        },
+        { emoji: "👍", count: 1, recent: [{ userId: "user-c" }] },
+      ],
+    });
 
     // Query the message and verify reactions
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
@@ -92,36 +84,20 @@ test.describe("Reactions — Backend", () => {
   test("updates reaction count on existing message", async () => {
     const robot = getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-2`;
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      msgId,
-      "Update me",
-      robot,
-      {
-        reactions: [{ emoji: "😂", count: 1, recent: [{ userId: "user-a" }] }],
-      }
-    );
+    await seedMessage(userId, clientId, chatId, msgId, "Update me", robot, {
+      reactions: [{ emoji: "😂", count: 1, recent: [{ userId: "user-a" }] }],
+    });
 
     // Update with new count
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      msgId,
-      "Update me",
-      robot,
-      {
-        reactions: [
-          {
-            emoji: "😂",
-            count: 5,
-            recent: [{ userId: "user-a" }, { userId: "user-b" }],
-          },
-        ],
-      }
-    );
+    await seedMessage(userId, clientId, chatId, msgId, "Update me", robot, {
+      reactions: [
+        {
+          emoji: "😂",
+          count: 5,
+          recent: [{ userId: "user-a" }, { userId: "user-b" }],
+        },
+      ],
+    });
 
     const msgs = (await robot.query(api.testHelpers.queryMessages, {
       chatId,
