@@ -566,7 +566,7 @@ dependencies = [
 [[package]]
 name = "convex-typegen"
 version = "0.2.0"
-source = "git+https://github.com/nickcomua/convex-typegen.git#1270de794bba056e075f9c5dd679d7bc9d4ba9ba"
+source = "git+https://github.com/nickcomua/convex-typegen.git#7eb50248fdc095f9f41805bf3f601613423fab43"
 dependencies = [
  "convex",
  "flate2",

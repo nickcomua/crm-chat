@@ -19,13 +19,6 @@ export const textByKeywords = query({
 		const caller = await requireHuman(ctx);
 
 		const keywords = args.keywords.trim();
-		// if (keywords.length === 0) {
-		//     return {
-		//         page: [],
-		//         isDone: true,
-		//         continueCursor: null,
-		//     };
-		// }
 
 		const scopedQuery = ((s) => {
 			switch (s.type) {
