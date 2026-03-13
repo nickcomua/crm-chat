@@ -28,3 +28,6 @@ playwright-report/
 
 # Trace logs
 bins/telegram-subscriber/logs/
+
+# Annoying Rust(?) logs
+./logs/

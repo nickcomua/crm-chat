@@ -20,6 +20,7 @@ import type * as notifications from "../notifications.js";
 import type * as phoneAuth from "../phoneAuth.js";
 import type * as presence from "../presence.js";
 import type * as qrAuth from "../qrAuth.js";
+import type * as search from "../search.js";
 import type * as workerOps from "../workerOps.js";
 import type * as workerTasks from "../workerTasks.js";
 
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   phoneAuth: typeof phoneAuth;
   presence: typeof presence;
   qrAuth: typeof qrAuth;
+  search: typeof search;
   workerOps: typeof workerOps;
   workerTasks: typeof workerTasks;
 }>;

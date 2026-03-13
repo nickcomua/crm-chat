@@ -67,7 +67,7 @@ echo "[setup] .env updated with ROBOT_ID, ROBOT_KID, ROBOT_JWT_PRIVATE_KEY"
 # ── 4. Push JWKS to Convex ────────────────────────────────────────
 echo "[setup] Setting ROBOT_JWKS in Convex..."
 cd "$CONVEX_DIR"
-bunx convex env set ROBOT_JWKS "$JWKS_DATA_URI"
+bun x convex env set ROBOT_JWKS "$JWKS_DATA_URI"
 
 echo "[setup] Done! Robot keypair configured."
 echo "[setup]   ROBOT_ID=$ROBOT_ID"

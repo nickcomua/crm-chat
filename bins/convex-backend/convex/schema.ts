@@ -324,7 +324,12 @@ export default defineSchema({
 		.index("by_messageId", ["messageId"])
 		.index("by_externalId", ["externalId"])
 		.index("by_userId", ["userId"])
-		.index("by_chatId_timestamp", ["chatId", "timestamp"]),
+		.index("by_chatId_timestamp", ["chatId", "timestamp"])
+		.searchIndex("search_text", {
+			searchField: "text",
+			filterFields: ["chatId", "clientId", "userId"],
+			staged: false,
+		}),
 
 	media: defineTable(mediaDoc.omit("_id", "_creationTime"))
 		.index("by_telegramFileId", ["telegramFileId"])

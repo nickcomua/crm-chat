@@ -1,39 +1,16 @@
+import { usePaginatedQuery } from "convex/react";
 import { useQuery } from "convex-helpers/react/cache";
 import { Loader2, Search, Sparkles, X } from "lucide-react";
 import { useState } from "react";
-import {
-  type MessageSource,
-  type SearchHit,
-  useSearchAll,
-  useSearchInChat,
-  useSearchInClient,
-} from "@/hooks/use-search";
-import { api } from "@/lib/convex";
+import { api, type Doc } from "@/lib/convex";
 import { cn } from "@/lib/utils";
+import type { TextByKeywordsParameters } from "../../../convex-backend/convex/search";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 
-interface ChatDoc {
-  _id: string;
-  chatId: string;
-  clientId: string;
-  pinnedName?: string;
-}
-
-interface ClientDoc {
-  _id: string;
-  kind: string;
-  telegramId: string;
-}
-
-type SearchScopeType =
-  | { type: "all" }
-  | { type: "chat"; chatId: string }
-  | { type: "client"; clientId: number };
-
 interface SearchDialogProps {
-  initialScope?: SearchScopeType;
+  initialScope?: TextByKeywordsParameters["scope"];
   onOpenChange: (open: boolean) => void;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
   open: boolean;
@@ -58,29 +35,18 @@ function formatTimestamp(ts: number): string {
 
 function SearchResultItem({
   hit,
-  chatsMap,
-  clientsMap,
+  chat,
+  client,
   onClick,
 }: {
-  hit: SearchHit;
-  chatsMap: Map<string, ChatDoc>;
-  clientsMap: Map<string, ClientDoc>;
+  hit: Doc<"messages">;
+  chat: Doc<"chats"> | undefined;
+  client: Doc<"clients"> | undefined;
   onClick: () => void;
 }): React.ReactNode {
-  const source = hit._source as unknown as MessageSource | undefined;
-  if (!source) {
-    return null;
-  }
-
-  const chat = source.chat_id ? chatsMap.get(source.chat_id) : undefined;
-  const client =
-    source.client_id !== undefined && source.client_id !== null
-      ? clientsMap.get(String(source.client_id))
-      : undefined;
-
   const chatName =
-    chat?.pinnedName ?? `Chat ${source.chat_id?.slice(0, 8) ?? "unknown"}`;
-  const isOutgoing = source.out ?? false;
+    chat?.pinnedName ?? `Chat ${hit.chatId?.slice(0, 8) ?? "unknown"}`;
+  const isOutgoing = hit.outgoing ?? false;
 
   return (
     <button
@@ -105,19 +71,14 @@ function SearchResultItem({
             )}
           >
             {isOutgoing && <span className="text-primary">You: </span>}
-            {source.content ?? "[Media]"}
+            {hit.text ?? "[Media]"}
           </p>
         </div>
         <div className="shrink-0 text-right">
-          {source.created_at && (
+          {hit.timestamp && (
             <span className="text-muted-foreground text-xs">
-              {formatTimestamp(source.created_at)}
+              {formatTimestamp(hit.timestamp)}
             </span>
-          )}
-          {hit._score && (
-            <div className="mt-0.5 text-muted-foreground/60 text-xs">
-              {hit._score.toFixed(2)}
-            </div>
           )}
         </div>
       </div>
@@ -125,69 +86,34 @@ function SearchResultItem({
   );
 }
 
-function useActiveSearch(
-  query: string,
-  scope: SearchScopeType,
-  semantic: boolean
-) {
-  const allSearch = useSearchAll(query, {
-    semantic,
-    enabled: scope.type === "all" && query.length > 0,
-  });
-
-  const chatSearch = useSearchInChat(
-    scope.type === "chat" ? scope.chatId : "",
-    query,
-    {
-      semantic,
-      enabled: scope.type === "chat" && query.length > 0,
-    }
-  );
-
-  const clientSearch = useSearchInClient(
-    scope.type === "client" ? scope.clientId : 0,
-    query,
-    {
-      semantic,
-      enabled: scope.type === "client" && query.length > 0,
-    }
-  );
-
-  if (scope.type === "all") {
-    return allSearch;
-  }
-  if (scope.type === "chat") {
-    return chatSearch;
-  }
-  return clientSearch;
-}
-
 function SearchResults({
   query,
   scope,
-  semantic,
   chatsMap,
   clientsMap,
   onSelectResult,
 }: {
   query: string;
-  scope: SearchScopeType;
-  semantic: boolean;
-  chatsMap: Map<string, ChatDoc>;
-  clientsMap: Map<string, ClientDoc>;
+  scope: TextByKeywordsParameters["scope"];
+  chatsMap: Map<string, Doc<"chats">>;
+  clientsMap: Map<string, Doc<"clients">>;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
 }): React.ReactNode {
-  const search = useActiveSearch(query, scope, semantic);
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.search.textByKeywords,
+    { keywords: query, scope },
+    { initialNumItems: 32 }
+  );
 
   if (query.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-muted-foreground text-sm">
-        Enter a search term to find messages
+        Enter keywords to search for in messages
       </div>
     );
   }
 
-  if (search.isLoading) {
+  if (status === "LoadingFirstPage") {
     return (
       <div className="flex h-48 items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -195,24 +121,10 @@ function SearchResults({
     );
   }
 
-  if (search.isError) {
-    return (
-      <div className="flex h-48 items-center justify-center text-destructive text-sm">
-        Search failed: {search.error?.message ?? "Unknown error"}
-      </div>
-    );
-  }
-
-  const hits = search.data?.hits.hits ?? [];
-  const totalObj = search.data?.hits.total as
-    | { value: number; relation: string }
-    | undefined;
-  const total = totalObj?.value ?? 0;
-
-  if (hits.length === 0) {
+  if (results.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center text-muted-foreground text-sm">
-        No results found for "{query}"
+        No results found
       </div>
     );
   }
@@ -220,31 +132,58 @@ function SearchResults({
   return (
     <div className="space-y-1">
       <div className="px-3 py-2 text-muted-foreground text-xs">
-        {total} result{total !== 1 ? "s" : ""} found
-        {search.isFetching && (
-          <Loader2 className="ml-2 inline h-3 w-3 animate-spin" />
-        )}
+        {results.length} result{results.length !== 1 ? "s" : ""} found
       </div>
       <div className="max-h-96 space-y-1 overflow-y-auto">
-        {hits.map((hit) => (
-          <SearchResultItem
-            chatsMap={chatsMap}
-            clientsMap={clientsMap}
-            hit={hit}
-            key={hit._id}
-            onClick={() => {
-              const source = hit._source as unknown as
-                | MessageSource
-                | undefined;
-              if (source?.chat_id && onSelectResult) {
-                onSelectResult({
-                  chatId: source.chat_id,
-                  messageId: source.id,
-                });
-              }
-            }}
-          />
-        ))}
+        {results.map((hit) => {
+          const chat = hit.chatId ? chatsMap.get(hit.chatId) : undefined;
+          const client = hit.clientId
+            ? clientsMap.get(String(hit.clientId))
+            : undefined;
+          return (
+            <SearchResultItem
+              chat={chat}
+              client={client}
+              hit={hit}
+              key={hit._id}
+              onClick={() => {
+                if (hit.chatId && onSelectResult) {
+                  onSelectResult({
+                    chatId: hit.chatId,
+                    messageId: hit.messageId,
+                  });
+                }
+              }}
+            />
+          );
+        })}
+
+        <div className="flex items-center justify-center py-2">
+          {(() => {
+            switch (status) {
+              case "LoadingMore":
+                return <Loader2 className="h-4 w-4 animate-spin" />;
+              case "CanLoadMore":
+                return (
+                  <Button
+                    onClick={() => loadMore(32)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Load more
+                  </Button>
+                );
+              case "Exhausted":
+                return (
+                  <p className="text-muted-foreground text-sm">
+                    Shown all results
+                  </p>
+                );
+              default:
+                throw new Error(`Unexpected status: ${status}`);
+            }
+          })()}
+        </div>
       </div>
     </div>
   );
@@ -257,18 +196,19 @@ export function SearchDialog({
   initialScope = { type: "all" },
 }: SearchDialogProps): React.ReactNode {
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<SearchScopeType>(initialScope);
+  const [scope, setScope] =
+    useState<TextByKeywordsParameters["scope"]>(initialScope);
   const [semantic, setSemantic] = useState(false);
 
   const chats = useQuery(api.chats.list);
   const clients = useQuery(api.clients.list);
 
-  const chatsMap = new Map<string, ChatDoc>();
+  const chatsMap = new Map<string, Doc<"chats">>();
   for (const chat of chats ?? []) {
     chatsMap.set(chat.chatId, chat);
   }
 
-  const clientsMap = new Map<string, ClientDoc>();
+  const clientsMap = new Map<string, Doc<"clients">>();
   for (const client of clients ?? []) {
     clientsMap.set(client._id, client);
   }
@@ -320,11 +260,10 @@ export function SearchDialog({
               }
               aria-pressed={semantic}
               className={cn(semantic && "bg-primary text-primary-foreground")}
+              disabled
               onClick={() => setSemantic(!semantic)}
               size="icon"
-              title={
-                semantic ? "Using semantic search" : "Using keyword search"
-              }
+              title="Semantic search is not yet available"
               variant={semantic ? "default" : "outline"}
             >
               <Sparkles className="h-4 w-4" />
@@ -344,18 +283,17 @@ export function SearchDialog({
             >
               All messages
             </button>
-            {clientsArray.map((client: ClientDoc) => (
+            {clientsArray.map((client: Doc<"clients">) => (
               <button
                 className={cn(
                   "rounded-full px-3 py-1 text-sm transition-colors",
-                  scope.type === "client" &&
-                    scope.clientId === Number(client._id)
+                  scope.type === "client" && scope.clientId === client._id
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 )}
                 key={client._id}
                 onClick={() =>
-                  setScope({ type: "client", clientId: Number(client._id) })
+                  setScope({ type: "client", clientId: client._id })
                 }
                 type="button"
               >
@@ -370,7 +308,6 @@ export function SearchDialog({
             onSelectResult={handleSelectResult}
             query={query}
             scope={scope}
-            semantic={semantic}
           />
         </div>
       </DialogContent>

@@ -149,6 +149,9 @@
 
             # Link node_modules for convex-backend (convex-typegen build.rs resolves npm imports)
             ln -s ${convexBackendNodeModules}/node_modules bins/convex-backend/node_modules
+
+            # Bun needs a writable HOME for its module compilation cache
+            export HOME=$(mktemp -d)
           '';
 
           nativeBuildInputs = [
