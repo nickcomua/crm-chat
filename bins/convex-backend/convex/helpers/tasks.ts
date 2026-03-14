@@ -67,7 +67,7 @@ export async function enqueueTask(
  * Cancel all active tasks for a disconnecting client.
  * Patches Pending/Dispatched/Running tasks with a matching clientId to Cancelled.
  */
-// todo you should able to cansel only Running tasks beacose 
+// TODO you should able to cansel only Running tasks beacose 
 // for Dispatched you should canse it only via restate
 // for Pending just delete
 export async function cancelClientTasks(

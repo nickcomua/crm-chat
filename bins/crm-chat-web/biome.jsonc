@@ -36,6 +36,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["tests/helpers.ts"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "noBarrelFile": "off"
+          }
+        }
+      }
     }
   ]
 }

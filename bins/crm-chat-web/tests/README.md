@@ -54,6 +54,28 @@ TEST_BASE_URL=https://crm-chat.kaminazuma.com bun test
 
 Note: `global-setup.ts` still starts a Convex container unless you also set `E2E_CONVEX_URL` to point at your existing backend.
 
+## Directory Structure
+
+```
+tests/
+├── e2e-telegram/          # Tests requiring a real Telegram session
+│   ├── scan-chats.spec.ts
+│   ├── qr-auth.spec.ts
+│   ├── qr-auth-real.spec.ts
+│   ├── media-rendering.spec.ts
+│   └── media-visual.spec.ts
+├── auth.setup.ts          # Clerk auth setup (shared by all tests)
+├── global-setup.ts        # Testcontainers global setup
+├── global-teardown.ts     # Cleanup
+├── helpers.ts             # Shared utilities (imported by both dirs)
+├── env.ts                 # Environment variable helpers
+└── *.spec.ts              # Seeded-data tests (no real Telegram needed)
+```
+
+**`tests/`** — Seeded-data tests that run against a Convex backend with synthetic test data. These don't need a Telegram session and run in the `chromium` Playwright project.
+
+**`tests/e2e-telegram/`** — Tests that require a real Telegram session (`TG_SESSION_FILE_1` + `TG_USER_ID_1`). They run sequentially via the `tg-*` Playwright projects. Shared helpers (`helpers.ts`, `env.ts`) are imported from the parent directory.
+
 ## Test Files
 
 | File | Description |
@@ -61,8 +83,11 @@ Note: `global-setup.ts` still starts a Convex container unless you also set `E2E
 | `global-setup.ts` | Testcontainers global setup (Convex + Restate containers, robot keys, deploy, crm-worker) |
 | `global-teardown.ts` | Cleanup (kill worker, stop containers) |
 | `helpers.ts` | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
-| `qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
-| `scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |
+| `e2e-telegram/scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |
+| `e2e-telegram/qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
+| `e2e-telegram/qr-auth-real.spec.ts` | Real QR auth backend verification (task creation, token step) |
+| `e2e-telegram/media-rendering.spec.ts` | Media rendering: photos, videos, audio, documents, stickers, animations |
+| `e2e-telegram/media-visual.spec.ts` | Visual constraints: thumbnail sizes, circular VideoNote, duration overlays |
 
 ## Test Configuration
 

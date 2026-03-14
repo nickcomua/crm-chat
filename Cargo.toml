@@ -1,11 +1,11 @@
 [workspace]
 members = [
   "bins/convex-backend",
-  "bins/es-proxy",
   "libs/hack",
   "libs/messanger-interface",
   "libs/messanger-telegram",
   "bins/crm-worker",
+  "tests/e2e-telegram",
 ]
 exclude = [
   "libs/convex-typegen",

@@ -23,13 +23,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Swagger UI fetched below via pkgs.fetchurl to preserve zip format
-
-    # sccache = {
-    #   url = "github:mozilla/sccache";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
-
     # Child flakes
     crm-chat-web-app = {
       url = "path:./bins/crm-chat-web";
@@ -59,7 +52,6 @@
     fenix,
     advisory-db,
     bun2nix,
-    # sccache,
     crm-chat-web-app,
     ...
   } @ inputs:
@@ -69,21 +61,8 @@
           inherit system;
           overlays = [ bun2nix.overlays.default ];
         #   config.allowUnfree = true;
-        #   # overlays = [ sccache.overlays.default ];
         };
         # pkgs = nixpkgs.legacyPackages.${system};
-
-        # Pre-fetch swagger-ui zip for utoipa-swagger-ui (preserves zip format for build.rs)
-        swaggerUiZipRaw = pkgs.fetchurl {
-          url = "https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip";
-          sha256 = "sha256-SBJE0IEgl7Efuu73n3HZQrFxYX+cn5UU5jrL4T5xzNw=";
-        };
-        # Wrap in a derivation with proper permissions
-        swaggerUiZip = pkgs.runCommand "swagger-ui-zip" {} ''
-          mkdir -p $out
-          cp ${swaggerUiZipRaw} $out/v5.17.14.zip
-          chmod 644 $out/v5.17.14.zip
-        '';
 
         inherit (pkgs) lib;
 
@@ -140,13 +119,7 @@
           inherit src;
           strictDeps = true;
 
-          # Copy swagger-ui zip to a writable location before build
           preConfigure = ''
-            export SWAGGER_UI_ZIP_DIR=$(mktemp -d)
-            cp ${swaggerUiZip}/v5.17.14.zip $SWAGGER_UI_ZIP_DIR/
-            chmod 644 $SWAGGER_UI_ZIP_DIR/v5.17.14.zip
-            export SWAGGER_UI_DOWNLOAD_URL="file://$SWAGGER_UI_ZIP_DIR/v5.17.14.zip"
-
             # Link node_modules for convex-backend (convex-typegen build.rs resolves npm imports)
             ln -s ${convexBackendNodeModules}/node_modules bins/convex-backend/node_modules
 
@@ -159,7 +132,6 @@
             pkgs.rustfmt
             pkgs.pkg-config
             pkgs.perl # Required by openssl-sys vendored build
-            pkgs.curl # Required for utoipa-swagger-ui to download Swagger UI assets
             pkgs.bun # Required by convex-typegen build.rs to parse TypeScript
           #   pkgs.gtk4.dev
           #   pkgs.gtk3.dev
@@ -169,16 +141,8 @@
 
           buildInputs =
             [
-
               pkgs.openssl
-              pkgs.cacert # Required for utoipa-swagger-ui to download over HTTPS
-              # pkgs.pkg-config
-              # Add additional build inputs here
-              # pkgs.gtk3
-              # pkgs.webkitgtk_4_1
-              # pkgs.libsoup_3
-              # pkgs.cairo
-
+              pkgs.cacert
               pkgs.sqlite
             ]
             ++ lib.optionals pkgs.stdenv.isDarwin [
@@ -186,9 +150,7 @@
               pkgs.libiconv
             ];
 
-           # Required for curl to verify SSL certificates during build
            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-           # Note: SWAGGER_UI_DOWNLOAD_URL is set dynamically in preConfigure above
         };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -209,13 +171,13 @@
               ./Cargo.lock
               (craneLib.fileset.commonCargoSources ./libs/hack)
 
-              (craneLib.fileset.commonCargoSources ./bins/es-proxy)
               (craneLib.fileset.commonCargoSources ./bins/convex-backend)
               # Include .ts/.js files needed by convex-backend build.rs (convex-typegen)
               (lib.fileset.fileFilter (file: file.hasExt "ts" || file.hasExt "js") ./bins/convex-backend/convex)
 
               (craneLib.fileset.commonCargoSources ./libs/messanger-interface)
               (craneLib.fileset.commonCargoSources ./libs/messanger-telegram)
+              (craneLib.fileset.commonCargoSources ./tests/e2e-telegram)
               (craneLib.fileset.commonCargoSources crate)
             ];
           };
@@ -258,12 +220,6 @@
           crm-chat-fmt = craneLib.cargoFmt {
             inherit src;
           };
-
-          # crm-chat-toml-fmt = craneLib.taploFmt {
-          #   src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
-          #   # taplo arguments can be further customized below as needed
-          #   taploExtraArgs = "--config ./taplo.toml";
-          # };
 
           crm-chat-audit = craneLib.cargoAudit {
             inherit src advisory-db;
@@ -327,6 +283,9 @@
             contents = [crm-worker pkgs.cacert];
 
             config = {
+              Env = [
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
               Cmd = ["/bin/crm-worker"];
             };
           };
@@ -335,9 +294,6 @@
 
         devShells.default = craneLib.devShell {
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
-          SCCACHE_CACHE_SIZE="20G";
-          SCCACHE_LOCAL_RW_MODE="READ_WRITE";
           shellHook = ''
             export PATH="$HOME/.local/bin:$PATH"
             export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:$LD_LIBRARY_PATH"
@@ -364,7 +320,6 @@
             llvmPackages.libclang
             pkgs.lld
             sqlite
-            sccache
           ];
         };
       }

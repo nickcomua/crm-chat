@@ -29,7 +29,7 @@ const triggers = new Triggers<DataModel>();
  * No cron needed — the presence component's heartbeat timeout drives the
  * disconnect, which updates `humans.online`, which fires this trigger.
  */
-// todo crop trigers and move this directly to @presence.ts
+// TODO crop trigers and move this directly to @presence.ts
 triggers.register("humans", async (ctx, change) => {
 	if (change.operation === "delete") return;
 	if (change.operation === "insert") return;

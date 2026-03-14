@@ -8,7 +8,7 @@ import {
 	requireOwner,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { mediaKind } from "./schema";
+import { forwardedFromValidator, mediaKind, reactionValidator } from "./schema";
 
 const MAX_CHAT_IDS = 100;
 
@@ -119,6 +119,10 @@ export const upsert = mutation({
 		timestamp: v.number(),
 		mediaExternalId: v.optional(v.string()),
 		mediaKind: v.optional(mediaKind),
+		replyToMessageId: v.optional(v.string()),
+		replyToText: v.optional(v.string()),
+		forwardedFrom: v.optional(forwardedFromValidator),
+		reactions: v.optional(v.array(reactionValidator)),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -138,6 +142,10 @@ export const upsert = mutation({
 				timestamp: args.timestamp,
 				mediaExternalId: args.mediaExternalId,
 				mediaKind: args.mediaKind,
+				replyToMessageId: args.replyToMessageId,
+				replyToText: args.replyToText,
+				forwardedFrom: args.forwardedFrom,
+				reactions: args.reactions,
 			});
 		} else {
 			await ctx.db.insert("messages", args);
@@ -183,6 +191,39 @@ export const upsert = mutation({
 			}
 		}
 		return null;
+	},
+});
+
+/** Full-text search across messages owned by the caller. */
+export const search = query({
+	args: {
+		query: v.string(),
+		chatId: v.optional(v.string()),
+		limit: v.optional(v.number()),
+	},
+	handler: async (ctx, args) => {
+		const caller = await requireHuman(ctx);
+		const take = Math.min(args.limit ?? 20, 100);
+
+		const results = await ctx.db
+			.query("messages")
+			.withSearchIndex("search_text", (s) => {
+				const base = s.search("text", args.query).eq("userId", caller.id);
+				if (args.chatId) {
+					return base.eq("chatId", args.chatId);
+				}
+				return base;
+			})
+			.take(take);
+		return results.map((msg) => ({
+			_id: msg._id,
+			messageId: msg.messageId,
+			chatId: msg.chatId,
+			text: msg.text,
+			senderId: msg.senderId,
+			timestamp: msg.timestamp,
+			outgoing: msg.outgoing,
+		}));
 	},
 });
 

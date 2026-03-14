@@ -1,27 +1,17 @@
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
-import { getSessionEnv } from "./env";
-import { api, getConvexUserId, getRobotClient, unwrapResult } from "./helpers";
-
-/** Mirror Rust's sanitize_owner_id */
-function sanitizeOwnerId(ownerId: string): string {
-  return ownerId.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-/** Mirror Rust's sanitize for session paths */
-function sanitizeIdentifier(identifier: string): string {
-  return identifier.replace(/[^0-9+]/g, "");
-}
-
-function getSessionPath(identifier: string, ownerId: string): string {
-  const baseDir = process.env.E2E_SESSION_DIR;
-  if (!baseDir) {
-    throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
-  }
-  const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
-  return path.join(dir, `${sanitizeIdentifier(identifier)}.session`);
-}
+import { env } from "../env";
+import { expect, test } from "../fixtures";
+import {
+  api,
+  getConvexUserId,
+  getRobotClient,
+  getSessionPath,
+  type Id,
+  pollUntil,
+  type WorkerConfig,
+  writeOwnerFile,
+} from "../helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
 const FILE_EXTENSION_RE = /\.[a-z0-9]+$/i;
@@ -31,16 +21,13 @@ const DOWNLOADS_URL_PATTERN = /\/#\/downloads/;
 // Run tests sequentially — they depend on subscriber sync completing first
 test.describe.configure({ mode: "serial" });
 
-const session = getSessionEnv();
-
-let registeredClientId: string | null = null;
-let copiedSessionPath: string | null = null;
+let registeredClientId: Id<"clients">;
+let copiedSessionPath: string;
+let workerCfg: WorkerConfig;
 
 test.describe("Media Rendering — Real Telegram Data", () => {
-  test.beforeAll(async ({ browser }) => {
-    if (!session) {
-      return;
-    }
+  test.beforeAll(async ({ browser, workerBackend }) => {
+    workerCfg = workerBackend;
 
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
@@ -48,51 +35,39 @@ test.describe("Media Rendering — Real Telegram Data", () => {
     const page = await context.newPage();
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    await page.waitForTimeout(1000);
 
     const convexUserId = await getConvexUserId(page);
 
-    const telegramId = `telegram:${session.userId}`;
-    copiedSessionPath = getSessionPath(telegramId, convexUserId);
+    // Share telegramId with scan-chats — one Telegram connection for all real-TG specs
+    const telegramId = `telegram:${env.TG_USER_ID_1}`;
+    copiedSessionPath = getSessionPath(
+      telegramId,
+      convexUserId,
+      workerCfg.sessionDir
+    );
     mkdirSync(path.dirname(copiedSessionPath), { recursive: true });
-    copyFileSync(session.sessionFile, copiedSessionPath);
+    if (!existsSync(copiedSessionPath)) {
+      copyFileSync(env.TG_SESSION_FILE_1, copiedSessionPath);
+    }
+    writeOwnerFile(copiedSessionPath, convexUserId);
 
-    const robot = getRobotClient();
-    registeredClientId = unwrapResult<string>(
-      await robot.mutation(api.clients.workerRegisterConnected, {
+    const robot = getRobotClient(workerCfg);
+    registeredClientId = (await robot.mutation(
+      api.clients.workerRegisterConnected,
+      {
         userId: convexUserId,
         telegramId,
         kind: "Telegram",
-      })
-    );
+      }
+    )) as Id<"clients">;
 
     await page.close();
-  });
-
-  test.afterAll(async () => {
-    if (registeredClientId) {
-      try {
-        const robot = getRobotClient();
-        await robot.mutation(api.clients.deleteClient, {
-          clientId: registeredClientId,
-        });
-      } catch {
-        // best-effort cleanup
-      }
-    }
-    if (copiedSessionPath) {
-      try {
-        rmSync(copiedSessionPath, { force: true });
-      } catch {
-        // best-effort cleanup
-      }
-    }
   });
 
   test("enable scanning and wait for sync + media download", async ({
     page,
   }) => {
-    test.setTimeout(300_000); // overall budget for real Telegram network ops
+    // Real TG sync: DialogSync completes in ~2s, scanning may take a bit longer
 
     await page.goto(`/#/client/${registeredClientId}`);
     await page.waitForSelector("text=Chat Scanning", { timeout: 10_000 });
@@ -112,56 +87,66 @@ test.describe("Media Rendering — Real Telegram Data", () => {
       }
     }
 
-    // Poll for "Synced" badge — network-dependent (Telegram message scan)
-    await pollUntil(page, () =>
-      page.locator("text=Synced").first().isVisible()
+    // Poll for "Synced" badge — 1s interval (page is Convex-reactive)
+    await pollUntil(
+      page,
+      () => page.locator("text=Synced").first().isVisible(),
+      1000
     );
 
     // Poll Downloads page until at least one media is stored.
     // This confirms the full pipeline completed: scan → enqueue → download → upload.
     await page.goto("/#/downloads");
     await page.waitForURL(DOWNLOADS_URL_PATTERN, { timeout: 10_000 });
-    await pollUntil(page, () => {
-      const recentSection = page.locator('text="Recent"');
-      return recentSection.isVisible();
-    });
+    await pollUntil(
+      page,
+      () => {
+        const recentSection = page.locator('text="Recent"');
+        return recentSection.isVisible();
+      },
+      1000
+    );
 
-    // Now find media in a chat — downloads are confirmed done, so 10s is enough
+    // Now find media in a chat — downloads are confirmed done.
+    // The message list may take a moment to re-render with media URLs,
+    // so poll the chat iteration rather than doing a single pass.
     const anyMediaSelector =
       'img[alt="Shared media"], img[alt="Sticker"], video, audio[controls]';
 
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
+    await pollUntil(
+      page,
+      async () => {
+        await page.goto("/");
+        await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const chatButtons = page.locator(".space-y-px > button");
-    await expect(chatButtons.first()).toBeVisible({ timeout: 10_000 });
+        // Only click real Telegram chats (skip seeded data from parallel specs)
+        const buttons = page.locator(
+          '.space-y-px > button:has-text("telegram:")'
+        );
+        const fallbackButtons = page.locator(".space-y-px > button");
+        await expect(fallbackButtons.first()).toBeVisible({ timeout: 10_000 });
 
-    const chatCount = await chatButtons.count();
-    let mediaReady = false;
-
-    for (let i = 0; i < chatCount && !mediaReady; i++) {
-      await page.goto("/");
-      await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-      await page.locator(".space-y-px > button").nth(i).click();
-
-      try {
-        await page.waitForSelector(anyMediaSelector, { timeout: 10_000 });
-        mediaReady = true;
-      } catch {
-        // Try next chat
-      }
-    }
-
-    expect(mediaReady).toBe(true);
+        const chatCount = await buttons.count();
+        for (let i = 0; i < chatCount; i++) {
+          await buttons.nth(i).click();
+          try {
+            await page.waitForSelector(anyMediaSelector, { timeout: 3000 });
+            return true;
+          } catch {
+            // No media in this chat, try next
+          }
+        }
+        return false;
+      },
+      5000
+    );
   });
 
   test("photos load with actual image content (not broken)", async ({
     page,
   }) => {
-    test.setTimeout(30_000);
-
     const chatWithPhoto = await findChatWith(page, 'img[alt="Shared media"]');
-    expect(chatWithPhoto).toBeTruthy();
+    expect(chatWithPhoto, "No photo media found in test data").toBeTruthy();
 
     // Validate every visible photo has actually loaded (not broken/black)
     const photos = page.locator('img[alt="Shared media"]');
@@ -187,10 +172,8 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   });
 
   test("videos are playable (metadata loads)", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const chatWithVideo = await findChatWith(page, "video:not([autoplay])");
-    expect(chatWithVideo, "No video media found in synced chats").toBeTruthy();
+    expect(chatWithVideo, "No video media found in test data").toBeTruthy();
 
     // Find videos (non-autoplay = Video/VideoNote, not Animation)
     const videos = page.locator("video:not([autoplay])");
@@ -232,10 +215,8 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   test("audio/voice messages are playable (metadata loads)", async ({
     page,
   }) => {
-    test.setTimeout(30_000);
-
     const chatWithAudio = await findChatWith(page, "audio[controls]");
-    expect(chatWithAudio, "No audio media found in synced chats").toBeTruthy();
+    expect(chatWithAudio, "No audio media found in test data").toBeTruthy();
 
     const audios = page.locator("audio[controls]");
     const first = audios.first();
@@ -270,14 +251,12 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   });
 
   test("documents show filename with extension", async ({ page }) => {
-    test.setTimeout(30_000);
-
     // Document renderer is a <button> containing a filename with an extension
     const chatWithDoc = await findChatWith(
       page,
       'button:has(p:text-matches("\\\\.[a-z0-9]+$", "i"))'
     );
-    expect(chatWithDoc, "No document media found in synced chats").toBeTruthy();
+    expect(chatWithDoc, "No document media found in test data").toBeTruthy();
 
     // Match filenames like "report.pdf", "image.png", etc.
     const docName = page.locator(
@@ -292,13 +271,8 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   });
 
   test("stickers load as images with content", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const chatWithSticker = await findChatWith(page, 'img[alt="Sticker"]');
-    expect(
-      chatWithSticker,
-      "No sticker media found in synced chats"
-    ).toBeTruthy();
+    expect(chatWithSticker, "No sticker media found in test data").toBeTruthy();
 
     const stickers = page.locator('img[alt="Sticker"]');
     const first = stickers.first();
@@ -319,13 +293,8 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   });
 
   test("animations autoplay as looping video", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const chatWithAnim = await findChatWith(page, "video[autoplay][loop]");
-    expect(
-      chatWithAnim,
-      "No animation media found in synced chats"
-    ).toBeTruthy();
+    expect(chatWithAnim, "No animation media found in test data").toBeTruthy();
 
     const anim = page.locator("video[autoplay][loop]").first();
     await expect(anim).toBeVisible({ timeout: 10_000 });
@@ -365,10 +334,8 @@ test.describe("Media Rendering — Real Telegram Data", () => {
   });
 
   test("photo lightbox opens fullscreen on click", async ({ page }) => {
-    test.setTimeout(30_000);
-
     const chatWithPhoto = await findChatWith(page, 'img[alt="Shared media"]');
-    expect(chatWithPhoto, "No photo found for lightbox test").toBeTruthy();
+    expect(chatWithPhoto, "No photo media found in test data").toBeTruthy();
 
     const img = page.locator('img[alt="Shared media"]').first();
     await expect(img).toBeVisible({ timeout: 10_000 });
@@ -410,24 +377,24 @@ async function findChatWith(
   page: import("@playwright/test").Page,
   selector: string
 ): Promise<boolean> {
+  // Navigate once; sidebar stays visible in desktop SPA layout.
   await page.goto("/");
   await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-  const chatButtons = page.locator(".space-y-px > button");
-  await expect(chatButtons.first()).toBeVisible({ timeout: 10_000 });
+  // Only click real Telegram chats (skip seeded test data from parallel specs).
+  // Real TG chats display "telegram:..." badge in the sidebar.
+  const buttons = page.locator('.space-y-px > button:has-text("telegram:")');
+  const fallbackButtons = page.locator(".space-y-px > button");
+  await expect(fallbackButtons.first()).toBeVisible({ timeout: 10_000 });
 
-  const count = await chatButtons.count();
+  const count = await buttons.count();
 
   for (let i = 0; i < count; i++) {
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-
-    const buttons = page.locator(".space-y-px > button");
     await buttons.nth(i).click();
 
-    // Wait for media to appear in the initial view
+    // Check initial view (media already downloaded, 3s is enough)
     try {
-      await page.waitForSelector(selector, { timeout: 10_000 });
+      await page.waitForSelector(selector, { timeout: 3000 });
       return true;
     } catch {
       // Not in initial view — try scrolling up for older messages
@@ -438,7 +405,7 @@ async function findChatWith(
     if ((await msgContainer.count()) > 0) {
       await msgContainer.evaluate((el) => el.scrollTo(0, 0));
       try {
-        await page.waitForSelector(selector, { timeout: 10_000 });
+        await page.waitForSelector(selector, { timeout: 3000 });
         return true;
       } catch {
         // Not found, try next chat
@@ -447,18 +414,4 @@ async function findChatWith(
   }
 
   return false;
-}
-
-/**
- * Poll a condition with 5s sleeps between attempts.
- * Individual checks are instant; the overall wait is bounded by test.setTimeout.
- */
-async function pollUntil(
-  page: import("@playwright/test").Page,
-  condition: () => Promise<boolean>,
-  intervalMs = 5000
-): Promise<void> {
-  while (!(await condition())) {
-    await page.waitForTimeout(intervalMs);
-  }
 }

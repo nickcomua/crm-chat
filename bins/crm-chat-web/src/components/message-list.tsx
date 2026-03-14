@@ -2,7 +2,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { usePaginatedQuery, useQuery } from "convex/react";
-import { ArrowLeft, Ban, Loader2 } from "lucide-react";
+import { ArrowLeft, Ban, Forward, Loader2, Reply } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "../lib/utils";
@@ -65,14 +65,29 @@ function getClientDisplayName(
   return `${client.kind} • ${client.telegramId}`;
 }
 
+interface ReactionDoc {
+  count: number;
+  emoji: string;
+  recent: Array<{ userId: string }>;
+}
+
+interface ForwardedFromDoc {
+  date?: number;
+  senderName: string;
+}
+
 interface MessageDoc {
   _id: string;
   chatId: string;
   deleted: boolean;
+  forwardedFrom?: ForwardedFromDoc;
   mediaExternalId?: string;
   mediaKind?: string;
   messageId: string;
   outgoing: boolean;
+  reactions?: ReactionDoc[];
+  replyToMessageId?: string;
+  replyToText?: string;
   text?: string;
   timestamp: number;
 }
@@ -89,6 +104,49 @@ function shouldShowDateHeader(
   const prevDate = new Date(prevMessage.timestamp).toDateString();
 
   return messageDate !== prevDate;
+}
+
+function ReactionBadges({
+  hasMedia,
+  isOutgoing,
+  reactions,
+}: {
+  hasMedia: boolean;
+  isOutgoing: boolean;
+  reactions: ReactionDoc[];
+}): React.ReactNode {
+  if (reactions.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      className={cn("mt-1 flex flex-wrap gap-1", hasMedia && "px-2 pb-1")}
+      data-testid="reactions"
+    >
+      {reactions.map((reaction) => (
+        <span
+          className={cn(
+            "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px]",
+            isOutgoing
+              ? "bg-primary-foreground/15 text-primary-foreground/80"
+              : "bg-muted text-muted-foreground"
+          )}
+          data-testid="reaction-badge"
+          key={reaction.emoji}
+        >
+          <span>{reaction.emoji}</span>
+          <span>{reaction.count}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}…`;
 }
 
 function MessageBubble({
@@ -118,6 +176,44 @@ function MessageBubble({
             : "rounded-bl-md bg-card ring-1 ring-border/40"
         )}
       >
+        {message.forwardedFrom && (
+          <div
+            className={cn(
+              "mb-1 flex items-center gap-1 text-[11px]",
+              hasMedia ? "px-2.5 pt-1" : "",
+              isOutgoing
+                ? "text-primary-foreground/70"
+                : "text-muted-foreground"
+            )}
+            data-testid="forwarded-from"
+          >
+            <Forward className="h-3 w-3" />
+            <span className="italic">
+              Forwarded from {message.forwardedFrom.senderName}
+            </span>
+          </div>
+        )}
+
+        {message.replyToText && (
+          <div
+            className={cn(
+              "mb-1 rounded-md border-l-2 px-2 py-1 text-[11px]",
+              hasMedia ? "mx-1.5 mt-1" : "",
+              isOutgoing
+                ? "border-primary-foreground/40 bg-primary-foreground/10 text-primary-foreground/70"
+                : "border-muted-foreground/40 bg-muted/50 text-muted-foreground"
+            )}
+            data-testid="reply-preview"
+          >
+            <div className="flex items-center gap-1">
+              <Reply className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {truncateText(message.replyToText, 100)}
+              </span>
+            </div>
+          </div>
+        )}
+
         {isDeleted && (
           <div className="mb-1 flex items-center gap-1 px-2.5 pt-1 text-[11px] opacity-70">
             <Ban className="h-3 w-3" />
@@ -153,6 +249,14 @@ function MessageBubble({
         >
           {formatMessageTime(message.timestamp)}
         </div>
+
+        {message.reactions && (
+          <ReactionBadges
+            hasMedia={hasMedia}
+            isOutgoing={isOutgoing}
+            reactions={message.reactions}
+          />
+        )}
       </div>
     </div>
   );

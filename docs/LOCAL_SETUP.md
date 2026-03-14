@@ -21,7 +21,7 @@ https://direnv.net/docs/installation.html
 direnv allow
 ```
 
-This gives you Rust toolchain, bun, biome, cargo-nextest, sccache, and everything else.
+This gives you Rust toolchain, bun, biome, cargo-nextest, and everything else.
 
 ---
 

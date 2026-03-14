@@ -171,7 +171,7 @@ const PURGE_BATCH_SIZE = 200;
 
 /** Delete all messages and media for a chat in batches. Self-scheduling.
  *  Stops early if the chat has been re-enabled (to avoid racing with a new scan). */
-// todo buillshit
+// TODO buillshit
 export const purgeChatData = internalMutation({
 	args: { chatId: v.string() },
 	handler: async (ctx, { chatId }) => {
@@ -267,7 +267,7 @@ export const rescan = mutation({
 		if (!chat.scanEnabled) return err("Chat scanning is not enabled");
 		await ctx.db.patch(chat._id, {
 			fullScanned: false,
-			// todo wtf
+			// TODO wtf
 			syncedMessages: undefined,
 			totalMessages: undefined,
 			scanPhase: undefined,

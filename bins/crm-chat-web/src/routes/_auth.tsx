@@ -1,7 +1,8 @@
-import { RedirectToSignIn, UserButton, useAuth } from "@clerk/clerk-react";
+import { UserButton, useAuth } from "@clerk/clerk-react";
 import {
   createFileRoute,
   Link,
+  Navigate,
   Outlet,
   useNavigate,
   useRouterState,
@@ -82,7 +83,7 @@ function AuthLayout(): React.ReactNode {
   }
 
   if (!isSignedIn) {
-    return <RedirectToSignIn />;
+    return <Navigate to="/sign-in" />;
   }
 
   return (

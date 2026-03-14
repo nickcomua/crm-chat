@@ -103,6 +103,12 @@ export const workerRegisterConnected = mutation({
 				userId: existing.userId,
 				telegramId: existing.telegramId,
 			});
+			await enqueueTask(ctx, {
+				type: "DialogSync",
+				clientId: existing._id,
+				userId: existing.userId,
+				telegramId: existing.telegramId,
+			});
 			return existing._id;
 		}
 		const id = await ctx.db.insert("clients", {
@@ -114,6 +120,12 @@ export const workerRegisterConnected = mutation({
 		});
 		await enqueueTask(ctx, {
 			type: "UpdateListener",
+			clientId: id,
+			userId: lookupArgs.userId,
+			telegramId: lookupArgs.telegramId,
+		});
+		await enqueueTask(ctx, {
+			type: "DialogSync",
 			clientId: id,
 			userId: lookupArgs.userId,
 			telegramId: lookupArgs.telegramId,

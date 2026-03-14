@@ -1,8 +1,10 @@
 {
-    "nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
-    "rust-analyzer.testExplorer": true,
-    "rust-analyzer.check.command": "clippy",
-    "rust-analyzer.diagnostics.experimental.enable": true,
-    "editor.formatOnSave": true,
-    "files.autoSave": "afterDelay"
+	"nixEnvSelector.nixFile": "${workspaceFolder}/flake.nix",
+	"rust-analyzer.testExplorer": true,
+	"rust-analyzer.check.command": "clippy",
+	"rust-analyzer.diagnostics.experimental.enable": true,
+	"editor.formatOnSave": true,
+	"files.autoSave": "afterDelay",
+	"js/ts.experimental.useTsgo": true,
+	"js/ts.tsserver.experimental.enableProjectDiagnostics": true
 }

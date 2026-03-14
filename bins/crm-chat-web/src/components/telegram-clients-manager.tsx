@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache";
 import { Plus, QrCode, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, type Id, onResultError } from "@/lib/convex";
@@ -192,7 +193,10 @@ function ClientCard({
   const isConnected = isClientConnected(client);
 
   return (
-    <Card className="group transition-shadow hover:shadow-md">
+    <Card
+      className="group transition-shadow hover:shadow-md"
+      data-testid="client-card"
+    >
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
         <div className="space-y-1">
           <CardTitle className="font-medium text-sm">
@@ -221,6 +225,7 @@ function ClientCard({
             </Button>
           )}
           <Button
+            aria-label="Delete client"
             className="h-7 w-7 text-muted-foreground hover:text-destructive"
             onClick={onDelete}
             size="icon"

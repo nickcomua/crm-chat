@@ -11,6 +11,7 @@ services:
     volumes:
       - ./target/restate-data:/restate-data
     environment:
+      - RESTATE_NODE_NAME=crm-restate
       - RESTATE_OBSERVABILITY__LOG__FORMAT=json
       # Long-running handlers (TaskOrchestrator, UpdateListener) run subscription
       # loops that may be idle for extended periods between events.
@@ -19,6 +20,10 @@ services:
       # Optional: send Restate traces to Sentry via OTEL ingest
       - RESTATE_OBSERVABILITY__TRACING__ENDPOINT=${SENTRY_OTEL_ENDPOINT:-}
       - RESTATE_OBSERVABILITY__TRACING__HEADERS=${SENTRY_OTEL_HEADERS:-}
+    healthcheck:
+      test: curl -f http://localhost:8080/restate/health
+      interval: 5s
+      start_period: 10s
 
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
@@ -57,73 +62,34 @@ services:
       backend:
         condition: service_healthy
 
-#   elasticsearch:
-#     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-#     container_name: elasticsearch
-#     environment:
-#       - discovery.type=single-node
-#       - xpack.security.enabled=true
-#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-#       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
-#     ports:
-#       - "9200:9200"
-#     volumes:
-#       - es_data:/usr/share/elasticsearch/data
-#     healthcheck:
-#       test: ["CMD-SHELL", "curl -f -u elastic:${ELASTIC_PASSWORD:-changeme} http://localhost:9200/_cluster/health || exit 1"]
-#       interval: 10s
-#       timeout: 5s
-#       retries: 30
-#     restart: unless-stopped
+  crm-worker:
+    image: nick395/crm-worker:latest
+    environment:
+      - TG_ID=${TG_ID}
+      - TG_HASH=${TG_HASH}
+      - CONVEX_URL=${CONVEX_URL:-http://backend:3210}
+      - ROBOT_ID=${ROBOT_ID}
+      - ROBOT_KID=${ROBOT_KID}
+      - ROBOT_JWT_PRIVATE_KEY=${ROBOT_JWT_PRIVATE_KEY}
+      - RESTATE_ADMIN_URL=http://restate:9070
+      - RESTATE_INGRESS_URL=http://restate:8080
+      - RESTATE_SERVICE_URL=http://crm-worker:9080
+      - MAX_MEDIA_WORKFLOWS=${MAX_MEDIA_WORKFLOWS:-2}
+      - SENTRY_URL=${SENTRY_URL:-}
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      restate:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
 
-#   elasticsearch-setup:
-#     image: curlimages/curl:latest
-#     depends_on:
-#       elasticsearch:
-#         condition: service_healthy
-#     environment:
-#       - ELASTICSEARCH_URL=http://elasticsearch:9200
-#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-#       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-#       - INFERENCE_ID=${INFERENCE_ID:-openrouter-embeddings}
-#       - PIPELINE_ID=${PIPELINE_ID:-openrouter-pipeline}
-#       - INDEX_NAME=${INDEX_NAME:-my-index}
-#       - MODEL_ID=${MODEL_ID:-openai/text-embedding-3-small}
-#       - EMBEDDING_DIMS=${EMBEDDING_DIMS:-1536}
-#     volumes:
-#       - ./setup-scripts:/scripts
-#     entrypoint: ["/bin/sh", "/scripts/elasticsearch-setup.sh"]
-#     restart: "no"
-
-#   kibana:
-#     image: docker.elastic.co/kibana/kibana:8.15.0
-#     container_name: kibana
-#     environment:
-#       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-#       - ELASTICSEARCH_USERNAME=kibana_system
-#       - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-#       - xpack.security.enabled=true
-#     ports:
-#       - "5601:5601"
-#     depends_on:
-#       elasticsearch:
-#         condition: service_healthy
-#     restart: unless-stopped
-
-#   es-proxy:
-#     image: nick395/es-proxy:latest
-#     build:
-#       context: .
-#       dockerfile: bins/es-proxy/Dockerfile
-#     ports:
-#       - "3001:3001"
-#     environment:
-#       - ELASTICSEARCH_URL=http://elasticsearch:9200
-#       - ELASTIC_USERNAME=elastic
-#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-#       - INDEX_NAME=${INDEX_NAME:-crm-chat-msgs}
-#       - JWT_SECRET=${JWT_SECRET:-}
-#     depends_on:
-#       elasticsearch:
-#         condition: service_healthy
-#     restart: unless-stopped
+  web:
+    image: nick395/crm-chat-web:latest
+    environment:
+      - VITE_CONVEX_URL=${VITE_CONVEX_URL:-http://localhost:${PORT:-3210}}
+      - VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+      - VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
+      - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
