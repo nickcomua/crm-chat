@@ -5,13 +5,12 @@ on:
       - "main"
 
 permissions:
+  id-token: write 
   contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      SSH_AUTH_SOCK: /tmp/ssh_agent.sock
     steps:
       - uses: actions/checkout@v5
       # - uses: jlumbroso/free-disk-space@v1.3.1
@@ -30,9 +29,9 @@ jobs:
         with:
           platforms: arm64
 
-      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra_nix_config: |
+          extra-conf: |
             extra-platforms = aarch64-linux
             extra-system-features = nixos-test benchmark big-parallel kvm
       - uses: cachix/cachix-action@v16

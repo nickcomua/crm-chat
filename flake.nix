@@ -2,14 +2,14 @@
   description = "Build a cargo project";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
 
-    crane.url = "github:ipetkov/crane";
+    crane.url = "https://flakehub.com/f/ipetkov/crane/0";
 
-    flake-utils.url = "github:numtide/flake-utils";
+    flake-utils.url = "https://flakehub.com/f/numtide/flake-utils/0";
 
     fenix = {
-      url = "github:nix-community/fenix";
+      url = "https://flakehub.com/f/nix-community/fenix/0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -189,6 +189,14 @@
             pname = "crm-worker";
             cargoExtraArgs = "-p crm-worker";
             src = fileSetForCrate ./bins/crm-worker;
+            nativeBuildInputs = (commonArgs.nativeBuildInputs or []) ++ [ pkgs.makeWrapper ];
+            postFixup = ''
+              ${lib.optionalString pkgs.stdenv.isLinux ''
+                patchelf --add-rpath ${pkgs.sqlite.out}/lib $out/bin/crm-worker
+              ''}
+              wrapProgram $out/bin/crm-worker \
+                --set SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            '';
           }
         );
         crm-chat-web = crm-chat-web-app.packages.${system}.crm-chat-web;
@@ -280,12 +288,9 @@
           crm-worker-img = pkgs.dockerTools.buildLayeredImage {
             name = "nick395/crm-worker";
             tag = "latest";
-            contents = [crm-worker pkgs.cacert];
+            contents = [crm-worker];
 
             config = {
-              Env = [
-                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-              ];
               Cmd = ["/bin/crm-worker"];
             };
           };

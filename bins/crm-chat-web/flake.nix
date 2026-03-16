@@ -2,7 +2,7 @@
   description = "CRM Chat Web - Bun + Vite + React development environment";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     systems.url = "github:nix-systems/default";
 
     bun2nix.url = "github:nix-community/bun2nix";

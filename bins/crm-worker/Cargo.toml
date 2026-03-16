@@ -11,14 +11,27 @@ convex-backend = { path = "../convex-backend" }
 dashmap = "6"
 dirs = "6"
 futures = "0.3"
-grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = ["impl-serde"] }
+grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = [
+    "impl-serde",
+] }
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-restate-sdk = "0.8.0"
-sentry = { version = "0.38", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "reqwest", "rustls"] }
-sentry-tracing = "0.46.2"
+reqwest = { version = "0.13.2", default-features = false, features = [
+    "rustls",
+    "json",
+    "stream",
+] }
+restate-sdk = "0.9.0"
+sentry = { version = "0.47", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "tracing",
+    "reqwest",
+    "rustls",
+] }
+sentry-tracing = "0.47.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2"

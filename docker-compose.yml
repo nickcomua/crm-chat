@@ -64,6 +64,7 @@ services:
 
   crm-worker:
     image: nick395/crm-worker:latest
+    # platform: linux/amd64
     environment:
       - TG_ID=${TG_ID}
       - TG_HASH=${TG_HASH}
