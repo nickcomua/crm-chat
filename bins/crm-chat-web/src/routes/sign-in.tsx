@@ -1,5 +1,5 @@
-import { SignIn, useSignIn } from "@clerk/clerk-react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { SignIn, useAuth, useSignIn } from "@clerk/clerk-react";
+import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { env } from "@/env";
 
@@ -62,7 +62,7 @@ function AutoSignIn(): React.ReactNode {
         <p className="text-muted-foreground text-xs">
           Falling back to standard sign-in...
         </p>
-        <SignIn afterSignInUrl="/#/" routing="hash" signUpUrl="/sign-up" />
+        <SignIn forceRedirectUrl="/#/chats" routing="hash" />
       </div>
     );
   }
@@ -80,13 +80,16 @@ function AutoSignIn(): React.ReactNode {
 }
 
 function SignInPage(): React.ReactNode {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (isLoaded && isSignedIn) {
+    return <Navigate to="/chats" />;
+  }
   if (env.VITE_TEST_USERNAME && env.VITE_TEST_PASSWORD) {
     return <AutoSignIn />;
   }
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <SignIn afterSignInUrl="/#/" routing="hash" signUpUrl="/sign-up" />
+      <SignIn forceRedirectUrl="/#/chats" routing="hash" />
     </div>
   );
 }

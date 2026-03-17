@@ -429,8 +429,8 @@ export function MessageList({
             )}
             <span>
               {activeMessageCount}
-              {status !== "Exhausted" ? "+" : ""} message
-              {activeMessageCount !== 1 ? "s" : ""}
+              {status === "Exhausted" ? "" : "+"} message
+              {activeMessageCount === 1 ? "" : "s"}
               {activeMessageCount !== sortedMessages.length &&
                 ` (${sortedMessages.length - activeMessageCount} deleted)`}
             </span>

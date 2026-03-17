@@ -55,10 +55,10 @@ function ensureDockerHost(): void {
 // ---------------------------------------------------------------------------
 function onExit(proc: ChildProcess): Promise<number | null> {
   return new Promise((resolve) => {
-    if (proc.exitCode !== null) {
-      resolve(proc.exitCode);
-    } else {
+    if (proc.exitCode === null) {
       proc.on("exit", (code) => resolve(code));
+    } else {
+      resolve(proc.exitCode);
     }
   });
 }

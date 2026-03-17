@@ -506,7 +506,7 @@ export function ClientSettings({
             {client.telegramId || `Client ${client._id.slice(0, 8)}`}
           </h2>
           <p className="text-muted-foreground text-sm">
-            {chats.length} chat{chats.length !== 1 ? "s" : ""} &middot;{" "}
+            {chats.length} chat{chats.length === 1 ? "" : "s"} &middot;{" "}
             {chats.filter((c) => c.scanEnabled).length} scan-enabled
           </p>
         </div>
