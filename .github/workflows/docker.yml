@@ -5,15 +5,62 @@ on:
       - "main"
 
 permissions:
-  id-token: write 
+  id-token: write
   contents: read
 
 jobs:
-  deploy:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            nix-system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            nix-system: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          username: nick395
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: SebRollen/toml-action@v1.2.0
+        id: read_version
+        with:
+          file: "Cargo.toml"
+          field: "workspace.package.version"
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v16
+        with:
+          name: nickcomua
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Build and push crm-worker (${{ matrix.arch }})
+        run: |
+          set -e
+          VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
+          nix build --accept-flake-config .#packages.${{ matrix.nix-system }}.crm-worker-img --print-build-logs
+          docker load < ./result
+          docker tag nick395/crm-worker:latest nick395/crm-worker:${VERSION_TAG}-${{ matrix.arch }}
+          docker push nick395/crm-worker:${VERSION_TAG}-${{ matrix.arch }}
+
+      - name: Build and push crm-chat-web (${{ matrix.arch }})
+        run: |
+          set -e
+          VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
+          nix build --accept-flake-config .#packages.${{ matrix.nix-system }}.crm-chat-web-img --print-build-logs
+          docker load < ./result
+          docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-${{ matrix.arch }}
+          docker push nick395/crm-chat-web:${VERSION_TAG}-${{ matrix.arch }}
+
+  manifest:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # - uses: jlumbroso/free-disk-space@v1.3.1
       - uses: docker/login-action@v3
         with:
           username: nick395
@@ -24,73 +71,19 @@ jobs:
           file: "Cargo.toml"
           field: "workspace.package.version"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            extra-platforms = aarch64-linux
-            extra-system-features = nixos-test benchmark big-parallel kvm
-      - uses: cachix/cachix-action@v16
-        with:
-          name: nickcomua
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-
-      - name: Build and push crm-worker (multi-arch)
+      - name: Create and push multi-arch manifests
         run: |
           set -e
           VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
 
-          # Build x86_64-linux
-          nix build --accept-flake-config .#packages.x86_64-linux.crm-worker-img --print-build-logs
-          docker load < ./result
-          docker tag nick395/crm-worker:latest nick395/crm-worker:${VERSION_TAG}-amd64
-          docker push nick395/crm-worker:${VERSION_TAG}-amd64
+          for IMAGE in crm-worker crm-chat-web; do
+            docker manifest create --amend nick395/${IMAGE}:latest \
+              nick395/${IMAGE}:${VERSION_TAG}-amd64 \
+              nick395/${IMAGE}:${VERSION_TAG}-arm64
+            docker manifest create --amend nick395/${IMAGE}:${VERSION_TAG} \
+              nick395/${IMAGE}:${VERSION_TAG}-amd64 \
+              nick395/${IMAGE}:${VERSION_TAG}-arm64
 
-          # Build aarch64-linux
-          nix build --accept-flake-config .#packages.aarch64-linux.crm-worker-img --print-build-logs
-          docker load < ./result
-          docker tag nick395/crm-worker:latest nick395/crm-worker:${VERSION_TAG}-arm64
-          docker push nick395/crm-worker:${VERSION_TAG}-arm64
-
-          # Create and push manifest
-          docker manifest create --amend nick395/crm-worker:latest \
-            nick395/crm-worker:${VERSION_TAG}-amd64 \
-            nick395/crm-worker:${VERSION_TAG}-arm64
-          docker manifest create --amend nick395/crm-worker:${VERSION_TAG} \
-            nick395/crm-worker:${VERSION_TAG}-amd64 \
-            nick395/crm-worker:${VERSION_TAG}-arm64
-
-          docker manifest push nick395/crm-worker:latest
-          docker manifest push nick395/crm-worker:${VERSION_TAG}
-
-      - name: Build and push crm-chat-web (multi-arch)
-        run: |
-          set -e
-          VERSION_TAG="${{ steps.read_version.outputs.value }}-${{ github.run_number }}"
-
-          # Build x86_64-linux
-          nix build --accept-flake-config .#packages.x86_64-linux.crm-chat-web-img --print-build-logs
-          docker load < ./result
-          docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-amd64
-          docker push nick395/crm-chat-web:${VERSION_TAG}-amd64
-
-          # Build aarch64-linux
-          nix build --accept-flake-config .#packages.aarch64-linux.crm-chat-web-img --print-build-logs
-          docker load < ./result
-          docker tag nick395/crm-chat-web:latest nick395/crm-chat-web:${VERSION_TAG}-arm64
-          docker push nick395/crm-chat-web:${VERSION_TAG}-arm64
-
-          # Create and push manifest
-          docker manifest create --amend nick395/crm-chat-web:latest \
-            nick395/crm-chat-web:${VERSION_TAG}-amd64 \
-            nick395/crm-chat-web:${VERSION_TAG}-arm64
-          docker manifest create --amend nick395/crm-chat-web:${VERSION_TAG} \
-            nick395/crm-chat-web:${VERSION_TAG}-amd64 \
-            nick395/crm-chat-web:${VERSION_TAG}-arm64
-
-          docker manifest push nick395/crm-chat-web:latest
-          docker manifest push nick395/crm-chat-web:${VERSION_TAG}
+            docker manifest push nick395/${IMAGE}:latest
+            docker manifest push nick395/${IMAGE}:${VERSION_TAG}
+          done

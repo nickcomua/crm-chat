@@ -9,15 +9,17 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
 
       - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            extra-platforms = aarch64-linux
-            extra-system-features = nixos-test benchmark big-parallel kvm
 
       - uses: cachix/cachix-action@v16
         with:
