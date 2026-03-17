@@ -73,7 +73,7 @@ export const upsert = mutation({
 		} else {
 			await ctx.db.insert("chats", {
 				...args,
-				scanEnabled: args.isPinned,
+				scanEnabled: false,
 			});
 		}
 		return null;
