@@ -157,20 +157,20 @@ function DownloadingMedia({
             isOutgoing ? "bg-primary-foreground/20" : "bg-muted"
           )}
         >
-          {percentage !== undefined ? (
+          {percentage === undefined ? (
+            <div
+              className={cn(
+                "h-full w-1/3 animate-pulse rounded-full",
+                isOutgoing ? "bg-primary-foreground/40" : "bg-primary/60"
+              )}
+            />
+          ) : (
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-300",
                 isOutgoing ? "bg-primary-foreground/60" : "bg-primary"
               )}
               style={{ width: `${percentage}%` }}
-            />
-          ) : (
-            <div
-              className={cn(
-                "h-full w-1/3 animate-pulse rounded-full",
-                isOutgoing ? "bg-primary-foreground/40" : "bg-primary/60"
-              )}
             />
           )}
         </div>
@@ -182,9 +182,9 @@ function DownloadingMedia({
               : "text-muted-foreground/50"
           )}
         >
-          {percentage !== undefined
-            ? `${percentage}%`
-            : formatFileSize(downloaded)}
+          {percentage === undefined
+            ? formatFileSize(downloaded)
+            : `${percentage}%`}
           {total !== undefined && ` / ${formatFileSize(total)}`}
         </span>
       </div>

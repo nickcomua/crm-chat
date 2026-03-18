@@ -132,7 +132,7 @@ function SearchResults({
   return (
     <div className="space-y-1">
       <div className="px-3 py-2 text-muted-foreground text-xs">
-        {results.length} result{results.length !== 1 ? "s" : ""} found
+        {results.length} result{results.length === 1 ? "" : "s"} found
       </div>
       <div className="max-h-96 space-y-1 overflow-y-auto">
         {results.map((hit) => {

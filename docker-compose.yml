@@ -35,10 +35,8 @@ services:
     volumes:
       - ./target/crm-chat-data:/convex/data
     environment:
-      # - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${PORT:-3210}}
       - CONVEX_CLOUD_ORIGIN=http://localhost:3210
-      # - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${SITE_PROXY_PORT:-3211}}
-      - CONVEX_SITE_ORIGIN=http://localhost:3210
+      - CONVEX_SITE_ORIGIN=http://localhost:3211
       - INSTANCE_NAME
       - INSTANCE_SECRET
       - RUST_LOG=${RUST_LOG:-info}
@@ -65,19 +63,27 @@ services:
   crm-worker:
     image: nick395/crm-worker:latest
     # platform: linux/amd64
+    # Share the backend's network namespace so localhost:3210/3211 reach Convex
+    # directly. This fixes media uploads which use presigned URLs containing
+    # CONVEX_SITE_ORIGIN (http://localhost:3211).
+    network_mode: "service:backend"
+    volumes:
+      - ./target/crm-worker-data:/crm-worker-data
     environment:
       - TG_ID=${TG_ID}
       - TG_HASH=${TG_HASH}
-      - CONVEX_URL=${CONVEX_URL:-http://backend:3210}
+      - CONVEX_URL=${CONVEX_URL:-http://localhost:3210}
       - ROBOT_ID=${ROBOT_ID}
       - ROBOT_KID=${ROBOT_KID}
       - ROBOT_JWT_PRIVATE_KEY=${ROBOT_JWT_PRIVATE_KEY}
       - RESTATE_ADMIN_URL=http://restate:9070
       - RESTATE_INGRESS_URL=http://restate:8080
-      - RESTATE_SERVICE_URL=http://crm-worker:9080
+      # crm-worker's port 9080 is now on the backend's network interface
+      - RESTATE_SERVICE_URL=http://backend:9080
       - MAX_MEDIA_WORKFLOWS=${MAX_MEDIA_WORKFLOWS:-2}
       - SENTRY_URL=${SENTRY_URL:-}
       - RUST_LOG=${RUST_LOG:-info}
+      - TG_SESSION_DIR=/crm-worker-data
     depends_on:
       restate:
         condition: service_healthy
