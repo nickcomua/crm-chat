@@ -16,6 +16,7 @@ target
 tgdb*
 .DS_Store
 .direnv
+.devenv
 result
 .fuse_hidden*
 
