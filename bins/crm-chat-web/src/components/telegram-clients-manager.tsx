@@ -18,6 +18,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "./ui/dialog";
@@ -191,63 +192,99 @@ function ClientCard({
   const statusDisplay = getStatusDisplay(client);
   const navigate = useNavigate();
   const isConnected = isClientConnected(client);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   return (
-    <Card
-      className="group transition-shadow hover:shadow-md"
-      data-testid="client-card"
-    >
-      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-        <div className="space-y-1">
-          <CardTitle className="font-medium text-sm">
-            {client.telegramId || `Client ${client._id.slice(0, 8)}`}
-          </CardTitle>
-          <CardDescription className="text-xs">
-            {client.scanningChatIds.length} active chat
-            {client.scanningChatIds.length !== 1 ? "s" : ""}
-          </CardDescription>
-        </div>
-        <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          {isConnected && (
+    <>
+      <Dialog onOpenChange={setShowDeleteConfirm} open={showDeleteConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete client?</DialogTitle>
+            <DialogDescription className="flex flex-col gap-1">
+              <span>
+                This will disconnect and remove{" "}
+                <span className="font-medium text-foreground">
+                  {client.telegramId || `Client ${client._id.slice(0, 8)}`}
+                </span>
+              </span>
+              <span>You'll have to manually add it back to undo.</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
             <Button
-              aria-label="Client settings"
-              className="h-7 w-7 text-muted-foreground"
-              onClick={() =>
-                navigate({
-                  to: "/client/$clientId",
-                  params: { clientId: client._id },
-                })
-              }
+              onClick={() => setShowDeleteConfirm(false)}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                onDelete();
+              }}
+              variant="destructive"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Card
+        className="group transition-shadow hover:shadow-md"
+        data-testid="client-card"
+      >
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+          <div className="space-y-1">
+            <CardTitle className="font-medium text-sm">
+              {client.telegramId || `Client ${client._id.slice(0, 8)}`}
+            </CardTitle>
+            <CardDescription className="text-xs">
+              {client.scanningChatIds.length} active chat
+              {client.scanningChatIds.length !== 1 ? "s" : ""}
+            </CardDescription>
+          </div>
+          <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            {isConnected && (
+              <Button
+                aria-label="Client settings"
+                className="h-7 w-7 text-muted-foreground"
+                onClick={() =>
+                  navigate({
+                    to: "/client/$clientId",
+                    params: { clientId: client._id },
+                  })
+                }
+                size="icon"
+                variant="ghost"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button
+              aria-label="Delete client"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              onClick={() => setShowDeleteConfirm(true)}
               size="icon"
               variant="ghost"
             >
-              <Settings className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          )}
-          <Button
-            aria-label="Delete client"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            onClick={onDelete}
-            size="icon"
-            variant="ghost"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-xs",
-            statusDisplay.pillColor
-          )}
-        >
+          </div>
+        </CardHeader>
+        <CardContent>
           <span
-            className={cn("h-1.5 w-1.5 rounded-full", statusDisplay.dotColor)}
-          />
-          {statusDisplay.label}
-        </span>
-      </CardContent>
-    </Card>
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium text-xs",
+              statusDisplay.pillColor
+            )}
+          >
+            <span
+              className={cn("h-1.5 w-1.5 rounded-full", statusDisplay.dotColor)}
+            />
+            {statusDisplay.label}
+          </span>
+        </CardContent>
+      </Card>
+    </>
   );
 }

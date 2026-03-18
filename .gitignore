@@ -30,4 +30,4 @@ playwright-report/
 bins/crm-worker/logs/
 
 # Annoying Rust(?) logs
-./logs/
+logs/

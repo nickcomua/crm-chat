@@ -313,7 +313,7 @@ function MediaLightbox({
         </button>
       </DialogTrigger>
       <DialogContent
-        className="max-h-[95vh] max-w-[95vw] border-none bg-black/95 p-2 sm:max-w-[95vw]"
+        className="w-auto max-w-[95vw] border-none bg-black/95 p-2 sm:max-w-[95vw]"
         showCloseButton
       >
         <DialogTitle className="sr-only">
@@ -322,7 +322,7 @@ function MediaLightbox({
         {isVideo ? (
           <video
             autoPlay
-            className="max-h-[88vh] max-w-full rounded"
+            className="max-h-[88vh] max-w-[95vw] rounded"
             controls
             playsInline
           >
@@ -335,7 +335,7 @@ function MediaLightbox({
         ) : (
           <img
             alt={mediaKindLabel(media.kind)}
-            className="max-h-[88vh] max-w-full rounded object-contain"
+            className="max-h-[88vh] max-w-[95vw] rounded object-contain"
             height={media.height}
             src={media.url}
             width={media.width}

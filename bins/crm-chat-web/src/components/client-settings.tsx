@@ -112,7 +112,7 @@ function getChatDisplayName(chat: {
   return `Chat ${chat.chatId.slice(0, 8)}`;
 }
 
-/** Resolve the effective value for a media setting (chat → client → default true). */
+/** Resolve the effective value for a media setting (chat → client → default false). */
 function resolveMediaSetting(
   key: keyof MediaSettings,
   chatSettings?: MediaSettings,
@@ -126,7 +126,7 @@ function resolveMediaSetting(
   if (clientVal !== undefined) {
     return clientVal;
   }
-  return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
