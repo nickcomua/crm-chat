@@ -50,7 +50,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     writeOwnerFile(copiedSessionPath, convexUserId);
 
     // Register the TG client as Connected — subscriber picks it up and starts scanning
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {
@@ -220,7 +220,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // Verify messages exist via robot API — query actual messages in the DB
     // rather than relying on the syncedMessages counter (which may not be set
     // if the final updateSyncProgress mutation races with task completion).
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
       userId: convexUserId,
     })) as Array<{
@@ -258,7 +258,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // implemented: MessageSummary needs a forwardedFrom field, the
     // Telegram parser must call msg.forward_header(), and
     // workerOps.upsertMessage must accept and store forwardedFrom.
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
       userId: convexUserId,
     })) as Array<{
@@ -318,7 +318,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // NOTE: We can't rely on the UI button disappearing because Convex may
     // batch the reactive updates (mutation + scanner completion) into a
     // single WebSocket message, so the UI never shows the intermediate state.
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     await pollUntil(
       page,
       async () => {

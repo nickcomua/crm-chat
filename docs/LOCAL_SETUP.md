@@ -44,7 +44,7 @@ TG_HASH=abcdef1234567890
 
 # These get filled in by later steps:
 # CONVEX_SELF_HOSTED_ADMIN_KEY=  (step 3)
-# ROBOT_JWT_PRIVATE_KEY=         (step 4)
+# CLERK_M2M_SECRET_KEY=          (step 4)
 ```
 
 Also create the Convex backend env:
@@ -84,18 +84,15 @@ Copy that key into both `.env` and `bins/convex-backend/.env.local` as `CONVEX_S
 
 ---
 
-## Step 4: Generate robot JWT keys
+## Step 4: Set Clerk M2M key
+
+Add your Clerk machine-to-machine secret key to `.env`:
 
 ```bash
-./scripts/setup-robot-keys.sh
+CLERK_M2M_SECRET_KEY=ak_...
 ```
 
-This script:
-1. Generates an RSA 2048-bit keypair
-2. Writes `ROBOT_JWT_PRIVATE_KEY`, `ROBOT_ID`, `ROBOT_KID` to your `.env`
-3. Pushes the public JWKS to Convex via `bunx convex env set`
-
-The robot auth allows the Rust worker (crm-worker) to authenticate with Convex independently of Clerk.
+Get this from the Clerk Dashboard under **Machines**. The worker uses this key to fetch JWTs from Clerk's M2M API at runtime.
 
 ---
 
@@ -111,7 +108,7 @@ This deploys your schema + queries + mutations to the self-hosted backend and ge
 
 Leave this running in a terminal — it watches for changes.
 
-The project uses **dual auth**: Clerk JWTs for human users in the browser, and self-signed RS256 JWTs for the robot service. Both are validated by Convex auth config. The `convex/helpers/auth.ts` file provides `requireHuman()` and `requireRobot()` helpers that mutations use to enforce access.
+The project uses **dual auth**: Clerk JWTs for human users in the browser, and Clerk M2M JWTs for the worker service. Both are validated by the same Clerk provider in Convex auth config. Workers are identified by the `mch_` subject prefix. The `convex/helpers/auth.ts` file provides `requireHuman()` and `requireWorker()` helpers that mutations use to enforce access.
 
 ---
 

@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
@@ -9,7 +8,7 @@ import type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
   convexUrl: string;
-  robotPrivateKey: string;
+  m2mSecretKey: string;
   sessionDir: string;
 }
 
@@ -26,38 +25,34 @@ export function unwrapResult<T>(res: unknown): T {
 }
 
 /**
- * Mint an RS256 JWT for robot authentication against the test Convex backend.
+ * Fetch an M2M JWT from the Clerk Backend API.
  */
-export function mintRobotJwt(config: WorkerConfig): string {
-  const privateKey = config.robotPrivateKey;
-
-  const header = { alg: "RS256", kid: "e2e-robot-key", typ: "JWT" };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    sub: "e2e-robot",
-    iss: "https://crm-chat-robot.local",
-    aud: "convex",
-    iat: now,
-    exp: now + 3600,
-  };
-
-  const headerB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signingInput = `${headerB64}.${payloadB64}`;
-
-  const sign = crypto.createSign("RSA-SHA256");
-  sign.update(signingInput);
-  const signature = sign.sign(privateKey, "base64url");
-
-  return `${signingInput}.${signature}`;
+async function fetchM2mJwt(m2mSecretKey: string): Promise<string> {
+  const resp = await fetch("https://api.clerk.com/v1/m2m_tokens", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${m2mSecretKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ token_format: "jwt" }),
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Clerk M2M API returned ${resp.status}: ${body}`);
+  }
+  const data = (await resp.json()) as { token: string };
+  return data.token;
 }
 
 /**
- * Create a ConvexHttpClient authenticated as the robot service.
+ * Create a ConvexHttpClient authenticated as the worker service via Clerk M2M.
  */
-export function getRobotClient(config: WorkerConfig): ConvexHttpClient {
+export async function getRobotClient(
+  config: WorkerConfig
+): Promise<ConvexHttpClient> {
+  const token = await fetchM2mJwt(config.m2mSecretKey);
   const client = new ConvexHttpClient(config.convexUrl);
-  client.setAuth(mintRobotJwt(config));
+  client.setAuth(token);
   return client;
 }
 

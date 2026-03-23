@@ -338,11 +338,7 @@
               lib,
               ...
             }: {
-              # Allow devenv to detect the project root in pure eval mode
-              devenv.root = let
-                devenvRootFileContent = builtins.readFile ./.devenv-root;
-              in
-                lib.mkForce (lib.strings.removeSuffix "\n" devenvRootFileContent);
+              devenv.root = lib.mkForce (builtins.getEnv "PWD");
 
               # Rust toolchain (replaces fenix in dev shell)
               languages.rust = {

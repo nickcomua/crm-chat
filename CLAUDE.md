@@ -61,7 +61,7 @@ This is a Rust/TypeScript monorepo with a self-hosted Convex backend and React f
   - `convex/schema.ts` — all table definitions (humans, robots, clients, chats, messages, phoneAuths, qrAuths, notifications)
   - `convex/helpers/auth.ts` — shared auth helpers (requireHuman, requireRobot, requireOwner)
   - Auth is modeled as table-based state machines (`phoneAuth.ts`, `qrAuth.ts`)
-  - Dual auth: Clerk JWTs for humans, self-signed RS256 JWTs for robot services
+  - Dual auth: Clerk JWTs for humans, Clerk M2M JWTs for worker services
   - Run with `bunx convex dev` (reads `.env.local` for self-hosted URL and admin key)
 - **bins/telegram-subscriber**: Rust service that connects to Convex via the Rust SDK, subscribes to auth queries, and spawns Telegram client connections
 - **bins/es-proxy**: Elasticsearch proxy for semantic search / embeddings
@@ -80,7 +80,7 @@ This is a Rust/TypeScript monorepo with a self-hosted Convex backend and React f
 
 ### Infrastructure
 - **docker-compose.yml**: Self-hosted Convex backend (port 3210) + dashboard (port 6791)
-- Robot JWT auth: RS256 keypair — private key in `ROBOT_JWT_PRIVATE_KEY` env var for telegram-subscriber, public key configured as JWKS in Convex auth config
+- Worker auth: Clerk M2M JWTs — `CLERK_M2M_SECRET_KEY` env var, worker fetches JWTs from Clerk API at runtime
 
 ### Key Data Flow
 1. Telegram clients connect through telegram-subscriber service
@@ -231,7 +231,7 @@ Required environment variables:
 - `VITE_CONVEX_URL`: Convex backend URL (e.g. `http://127.0.0.1:3210`)
 - `VITE_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`: Clerk authentication
 - `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY`: Convex self-hosted admin (for `bins/convex-backend/`)
-- `ROBOT_JWT_PRIVATE_KEY`: RS256 private key for robot JWT minting (telegram-subscriber)
+- `CLERK_M2M_SECRET_KEY`: Clerk M2M secret key for worker authentication
 - `TG_ID`, `TG_HASH`: Telegram API credentials
 - `OPENROUTER_API_KEY`: OpenRouter for embeddings
 - `ES_*`: Elasticsearch configuration (optional)

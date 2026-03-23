@@ -33,7 +33,7 @@ test.describe("Scroll to Message", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
 
     // Create test client.
     clientId = (await robot.mutation(api.clients.workerRegisterConnected, {

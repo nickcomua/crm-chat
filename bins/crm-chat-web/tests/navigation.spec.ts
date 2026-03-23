@@ -33,7 +33,7 @@ let workerCfg: WorkerConfig;
 test.describe("Navigation", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });

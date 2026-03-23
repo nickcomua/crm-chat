@@ -20,7 +20,7 @@ use messanger_telegram::TelegramClient;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::auth::mint_worker_jwt;
+use crate::auth::fetch_m2m_jwt;
 use crate::config::WorkerConfig;
 use crate::error::WorkerError;
 use crate::session_manager::{SessionManager, TelegramSessionManager};
@@ -124,7 +124,7 @@ pub async fn run_orchestrator(
 
             // ── JWT refresh ─────────────────────────────────────────────
             _ = jwt_refresh.tick() => {
-                match mint_worker_jwt(&config.private_key, &config.robot_id, &config.robot_kid) {
+                match fetch_m2m_jwt(&http, &config.m2m_secret_key).await {
                     Ok(new_token) => {
                         let mut auth_handle = convex.inner().clone();
                         auth_handle.set_auth(Some(new_token)).await;

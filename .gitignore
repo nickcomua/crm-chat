@@ -17,7 +17,6 @@ tgdb*
 .DS_Store
 .direnv
 .devenv
-.devenv-root
 result
 .fuse_hidden*
 

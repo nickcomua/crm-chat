@@ -71,21 +71,21 @@ erDiagram
 
 ## Authentication
 
-Dual JWT auth system:
+Dual JWT auth system — both validated by the same Clerk provider:
 
-- **Clerk JWTs** — for human users (frontend). Issuer: Clerk domain.
-- **Self-signed RS256 JWTs** — for robot services (telegram-subscriber). Issuer: `https://crm-chat-robot.local`.
+- **Clerk JWTs** — for human users (frontend). Subject: `user_*`.
+- **Clerk M2M JWTs** — for worker services (crm-worker). Subject: `mch_*`.
 
 Auth helpers in `helpers/auth.ts`:
 
 | Helper | Purpose |
 |--------|---------|
 | `requireAuth()` | Extract caller identity, throw if unauthenticated |
-| `requireHuman()` | Restrict to Clerk users |
-| `requireRobot()` | Restrict to robot services |
-| `isRobotCaller()` | Check if caller is a robot (no throw) |
+| `requireHuman()` | Restrict to Clerk human users |
+| `requireWorker()` | Restrict to Clerk M2M workers (`mch_` subject prefix) |
+| `isWorkerCaller()` | Check if caller is a worker (no throw) |
 | `requireOwner()` | Verify resource ownership (row-level security) |
-| `requireAssignedRobot()` | Verify robot is assigned to an auth session |
+| `requireAssignedWorker()` | Verify worker is assigned to an auth session |
 | `sendError()` | Insert an error notification for a user |
 
 ## Phone Auth State Machine
@@ -180,10 +180,10 @@ sequenceDiagram
 | `phoneAuth.active` | Human | — | `PhoneAuthPublicDoc[]` | Active phone auths (secrets stripped) |
 | `qrAuth.listForUser` | Human | — | `QrAuthDoc[]` | Active + most recent terminal QR auth |
 | `qrAuth.active` | Human | — | `QrAuthDoc[]` | Active QR auths only |
-| `phoneAuth.pendingForRobot` | Robot | — | `PhoneAuthDoc[]` | Unclaimed phone auths |
-| `phoneAuth.assignedToRobot` | Robot | — | `PhoneAuthDoc[]` | Phone auths assigned to caller |
-| `qrAuth.pendingForRobot` | Robot | — | `QrAuthDoc[]` | Unclaimed QR auths |
-| `qrAuth.assignedToRobot` | Robot | — | `QrAuthDoc[]` | QR auths assigned to caller |
+| `phoneAuth.pendingForRobot` | Worker | — | `PhoneAuthDoc[]` | Unclaimed phone auths |
+| `phoneAuth.assignedToRobot` | Worker | — | `PhoneAuthDoc[]` | Phone auths assigned to caller |
+| `qrAuth.pendingForRobot` | Worker | — | `QrAuthDoc[]` | Unclaimed QR auths |
+| `qrAuth.assignedToRobot` | Worker | — | `QrAuthDoc[]` | QR auths assigned to caller |
 
 ### Mutations
 
@@ -199,12 +199,12 @@ sequenceDiagram
 | `phoneAuth.submitCode` | Human | Submit SMS verification code |
 | `phoneAuth.submitPassword` | Human | Submit 2FA password |
 | `phoneAuth.cancel` | Human | Cancel phone auth |
-| `phoneAuth.robotClaim` | Robot | Claim a pending phone auth |
-| `phoneAuth.robotCompleteSendCode` | Robot | Report SMS send result |
-| `phoneAuth.robotCompleteVerifyCode` | Robot | Report code verification result |
-| `phoneAuth.robotCompleteVerifyPassword` | Robot | Report password verification result |
+| `phoneAuth.robotClaim` | Worker | Claim a pending phone auth |
+| `phoneAuth.robotCompleteSendCode` | Worker | Report SMS send result |
+| `phoneAuth.robotCompleteVerifyCode` | Worker | Report code verification result |
+| `phoneAuth.robotCompleteVerifyPassword` | Worker | Report password verification result |
 | `qrAuth.start` | Human | Start QR auth flow |
 | `qrAuth.cancel` | Human | Cancel QR auth |
-| `qrAuth.robotClaim` | Robot | Claim a pending QR auth |
-| `qrAuth.robotUpdateQrToken` | Robot | Provide QR code URL |
-| `qrAuth.robotCompleteQrAuth` | Robot | Report QR auth result |
+| `qrAuth.robotClaim` | Worker | Claim a pending QR auth |
+| `qrAuth.robotUpdateQrToken` | Worker | Provide QR code URL |
+| `qrAuth.robotCompleteQrAuth` | Worker | Report QR auth result |

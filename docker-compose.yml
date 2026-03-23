@@ -12,14 +12,6 @@ services:
       - ./target/restate-data:/restate-data
     environment:
       - RESTATE_NODE_NAME=crm-restate
-      - RESTATE_OBSERVABILITY__LOG__FORMAT=json
-      # Long-running handlers (TaskOrchestrator, UpdateListener) run subscription
-      # loops that may be idle for extended periods between events.
-      - RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT=24h
-      - RESTATE_WORKER__INVOKER__ABORT_TIMEOUT=25h
-      # Optional: send Restate traces to Sentry via OTEL ingest
-      - RESTATE_OBSERVABILITY__TRACING__ENDPOINT=${SENTRY_OTEL_ENDPOINT:-}
-      - RESTATE_OBSERVABILITY__TRACING__HEADERS=${SENTRY_OTEL_HEADERS:-}
     healthcheck:
       test: curl -f http://localhost:8080/restate/health
       interval: 5s
@@ -73,9 +65,7 @@ services:
       - TG_ID=${TG_ID}
       - TG_HASH=${TG_HASH}
       - CONVEX_URL=${CONVEX_URL:-http://localhost:3210}
-      - ROBOT_ID=${ROBOT_ID}
-      - ROBOT_KID=${ROBOT_KID}
-      - ROBOT_JWT_PRIVATE_KEY=${ROBOT_JWT_PRIVATE_KEY}
+      - CLERK_M2M_SECRET_KEY=${CLERK_M2M_SECRET_KEY}
       - RESTATE_ADMIN_URL=http://restate:9070
       - RESTATE_INGRESS_URL=http://restate:8080
       # crm-worker's port 9080 is now on the backend's network interface

@@ -21,7 +21,7 @@ let workerCfg: WorkerConfig;
 test.describe("Forwarded Messages — Backend", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
@@ -51,7 +51,7 @@ test.describe("Forwarded Messages — Backend", () => {
   });
 
   test("stores forwardedFrom on a message", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-fwd-1`;
     await seedMessage(
       userId,
@@ -84,7 +84,7 @@ test.describe("Forwarded Messages — Backend", () => {
   });
 
   test("forwardedFrom without date stores senderName only", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-fwd-nodate`;
     await seedMessage(
       userId,
@@ -112,7 +112,7 @@ test.describe("Forwarded Messages — Backend", () => {
   });
 
   test("normal message has no forwardedFrom", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-normal`;
     await seedMessage(userId, clientId, chatId, msgId, "Not forwarded", robot);
 
@@ -130,7 +130,7 @@ test.describe("Forwarded Messages — Backend", () => {
 test.describe("Forwarded Messages — UI", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });

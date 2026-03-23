@@ -23,7 +23,7 @@ let workerCfg: WorkerConfig;
  * Uses the robot client to query the task list.
  */
 async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
-  const robot = getRobotClient(workerCfg);
+  const robot = await getRobotClient(workerCfg);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -109,7 +109,7 @@ test.describe("QR Code Authentication", () => {
   }) => {
     // Drain pending ChatScanner tasks from tg-scan so the worker can
     // pick up our QrAuth task without contention.
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     await waitForPendingScanners(robot);
 
     // Click Add Client button

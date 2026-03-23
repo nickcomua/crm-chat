@@ -61,7 +61,7 @@ test.describe("Client Deletion", () => {
     test.fail();
 
     const telegramId = `telegram:deletion-bug-${Date.now()}`;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
 
     // 1. Worker discovers a session file and registers the client
     const clientId = (await robot.mutation(
@@ -96,7 +96,7 @@ test.describe("Client Deletion", () => {
   test("deleting client via UI removes it from settings list", async ({
     page,
   }) => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const testTelegramId = `telegram:del-ui-${Date.now()}`;
     await seedTestClient(userId, testTelegramId, robot);
 

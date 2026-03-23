@@ -29,7 +29,7 @@ test.describe("Replies — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:replies-test-${Date.now()}`,
@@ -51,7 +51,7 @@ test.describe("Replies — Backend", () => {
   });
 
   test("stores reply fields on a message", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const originalMsgId = `${chatId}:msg-original`;
     await seedMessage(
       userId,
@@ -96,7 +96,7 @@ test.describe("Replies — Backend", () => {
   });
 
   test("message without reply has no reply fields", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-no-reply`;
     await seedMessage(userId, clientId, chatId, msgId, "Not a reply", robot);
 
@@ -122,7 +122,7 @@ test.describe("Replies — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:replies-ui-${Date.now()}`,
@@ -185,7 +185,7 @@ test.describe("Replies — UI", () => {
   test("reply preview text is truncated for long messages", async ({
     page,
   }) => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     // Seed a reply to a very long message
     const longText = "A".repeat(200);
     const longMsgId = `${chatId}:ui-long-original`;

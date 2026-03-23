@@ -10,9 +10,7 @@ pub struct WorkerConfig {
     pub api_id: i32,
     pub api_hash: String,
     pub convex_url: String,
-    pub robot_id: String,
-    pub robot_kid: String,
-    pub private_key: String,
+    pub m2m_secret_key: String,
     pub restate_port: u16,
     /// Restate admin API URL for registering deployments (default: `http://localhost:9070`).
     pub restate_admin_url: String,
@@ -36,11 +34,8 @@ impl WorkerConfig {
             .expect("TG_ID must be a valid integer");
         let api_hash = env::var("TG_HASH").expect("TG_HASH environment variable not set");
         let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
-        let robot_id = env::var("ROBOT_ID").expect("ROBOT_ID must be set");
-        let robot_kid = env::var("ROBOT_KID").expect("ROBOT_KID must be set");
-        let private_key = env::var("ROBOT_JWT_PRIVATE_KEY")
-            .expect("ROBOT_JWT_PRIVATE_KEY must be set")
-            .replace("\\n", "\n");
+        let m2m_secret_key =
+            env::var("CLERK_M2M_SECRET_KEY").expect("CLERK_M2M_SECRET_KEY must be set");
         let restate_port: u16 = env::var("RESTATE_SERVICE_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -60,9 +55,7 @@ impl WorkerConfig {
             api_id,
             api_hash,
             convex_url,
-            robot_id,
-            robot_kid,
-            private_key,
+            m2m_secret_key,
             restate_port,
             restate_admin_url,
             restate_ingress_url,

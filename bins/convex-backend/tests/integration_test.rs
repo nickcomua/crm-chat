@@ -11,7 +11,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{assert_mutation_error, get_test_env, mint_robot_jwt};
+use common::{assert_mutation_error, fetch_m2m_jwt, get_test_env};
 use convex::ConvexClient;
 use convex_backend::{
     ConvexApi, ConvexApiClient, WorkerTasksPendingForWorkerArgs, WorkerTasksRunTaskArgs,
@@ -19,10 +19,10 @@ use convex_backend::{
 };
 use futures::StreamExt;
 
-/// Create a fresh ConvexApiClient authenticated as the test robot.
+/// Create a fresh ConvexApiClient authenticated via Clerk M2M.
 async fn connect_robot_client() -> ConvexApiClient {
     let env = get_test_env().await;
-    let token = mint_robot_jwt(&env.robot_private_key_pem, &env.robot_id);
+    let token = fetch_m2m_jwt(&env.m2m_secret_key).await;
     let mut client = ConvexClient::new(&env.convex_url)
         .await
         .expect("Failed to connect to Convex");

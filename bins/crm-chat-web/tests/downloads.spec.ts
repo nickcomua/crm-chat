@@ -32,7 +32,7 @@ test.describe("Downloads — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:dl-backend-${Date.now()}`,
@@ -54,7 +54,7 @@ test.describe("Downloads — Backend", () => {
   });
 
   test("seeds media at various statuses", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-msg-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Photo message", robot);
 
@@ -117,7 +117,7 @@ test.describe("Downloads — Backend", () => {
   });
 
   test("retryDownload changes Failed to Pending", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-retry-msg`;
     await seedMessage(userId, clientId, chatId, msgId, "Retry test", robot);
 
@@ -152,7 +152,7 @@ test.describe("Downloads — Backend", () => {
   });
 
   test("cancelDownload changes Pending to Skipped", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:dl-cancel-msg`;
     await seedMessage(userId, clientId, chatId, msgId, "Cancel test", robot);
 
@@ -195,7 +195,7 @@ test.describe("Downloads — UI", () => {
     await page.goto("/");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     userId = await getConvexUserId(page);
     clientId = await seedTestClient(
       userId,
@@ -269,7 +269,7 @@ test.describe("Downloads — UI", () => {
 
   test("downloads page renders status sections", async ({ page }) => {
     // Verify backend has the seeded data before checking UI
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const counts = (await robot.query(api.testHelpers.queryMediaCountByStatus, {
       userId,
       statuses: ["Pending", "Failed", "Stored"],

@@ -1,8 +1,5 @@
-// TODO delete this file
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-
-const ROBOT_ISSUER = "https://crm-chat-robot.local";
 
 /** Identity info extracted from ctx.auth */
 export type CallerIdentity = {
@@ -30,9 +27,11 @@ export async function requireAuth(
 	};
 }
 
-/** Check if a caller is a worker (custom JWT). */
+/** Check if a caller is a worker (Clerk M2M JWT with "mch_" subject prefix). */
 export function isWorkerCaller(caller: CallerIdentity): boolean {
-	return caller.issuer === ROBOT_ISSUER;
+	// Convex tokenIdentifier = "{issuer}|{subject}"
+	// Clerk M2M tokens have subject "mch_*", human tokens have "user_*"
+	return caller.id.includes("|mch_");
 }
 
 /** Require the caller to be a human (Clerk-authenticated). */

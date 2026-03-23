@@ -35,7 +35,7 @@ test.describe("Settings — Backend", () => {
   });
 
   test("registers a Connected client via robot API", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     connectedClientId = await seedTestClient(
       userId,
       `telegram:settings-connected-${Date.now()}`,
@@ -53,7 +53,7 @@ test.describe("Settings — Backend", () => {
   });
 
   test("client list returns registered clients", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     // Register a second client
     errorClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
       userId,
@@ -75,7 +75,7 @@ test.describe("Settings — Backend", () => {
   });
 
   test("deleteClient removes client from DB", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     // Create a throwaway client to delete
     const tempClientId = await seedTestClient(
       userId,
@@ -102,7 +102,7 @@ test.describe("Settings — Backend", () => {
   });
 
   test("deleteClient also removes associated chats", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     // seedTestClient creates a client + 3 chats. Verify deletion cascades.
     const tempClientId = await seedTestClient(
       userId,
@@ -147,7 +147,7 @@ test.describe("Settings — Backend", () => {
 test.describe("Settings — UI", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });

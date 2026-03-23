@@ -29,7 +29,7 @@ test.describe("Reactions — Backend", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:reactions-test-${Date.now()}`,
@@ -51,7 +51,7 @@ test.describe("Reactions — Backend", () => {
   });
 
   test("stores reactions on a message", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-1`;
     await seedMessage(userId, clientId, chatId, msgId, "Hello!", robot, {
       reactions: [
@@ -82,7 +82,7 @@ test.describe("Reactions — Backend", () => {
   });
 
   test("updates reaction count on existing message", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-react-2`;
     await seedMessage(userId, clientId, chatId, msgId, "Update me", robot, {
       reactions: [{ emoji: "😂", count: 1, recent: [{ userId: "user-a" }] }],
@@ -112,7 +112,7 @@ test.describe("Reactions — Backend", () => {
   });
 
   test("message without reactions has no reactions field", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:msg-no-react`;
     await seedMessage(
       userId,
@@ -145,7 +145,7 @@ test.describe("Reactions — UI", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:reactions-ui-${Date.now()}`,

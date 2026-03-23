@@ -6,7 +6,6 @@ use std::path::PathBuf;
 pub async fn deploy_convex(
     convex_url: &str,
     admin_key: &str,
-    jwks_data_uri: &str,
 ) -> anyhow::Result<()> {
     // Allow overriding via env var for nixosTest (where the binary runs in a VM)
     let convex_backend_dir = PathBuf::from(
@@ -28,20 +27,20 @@ pub async fn deploy_convex(
     }
 
     // Set environment variables in Convex's env store.
-    // auth.config.ts reads these via process.env at deploy time.
-    for (key, value) in [
-        ("CLERK_JWT_ISSUER_DOMAIN", "https://clerk.test.invalid"),
-        ("ROBOT_JWKS", jwks_data_uri),
-    ] {
-        let output = convex_cmd(&convex_backend_dir, convex_url, admin_key)
-            .args(["env", "set", key, value])
-            .output()
-            .await?;
+    // auth.config.ts reads CLERK_JWT_ISSUER_DOMAIN via process.env at deploy time.
+    let output = convex_cmd(&convex_backend_dir, convex_url, admin_key)
+        .args([
+            "env",
+            "set",
+            "CLERK_JWT_ISSUER_DOMAIN",
+            "https://noted-rabbit-14.clerk.accounts.dev",
+        ])
+        .output()
+        .await?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("convex env set {key} failed: {stderr}");
-        }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("convex env set CLERK_JWT_ISSUER_DOMAIN failed: {stderr}");
     }
 
     // Deploy functions
