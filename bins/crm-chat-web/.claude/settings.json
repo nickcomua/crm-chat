@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bunx ultracite fix"
+            "command": "bun x ultracite fix"
           }
         ]
       }

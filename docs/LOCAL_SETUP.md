@@ -101,7 +101,7 @@ Get this from the Clerk Dashboard under **Machines**. The worker uses this key t
 ```bash
 cd bins/convex-backend
 bun install
-bunx convex dev    # dev mode with hot-reload
+bun x convex dev    # dev mode with hot-reload
 ```
 
 This deploys your schema + queries + mutations to the self-hosted backend and generates typed bindings in `convex/_generated/`.
@@ -129,7 +129,7 @@ This builds all workspace members: `crm-worker`, `es-proxy`, and the messenger l
 ```bash
 cd bins/crm-chat-web
 bun install
-bunx vite dev
+bun x vite dev
 ```
 
 The dev server starts at **http://localhost:5173**. It connects to Convex at the URL from `VITE_CONVEX_URL` (defaults to `http://127.0.0.1:3210`).
@@ -176,7 +176,7 @@ open http://localhost:5173
 
 # Run tests
 cargo test --workspace
-cd bins/crm-chat-web && bunx ultracite check
+cd bins/crm-chat-web && bun x ultracite check
 ```
 
 ---
@@ -203,14 +203,14 @@ cargo fmt                                # format
 cargo nextest run                        # fast test runner
 
 # Frontend (from bins/crm-chat-web/)
-bunx vite dev                             # dev server
-bunx vite build                           # production build
-bunx ultracite fix                        # auto-fix lint/format
-bunx ultracite check                      # verify compliance
+bun x vite dev                             # dev server
+bun x vite build                           # production build
+bun x ultracite fix                        # auto-fix lint/format
+bun x ultracite check                      # verify compliance
 
 # Convex (from bins/convex-backend/)
-bunx convex dev                           # dev with hot-reload
-bunx convex deploy                        # deploy to self-hosted
+bun x convex dev                           # dev with hot-reload
+bun x convex deploy                        # deploy to self-hosted
 
 # Docker
 docker compose up -d                     # start all services

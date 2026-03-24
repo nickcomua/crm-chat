@@ -30,7 +30,7 @@ jobs:
         run: nix develop --accept-flake-config --command bun install --frozen-lockfile
 
       - name: Install Playwright Browsers
-        run: nix develop --accept-flake-config --command bunx playwright install chromium --with-deps
+        run: nix develop --accept-flake-config --command bun x playwright install chromium --with-deps
 
       - name: Run integration tests
         run: nix develop --accept-flake-config --command bun test

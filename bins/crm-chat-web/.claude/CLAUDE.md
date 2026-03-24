@@ -14,9 +14,9 @@ This project uses **Ultracite**, a zero-config preset that enforces strict code 
 
 ### Quick Reference
 
-- **Format code**: `bunx ultracite fix`
-- **Check for issues**: `bunx ultracite check`
-- **Diagnose setup**: `bunx ultracite doctor`
+- **Format code**: `bun x ultracite fix`
+- **Check for issues**: `bun x ultracite check`
+- **Diagnose setup**: `bun x ultracite doctor`
 
 Biome (the underlying engine) provides robust linting and formatting. Most issues are automatically fixable.
 
@@ -120,4 +120,4 @@ Biome's linter will catch most issues automatically. Focus your attention on:
 
 ---
 
-Most formatting and common issues are automatically fixed by Biome. Run `bunx ultracite fix` before committing to ensure compliance.
+Most formatting and common issues are automatically fixed by Biome. Run `bun x ultracite fix` before committing to ensure compliance.
