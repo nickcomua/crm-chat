@@ -10,6 +10,7 @@
 
 import type * as chats from "../chats.js";
 import type * as clients from "../clients.js";
+import type * as env from "../env.js";
 import type * as functions from "../functions.js";
 import type * as helpers_auth from "../helpers/auth.js";
 import type * as helpers_result from "../helpers/result.js";
@@ -34,6 +35,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   chats: typeof chats;
   clients: typeof clients;
+  env: typeof env;
   functions: typeof functions;
   "helpers/auth": typeof helpers_auth;
   "helpers/result": typeof helpers_result;

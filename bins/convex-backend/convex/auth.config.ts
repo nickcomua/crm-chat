@@ -1,6 +1,5 @@
 import type { AuthConfig } from "convex/server";
-
-const domain = process.env.CLERK_JWT_ISSUER_DOMAIN as string;
+import { env } from "./env";
 
 const authConfig: AuthConfig = {
 	providers: [
@@ -10,8 +9,8 @@ const authConfig: AuthConfig = {
 			// Using customJwt without applicationID because Clerk M2M JWTs
 			// have aud:[] (empty). Issuer is still validated.
 			type: "customJwt",
-			issuer: domain,
-			jwks: `${domain}/.well-known/jwks.json`,
+			issuer: env.CLERK_JWT_ISSUER_DOMAIN,
+			jwks: `${env.CLERK_JWT_ISSUER_DOMAIN}/.well-known/jwks.json`,
 			algorithm: "RS256",
 		},
 	],
