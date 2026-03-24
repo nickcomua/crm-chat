@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "crm-chat-convex-backend/convex/_generated/api";
 import type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
+import { env } from "./env.ts";
 
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
@@ -59,8 +60,6 @@ export async function getRobotClient(
 export { api } from "crm-chat-convex-backend/convex/_generated/api";
 export type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 
-const CLERK_ISSUER_DOMAIN = "https://noted-rabbit-14.clerk.accounts.dev";
-
 /**
  * Extract the Convex tokenIdentifier (userId) from the browser after Clerk login.
  *
@@ -87,7 +86,7 @@ export async function getConvexUserId(page: Page): Promise<string> {
     );
   }
 
-  return `${CLERK_ISSUER_DOMAIN}|${id}`;
+  return `${env.CLERK_JWT_ISSUER_DOMAIN}|${id}`;
 }
 
 /**

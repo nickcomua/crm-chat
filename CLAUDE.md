@@ -62,7 +62,7 @@ This is a Rust/TypeScript monorepo with a self-hosted Convex backend and React f
   - `convex/helpers/auth.ts` — shared auth helpers (requireHuman, requireRobot, requireOwner)
   - Auth is modeled as table-based state machines (`phoneAuth.ts`, `qrAuth.ts`)
   - Dual auth: Clerk JWTs for humans, Clerk M2M JWTs for worker services
-  - Run with `bun x convex dev` (reads `.env.local` for self-hosted URL and admin key)
+  - Run with `bun x convex dev` (reads `.env` for self-hosted URL and admin key)
 - **bins/telegram-subscriber**: Rust service that connects to Convex via the Rust SDK, subscribes to auth queries, and spawns Telegram client connections
 - **bins/es-proxy**: Elasticsearch proxy for semantic search / embeddings
 - **bins/qr-login-test**: QR login testing utility
