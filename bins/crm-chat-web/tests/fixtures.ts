@@ -1,3 +1,4 @@
+/* eslint-disable no-empty-pattern */
 import { type ChildProcess, spawn } from "node:child_process";
 import {
 	existsSync,
@@ -208,6 +209,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		await use(workerBackend.baseURL);
 	},
 	workerBackend: [
+		// biome-ignore lint/correctness/noEmptyPattern: playwright whant this
 		async ({}, use) => {
 			ensureDockerHost();
 

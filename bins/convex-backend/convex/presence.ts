@@ -33,12 +33,12 @@ const presence = new Presence(components.presence);
 
 /** Returns the authenticated user's tokenIdentifier for the React hook. */
 export const getUserId = query({
-	args: {},
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx) => {
-		const identity = await ctx.auth.getUserIdentity();
-		return identity?.tokenIdentifier ?? null;
-	},
+  args: {},
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    return identity?.tokenIdentifier ?? null;
+  },
 });
 
 /**
@@ -51,55 +51,55 @@ export const getUserId = query({
  * 4. Delegates to the presence component for session tracking.
  */
 export const heartbeat = mutation({
-	args: {
-		roomId: v.string(),
-		userId: v.string(),
-		sessionId: v.string(),
-		interval: v.number(),
-	},
-	returns: v.object({
-		roomToken: v.string(),
-		sessionToken: v.string(),
-	}),
-	handler: async (ctx, { roomId, sessionId, interval }) => {
-		const caller = await requireHuman(ctx);
+  args: {
+    roomId: v.string(),
+    userId: v.string(),
+    sessionId: v.string(),
+    interval: v.number(),
+  },
+  returns: v.object({
+    roomToken: v.string(),
+    sessionToken: v.string(),
+  }),
+  handler: async (ctx, { roomId, sessionId, interval }) => {
+    const caller = await requireHuman(ctx);
 
-		// Upsert humans row — mark online
-		const existing = await ctx.db
-			.query("humans")
-			.withIndex("by_userId", (q) => q.eq("userId", caller.id))
-			.unique();
+    // Upsert humans row — mark online
+    const existing = await ctx.db
+      .query("humans")
+      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
+      .unique();
 
-		// Cancel previous timeout
-		if (existing?.timeoutId) {
-			await ctx.scheduler.cancel(existing.timeoutId);
-		}
+    // Cancel previous timeout
+    if (existing?.timeoutId) {
+      await ctx.scheduler.cancel(existing.timeoutId);
+    }
 
-		// Schedule new timeout at 2.5× interval
-		const timeoutId = await ctx.scheduler.runAfter(
-			interval * 2.5,
-			internal.presence.setOffline,
-			{ userId: caller.id },
-		);
+    // Schedule new timeout at 2.5× interval
+    const timeoutId = await ctx.scheduler.runAfter(
+      interval * 2.5,
+      internal.presence.setOffline,
+      { userId: caller.id }
+    );
 
-		if (existing) {
-			await ctx.db.patch(existing._id, { online: true, timeoutId });
-		} else {
-			await ctx.db.insert("humans", {
-				userId: caller.id,
-				online: true,
-				timeoutId,
-			});
-		}
+    if (existing) {
+      await ctx.db.patch(existing._id, { online: true, timeoutId });
+    } else {
+      await ctx.db.insert("humans", {
+        userId: caller.id,
+        online: true,
+        timeoutId,
+      });
+    }
 
-		return await presence.heartbeat(
-			ctx,
-			roomId,
-			caller.id,
-			sessionId,
-			interval,
-		);
-	},
+    return await presence.heartbeat(
+      ctx,
+      roomId,
+      caller.id,
+      sessionId,
+      interval
+    );
+  },
 });
 
 /**
@@ -113,31 +113,33 @@ export const heartbeat = mutation({
  * so we use `presence.listRoom` to find who just went offline.
  */
 export const disconnect = mutation({
-	args: { sessionToken: v.string() },
-	handler: async (ctx, { sessionToken }) => {
-		await presence.disconnect(ctx, sessionToken);
+  args: { sessionToken: v.string() },
+  handler: async (ctx, { sessionToken }) => {
+    await presence.disconnect(ctx, sessionToken);
 
-		// After disconnect, check all online humans — mark any that are now
-		// fully offline (no remaining sessions in the "global" room).
-		const humans = await ctx.db
-			.query("humans")
-			.withIndex("by_userId")
-			.collect();
-		for (const human of humans) {
-			if (!human.online) continue;
-			const rooms = await presence.listUser(ctx, human.userId, true);
-			if (rooms.length === 0) {
-				// Cancel pending timeout since we're setting offline now
-				if (human.timeoutId) {
-					await ctx.scheduler.cancel(human.timeoutId);
-				}
-				await ctx.db.patch(human._id, {
-					online: false,
-					timeoutId: undefined,
-				});
-			}
-		}
-	},
+    // After disconnect, check all online humans — mark any that are now
+    // fully offline (no remaining sessions in the "global" room).
+    const humans = await ctx.db
+      .query("humans")
+      .withIndex("by_userId")
+      .collect();
+    for (const human of humans) {
+      if (!human.online) {
+        continue;
+      }
+      const rooms = await presence.listUser(ctx, human.userId, true);
+      if (rooms.length === 0) {
+        // Cancel pending timeout since we're setting offline now
+        if (human.timeoutId) {
+          await ctx.scheduler.cancel(human.timeoutId);
+        }
+        await ctx.db.patch(human._id, {
+          online: false,
+          timeoutId: undefined,
+        });
+      }
+    }
+  },
 });
 
 /**
@@ -148,21 +150,21 @@ export const disconnect = mutation({
  * stop. Patching `online: false` fires the trigger in `functions.ts`.
  */
 export const setOffline = internalMutation({
-	args: { userId: v.string() },
-	returns: v.null(),
-	handler: async (ctx, { userId }) => {
-		const human = await ctx.db
-			.query("humans")
-			.withIndex("by_userId", (q) => q.eq("userId", userId))
-			.unique();
-		if (human?.online) {
-			await ctx.db.patch(human._id, {
-				online: false,
-				timeoutId: undefined,
-			});
-		}
-		return null;
-	},
+  args: { userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId }) => {
+    const human = await ctx.db
+      .query("humans")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .unique();
+    if (human?.online) {
+      await ctx.db.patch(human._id, {
+        online: false,
+        timeoutId: undefined,
+      });
+    }
+    return null;
+  },
 });
 
 /**
@@ -170,8 +172,8 @@ export const setOffline = internalMutation({
  * reactively display who's online.
  */
 export const list = query({
-	args: { roomToken: v.string() },
-	handler: async (ctx, { roomToken }) => {
-		return await presence.list(ctx, roomToken);
-	},
+  args: { roomToken: v.string() },
+  handler: async (ctx, { roomToken }) => {
+    return await presence.list(ctx, roomToken);
+  },
 });

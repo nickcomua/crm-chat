@@ -240,7 +240,7 @@ function ClientCard({
             </CardTitle>
             <CardDescription className="text-xs">
               {client.scanningChatIds.length} active chat
-              {client.scanningChatIds.length !== 1 ? "s" : ""}
+              {client.scanningChatIds.length === 1 ? "" : "s"}
             </CardDescription>
           </div>
           <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

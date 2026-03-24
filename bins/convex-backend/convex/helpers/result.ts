@@ -28,11 +28,11 @@ export function result<
   E extends Validator<any, "required", any>,
 >(
   okValidator: T,
-  errValidator: E,
+  errValidator: E
 ): Validator<{ Ok: T["type"] } | { Err: E["type"] }, "required", string> {
   return v.union(
     v.object({ Ok: okValidator }),
-    v.object({ Err: errValidator }),
+    v.object({ Err: errValidator })
   ) as any;
 }
 

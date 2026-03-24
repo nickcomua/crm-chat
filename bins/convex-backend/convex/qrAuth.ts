@@ -33,13 +33,27 @@ export const start = mutation({
 /** User cancels the QR auth flow. Worker detects via status subscription. */
 export const cancel = mutation({
   args: { taskId: v.id("workerTasks") },
-  returns: result(v.null(), v.union(v.literal("Task not found"), v.literal("Unauthorized"), v.literal("Not a QR auth task"), v.literal("Cannot cancel: auth is already in a terminal state"))),
+  returns: result(
+    v.null(),
+    v.union(
+      v.literal("Task not found"),
+      v.literal("Unauthorized"),
+      v.literal("Not a QR auth task"),
+      v.literal("Cannot cancel: auth is already in a terminal state")
+    )
+  ),
   handler: async (ctx, { taskId }) => {
     const caller = await requireHuman(ctx);
     const task = await ctx.db.get(taskId);
-    if (!task) return err("Task not found");
-    if (task.userId !== caller.id) return err("Unauthorized");
-    if (task.task.type !== "QrAuth") return err("Not a QR auth task");
+    if (!task) {
+      return err("Task not found");
+    }
+    if (task.userId !== caller.id) {
+      return err("Unauthorized");
+    }
+    if (task.task.type !== "QrAuth") {
+      return err("Not a QR auth task");
+    }
 
     if (isQrAuthTerminal(task.task.step)) {
       return err("Cannot cancel: auth is already in a terminal state");
@@ -60,69 +74,77 @@ export const cancel = mutation({
 // =============================================================================
 
 interface QrAuthTask {
-	type: "QrAuth";
-	step: string;
-	telegramUserId?: bigint;
-	phoneNumber?: string;
-	error?: string;
+  error?: string;
+  phoneNumber?: string;
+  step: string;
+  telegramUserId?: bigint;
+  type: "QrAuth";
 }
 
 export async function completeQrAuth(
-	ctx: MutationCtx,
-	ownerUserId: string | undefined,
-	task: QrAuthTask,
+  ctx: MutationCtx,
+  ownerUserId: string | undefined,
+  task: QrAuthTask
 ): Promise<void> {
-	if (!ownerUserId) throw new Error("QrAuth task has no userId");
+  if (!ownerUserId) {
+    throw new Error("QrAuth task has no userId");
+  }
 
-	if (task.step === "Authorized" || task.step === "AlreadyAuthorized") {
-		if (!task.telegramUserId) throw new Error("QrAuth completion requires telegramUserId");
+  if (task.step === "Authorized" || task.step === "AlreadyAuthorized") {
+    if (!task.telegramUserId) {
+      throw new Error("QrAuth completion requires telegramUserId");
+    }
 
-		const numericId = task.telegramUserId.toString();
-		// Normalize phone: Telegram API returns without +, we always store with +
-		const phone = task.phoneNumber;
-		const normalizedPhone = phone
-			? phone.startsWith("+") ? phone : `+${phone}`
-			: null;
-		// Canonical telegramId: prefer phone, fall back to numeric ID
-		const telegramId = normalizedPhone
-			? `telegram:${normalizedPhone}`
-			: `telegram:${numericId}`;
+    const numericId = task.telegramUserId.toString();
+    // Normalize phone: Telegram API returns without +, we always store with +
+    const phone = task.phoneNumber;
+    let normalizedPhone: string | null = null;
+    if (phone) {
+      normalizedPhone = phone.startsWith("+") ? phone : `+${phone}`;
+    }
+    // Canonical telegramId: prefer phone, fall back to numeric ID
+    const telegramId = normalizedPhone
+      ? `telegram:${normalizedPhone}`
+      : `telegram:${numericId}`;
 
-		const existing = await ctx.db
-			.query("clients")
-			.withIndex("by_userId_telegramId", (q) =>
-				q.eq("userId", ownerUserId).eq("telegramId", telegramId),
-			)
-			.unique();
+    const existing = await ctx.db
+      .query("clients")
+      .withIndex("by_userId_telegramId", (q) =>
+        q.eq("userId", ownerUserId).eq("telegramId", telegramId)
+      )
+      .unique();
 
-		let clientId: Id<"clients">;
-		if (existing) {
-			await ctx.db.patch(existing._id, {
-				status: { type: "Connected" },
-				externalId: numericId,
-				...(normalizedPhone ? { phoneNumber: normalizedPhone } : {}),
-			});
-			clientId = existing._id;
-		} else {
-			clientId = await ctx.db.insert("clients", {
-				userId: ownerUserId,
-				kind: "Telegram",
-				telegramId,
-				externalId: numericId,
-				phoneNumber: normalizedPhone ?? undefined,
-				scanningChatIds: [],
-				status: { type: "Connected" },
-			});
-		}
+    let clientId: Id<"clients">;
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: { type: "Connected" },
+        externalId: numericId,
+        ...(normalizedPhone ? { phoneNumber: normalizedPhone } : {}),
+      });
+      clientId = existing._id;
+    } else {
+      clientId = await ctx.db.insert("clients", {
+        userId: ownerUserId,
+        kind: "Telegram",
+        telegramId,
+        externalId: numericId,
+        phoneNumber: normalizedPhone ?? undefined,
+        scanningChatIds: [],
+        status: { type: "Connected" },
+      });
+    }
 
-		await enqueueTask(ctx, {
-			type: "UpdateListener",
-			clientId,
-			userId: ownerUserId,
-			telegramId,
-		});
-	} else if (task.step === "Failed") {
-		await sendError(ctx, ownerUserId, `QR code login failed: ${task.error ?? "unknown error"}`);
-	}
+    await enqueueTask(ctx, {
+      type: "UpdateListener",
+      clientId,
+      userId: ownerUserId,
+      telegramId,
+    });
+  } else if (task.step === "Failed") {
+    await sendError(
+      ctx,
+      ownerUserId,
+      `QR code login failed: ${task.error ?? "unknown error"}`
+    );
+  }
 }
-

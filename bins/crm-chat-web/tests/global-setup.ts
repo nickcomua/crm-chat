@@ -60,12 +60,12 @@ export default function globalSetup(): void {
   });
   if (bunResult.error) {
     throw new Error(
-      `bun install could not be started: ${bunResult.error.message}`,
+      `bun install could not be started: ${bunResult.error.message}`
     );
   }
   if (bunResult.status !== 0) {
     throw new Error(
-      `bun install failed:\n${bunResult.stdout}\n${bunResult.stderr}`,
+      `bun install failed:\n${bunResult.stdout}\n${bunResult.stderr}`
     );
   }
 
@@ -84,16 +84,16 @@ export default function globalSetup(): void {
         DEVELOPER_DIR:
           process.env.DEVELOPER_DIR ?? "/Library/Developer/CommandLineTools",
       },
-    },
+    }
   );
   if (buildResult.error) {
     throw new Error(
-      `cargo build could not be started: ${buildResult.error.message}`,
+      `cargo build could not be started: ${buildResult.error.message}`
     );
   }
   if (buildResult.status !== 0) {
     throw new Error(
-      `cargo build failed:\n${buildResult.stdout}\n${buildResult.stderr}`,
+      `cargo build failed:\n${buildResult.stdout}\n${buildResult.stderr}`
     );
   }
 

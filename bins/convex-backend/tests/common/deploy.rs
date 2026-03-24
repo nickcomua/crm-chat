@@ -3,10 +3,7 @@ use std::path::PathBuf;
 /// Deploy Convex functions to a running backend instance.
 ///
 /// Sets required environment variables in Convex's env store, then deploys.
-pub async fn deploy_convex(
-    convex_url: &str,
-    admin_key: &str,
-) -> anyhow::Result<()> {
+pub async fn deploy_convex(convex_url: &str, admin_key: &str) -> anyhow::Result<()> {
     // Allow overriding via env var for nixosTest (where the binary runs in a VM)
     let convex_backend_dir = PathBuf::from(
         std::env::var("CONVEX_BACKEND_DIR")

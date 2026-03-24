@@ -2,7 +2,6 @@ import { v } from "convex/values";
 
 import { query } from "./_generated/server";
 import { mutation } from "./functions";
-import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
 import {
   isPhoneAuthTerminal,
   requireHuman,
@@ -12,20 +11,24 @@ import {
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
 import { cancelClientTasks, enqueueTask } from "./helpers/tasks";
+import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
 
 // =============================================================================
 // Validation — returns error string or null
 // =============================================================================
 
+const PHONE_RE = /^\+\d{7,15}$/;
+const AUTH_CODE_RE = /^\d{5}$/;
+
 function validatePhone(phone: string): string | null {
-  if (!/^\+\d{7,15}$/.test(phone)) {
+  if (!PHONE_RE.test(phone)) {
     return "Invalid phone number format. Use international format (e.g., +1234567890)";
   }
   return null;
 }
 
 function validateAuthCode(code: string): string | null {
-  if (!/^\d{5}$/.test(code)) {
+  if (!AUTH_CODE_RE.test(code)) {
     return "Invalid code. Must be exactly 5 digits";
   }
   return null;
@@ -54,8 +57,16 @@ export const active = query({
       .collect();
     return all
       .filter((a) => !isPhoneAuthTerminal(a.step))
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      .map(({ phoneCodeHash, loginCode, password, passwordToken, claimedByWorkerId, ...rest }) => rest);
+      .map(
+        ({
+          phoneCodeHash: _phoneCodeHash,
+          loginCode: _loginCode,
+          password: _password,
+          passwordToken: _passwordToken,
+          claimedByWorkerId: _claimedByWorkerId,
+          ...rest
+        }) => rest
+      );
   },
 });
 
@@ -83,7 +94,9 @@ export const start = mutation({
   handler: async (ctx, { phone }) => {
     const caller = await requireHuman(ctx);
     const phoneErr = validatePhone(phone);
-    if (phoneErr) return err(phoneErr);
+    if (phoneErr) {
+      return err(phoneErr);
+    }
     const now = Date.now();
 
     const telegramId = `telegram:${phone}`;
@@ -92,7 +105,7 @@ export const start = mutation({
     const existing = await ctx.db
       .query("clients")
       .withIndex("by_userId_telegramId", (q) =>
-        q.eq("userId", caller.id).eq("telegramId", telegramId),
+        q.eq("userId", caller.id).eq("telegramId", telegramId)
       )
       .unique();
 
@@ -132,14 +145,18 @@ export const submitCode = mutation({
   handler: async (ctx, { authId, code }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
     requireOwner(caller.id, auth.userId);
 
     if (auth.step !== "WaitingCode") {
       return err(`Invalid step: expected WaitingCode, got ${auth.step}`);
     }
     const codeErr = validateAuthCode(code);
-    if (codeErr) return err(codeErr);
+    if (codeErr) {
+      return err(codeErr);
+    }
 
     // Worker detects VerifyingCode step via subscription — no task enqueue needed
     await ctx.db.patch(authId, {
@@ -159,14 +176,18 @@ export const submitPassword = mutation({
   handler: async (ctx, { authId, password }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
     requireOwner(caller.id, auth.userId);
 
     if (auth.step !== "WaitingPassword") {
       return err(`Invalid step: expected WaitingPassword, got ${auth.step}`);
     }
     const pwErr = validatePassword(password);
-    if (pwErr) return err(pwErr);
+    if (pwErr) {
+      return err(pwErr);
+    }
 
     // Worker detects VerifyingPassword step via subscription — no task enqueue needed
     await ctx.db.patch(authId, {
@@ -182,11 +203,19 @@ export const submitPassword = mutation({
 /** User cancels the phone auth flow. Worker detects via task status + phoneAuth step. */
 export const cancel = mutation({
   args: { authId: v.id("phoneAuths") },
-  returns: result(v.null(), v.union(v.literal("PhoneAuth not found"), v.literal("Cannot cancel: auth is already in a terminal state"))),
+  returns: result(
+    v.null(),
+    v.union(
+      v.literal("PhoneAuth not found"),
+      v.literal("Cannot cancel: auth is already in a terminal state")
+    )
+  ),
   handler: async (ctx, { authId }) => {
     const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
     requireOwner(caller.id, auth.userId);
 
     if (isPhoneAuthTerminal(auth.step)) {
@@ -232,15 +261,16 @@ export const workerCompleteSendCode = mutation({
     result: v.union(
       v.object({ type: v.literal("Success"), phoneCodeHash: v.string() }),
       v.object({ type: v.literal("AlreadyAuthorized") }),
-      v.object({ type: v.literal("Failed"), error: v.string() }),
+      v.object({ type: v.literal("Failed"), error: v.string() })
     ),
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: sendCodeResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
-
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
 
     if (auth.step !== "SendingCode") {
       return err(`Invalid step: expected SendingCode, got ${auth.step}`);
@@ -276,7 +306,11 @@ export const workerCompleteSendCode = mutation({
     } else {
       // Failed
       await ctx.db.delete(auth.clientId);
-      await sendError(ctx, auth.userId, `Failed to send login code: ${sendCodeResult.error}`);
+      await sendError(
+        ctx,
+        auth.userId,
+        `Failed to send login code: ${sendCodeResult.error}`
+      );
       await ctx.db.patch(authId, {
         step: "Failed",
         error: sendCodeResult.error,
@@ -300,15 +334,16 @@ export const workerCompleteVerifyCode = mutation({
         passwordToken: v.string(),
       }),
       v.object({ type: v.literal("SignUpRequired") }),
-      v.object({ type: v.literal("Failed"), error: v.string() }),
+      v.object({ type: v.literal("Failed"), error: v.string() })
     ),
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: verifyResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
-
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
 
     if (auth.step !== "VerifyingCode") {
       return err(`Invalid step: expected VerifyingCode, got ${auth.step}`);
@@ -359,7 +394,7 @@ export const workerCompleteVerifyCode = mutation({
         await sendError(
           ctx,
           auth.userId,
-          "Sign up required. This phone number is not registered with Telegram.",
+          "Sign up required. This phone number is not registered with Telegram."
         );
         await ctx.db.patch(authId, {
           step: "Failed",
@@ -370,13 +405,22 @@ export const workerCompleteVerifyCode = mutation({
 
       case "Failed":
         await ctx.db.delete(auth.clientId);
-        await sendError(ctx, auth.userId, `Failed to verify login code: ${verifyResult.error}`);
+        await sendError(
+          ctx,
+          auth.userId,
+          `Failed to verify login code: ${verifyResult.error}`
+        );
         await ctx.db.patch(authId, {
           step: "Failed",
           error: verifyResult.error,
           updatedAt: now,
         });
         break;
+
+      default:
+        throw new Error(
+          `Unknown verify result type: ${(verifyResult as { type: string }).type}`
+        );
     }
     return ok(null);
   },
@@ -389,15 +433,16 @@ export const workerCompleteVerifyPassword = mutation({
     result: v.union(
       v.object({ type: v.literal("Success"), userId: v.int64() }),
       v.object({ type: v.literal("InvalidPassword") }),
-      v.object({ type: v.literal("Failed"), error: v.string() }),
+      v.object({ type: v.literal("Failed"), error: v.string() })
     ),
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: pwResult }) => {
     await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth) return err("PhoneAuth not found");
-
+    if (!auth) {
+      return err("PhoneAuth not found");
+    }
 
     if (auth.step !== "VerifyingPassword") {
       return err(`Invalid step: expected VerifyingPassword, got ${auth.step}`);
@@ -426,7 +471,11 @@ export const workerCompleteVerifyPassword = mutation({
       }
 
       case "InvalidPassword":
-        await sendError(ctx, auth.userId, "Invalid password. Please try again.");
+        await sendError(
+          ctx,
+          auth.userId,
+          "Invalid password. Please try again."
+        );
         await ctx.db.patch(authId, {
           password: undefined,
           step: "WaitingPassword",
@@ -436,13 +485,22 @@ export const workerCompleteVerifyPassword = mutation({
 
       case "Failed":
         await ctx.db.delete(auth.clientId);
-        await sendError(ctx, auth.userId, `Failed to verify password: ${pwResult.error}`);
+        await sendError(
+          ctx,
+          auth.userId,
+          `Failed to verify password: ${pwResult.error}`
+        );
         await ctx.db.patch(authId, {
           step: "Failed",
           error: pwResult.error,
           updatedAt: now,
         });
         break;
+
+      default:
+        throw new Error(
+          `Unknown password result type: ${(pwResult as { type: string }).type}`
+        );
     }
     return ok(null);
   },
