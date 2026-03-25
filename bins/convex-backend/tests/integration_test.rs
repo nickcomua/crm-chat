@@ -13,9 +13,7 @@ use std::time::Duration;
 
 use common::{assert_mutation_error, fetch_m2m_jwt, get_test_env};
 use convex::ConvexClient;
-use convex_backend::{
-    ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient, OrchestratorPendingWorkArgs,
-};
+use convex_backend::{ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient};
 use futures::StreamExt;
 
 /// Create a fresh ConvexApiClient authenticated via Clerk M2M.
@@ -36,13 +34,11 @@ async fn connect_robot_client() -> ConvexApiClient {
 // =============================================================================
 
 #[tokio::test]
-async fn test_subscribe_orchestrator_pending_work_empty() {
+async fn test_subscribe_clients_pending_work_empty() {
     let client = connect_robot_client().await;
 
     let mut sub = client
-        .subscribe_orchestrator_pending_work(OrchestratorPendingWorkArgs {
-            maxMediaDownloads: None,
-        })
+        .subscribe_clients_pending_work()
         .await
         .expect("Failed to subscribe");
 
@@ -60,13 +56,11 @@ async fn test_subscribe_orchestrator_pending_work_empty() {
 }
 
 #[tokio::test]
-async fn test_query_orchestrator_pending_work_empty() {
+async fn test_query_clients_pending_work_empty() {
     let client = connect_robot_client().await;
 
     let result = client
-        .query_orchestrator_pending_work(OrchestratorPendingWorkArgs {
-            maxMediaDownloads: Some(2.0),
-        })
+        .query_clients_pending_work()
         .await
         .expect("Query failed");
 
@@ -98,16 +92,6 @@ async fn test_worker_start_sync_invalid_id() {
 // =============================================================================
 // Args Serialization (no container needed, but grouped here for convenience)
 // =============================================================================
-
-#[tokio::test]
-async fn test_orchestrator_args_serialization() {
-    let args = OrchestratorPendingWorkArgs {
-        maxMediaDownloads: Some(5.0),
-    };
-    let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("maxMediaDownloads"), Some(&serde_json::json!(5.0)));
-    assert_eq!(map.len(), 1);
-}
 
 #[tokio::test]
 async fn test_worker_start_sync_args_serialization() {

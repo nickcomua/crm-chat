@@ -18,10 +18,8 @@ testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 futures = "0.3"
-# convex-typegen = { path = "../../../convex-typegen" }   
 convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
 tempfile = "3"
 
 [build-dependencies]
-# convex-typegen = { path = "../../../convex-typegen" }
 convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }

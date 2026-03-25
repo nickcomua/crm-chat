@@ -1,5 +1,5 @@
 //! Reconciler — Kubernetes-style reconciliation loop that subscribes to
-//! `orchestrator.pendingWork` and dispatches new work items to Restate.
+//! per-table `pendingWork` queries and dispatches new work items to Restate.
 //!
 //! No task table, no `markDispatched`, no `resetStale`.
 //! Domain entity state IS the queue. The reconciler maintains an in-memory
@@ -12,8 +12,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use convex_backend::{
-    ClientsWorkerRegisterConnectedArgs, ConvexApi, ConvexApiClient, OrchestratorPendingWorkArgs,
-    OrchestratorPendingWorkReturn,
+    ClientsWorkerRegisterConnectedArgs, ConvexApi, ConvexApiClient, MediaPendingWorkArgs,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -26,20 +25,12 @@ use crate::config::WorkerConfig;
 use crate::error::WorkerError;
 use crate::session_manager::{SessionManager, TelegramSessionManager};
 
-/// Extract (service, key, handler) from any `OrchestratorPendingWorkReturn` variant.
-///
-/// The generated enum has 7 untagged variants (one per work item type in the union),
-/// but they all share the same shape: `{ service, key, handler }`.
-fn work_item_fields(item: &OrchestratorPendingWorkReturn) -> (&str, &str, &str) {
-    match item {
-        OrchestratorPendingWorkReturn::Object(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object2(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object3(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object4(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object5(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object6(o) => (&o.service, &o.key, &o.handler),
-        OrchestratorPendingWorkReturn::Object7(o) => (&o.service, &o.key, &o.handler),
-    }
+/// Work item extracted from any per-table `pendingWork` return.
+/// All generated return types share the same `{ service, key, handler }` shape.
+struct WorkItem {
+    service: String,
+    key: String,
+    handler: String,
 }
 
 /// Fire-and-forget dispatch to a Restate service handler via HTTP ingress.
@@ -73,6 +64,25 @@ async fn restate_send(
     }
 }
 
+/// Reconcile a batch of work items: dispatch new ones, return their keys for tracking.
+async fn reconcile_batch(
+    items: &[WorkItem],
+    in_flight: &HashSet<(String, String)>,
+    http: &reqwest::Client,
+    ingress_url: &str,
+) -> Vec<(String, String)> {
+    let mut newly_dispatched = Vec::new();
+    for item in items {
+        let flight_key = (item.service.clone(), item.key.clone());
+        if !in_flight.contains(&flight_key) {
+            restate_send(http, ingress_url, &item.service, &item.key, &item.handler).await;
+            info!(service = %item.service, key = %item.key, handler = %item.handler, "Work dispatched");
+            newly_dispatched.push(flight_key);
+        }
+    }
+    newly_dispatched
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Main reconciliation loop
 // ────────────────────────────────────────────────────────────────────────────
@@ -91,9 +101,6 @@ pub async fn run_reconciler(
     info!("Reconciler: discovering sessions");
     discover_and_register_sessions(convex, config, sessions).await;
 
-    // No resetStale needed — on restart, in_flight is empty, everything
-    // re-dispatches, Restate deduplicates by virtual-object key.
-
     let http = reqwest::Client::new();
     let mut in_flight: HashSet<(String, String)> = HashSet::new();
 
@@ -107,11 +114,23 @@ pub async fn run_reconciler(
         "Media workflow concurrency limit"
     );
 
-    let mut work_sub = convex
-        .subscribe_orchestrator_pending_work(OrchestratorPendingWorkArgs {
-            maxMediaDownloads: max_media,
+    // Subscribe to per-table pending work queries
+    let mut phone_auth_sub = convex.subscribe_phone_auth_pending_work().await?;
+    let mut qr_auth_sub = convex.subscribe_qr_auth_pending_work().await?;
+    let mut clients_sub = convex.subscribe_clients_pending_work().await?;
+    let mut chats_sub = convex.subscribe_chats_pending_work().await?;
+    let mut media_sub = convex
+        .subscribe_media_pending_work(MediaPendingWorkArgs {
+            maxDownloads: max_media,
         })
         .await?;
+
+    // Track the latest items per table for pruning
+    let mut phone_auth_keys: HashSet<(String, String)> = HashSet::new();
+    let mut qr_auth_keys: HashSet<(String, String)> = HashSet::new();
+    let mut clients_keys: HashSet<(String, String)> = HashSet::new();
+    let mut chats_keys: HashSet<(String, String)> = HashSet::new();
+    let mut media_keys: HashSet<(String, String)> = HashSet::new();
 
     // JWT refresh timer (every 50 minutes)
     let mut jwt_refresh = tokio::time::interval(Duration::from_secs(50 * 60));
@@ -120,6 +139,42 @@ pub async fn run_reconciler(
     info!("Reconciler: entering subscription loop");
 
     loop {
+        // Helper: convert stream items to WorkItems, reconcile, update tracking
+        macro_rules! handle_stream {
+            ($items:expr, $keys:ident) => {{
+                let items: Vec<WorkItem> = $items
+                    .into_iter()
+                    .map(|i| WorkItem {
+                        service: i.service,
+                        key: i.key,
+                        handler: i.handler,
+                    })
+                    .collect();
+                $keys = items
+                    .iter()
+                    .map(|i| (i.service.clone(), i.key.clone()))
+                    .collect();
+                let new = reconcile_batch(&items, &in_flight, &http, ingress_url).await;
+                for k in new {
+                    in_flight.insert(k);
+                }
+                // Prune completed: retain only keys that still appear in any table
+                let all_current: HashSet<&(String, String)> = phone_auth_keys
+                    .iter()
+                    .chain(qr_auth_keys.iter())
+                    .chain(clients_keys.iter())
+                    .chain(chats_keys.iter())
+                    .chain(media_keys.iter())
+                    .collect();
+                let before = in_flight.len();
+                in_flight.retain(|k| all_current.contains(k));
+                let pruned = before - in_flight.len();
+                if pruned > 0 {
+                    debug!(pruned, "Pruned completed items from in_flight set");
+                }
+            }};
+        }
+
         tokio::select! {
             biased;
 
@@ -141,39 +196,12 @@ pub async fn run_reconciler(
                 }
             }
 
-            // ── Pending work → reconcile ─────────────────────────────
-            Some(Ok(work_items)) = work_sub.next() => {
-                let work_items: Vec<OrchestratorPendingWorkReturn> = work_items;
-
-                // Build current key set from the query result
-                let current_keys: HashSet<(String, String)> = work_items
-                    .iter()
-                    .map(|item| {
-                        let (service, key, _) = work_item_fields(item);
-                        (service.to_string(), key.to_string())
-                    })
-                    .collect();
-
-                // Dispatch new items (not yet in flight)
-                for item in &work_items {
-                    let (service, key, handler) = work_item_fields(item);
-                    let flight_key = (service.to_string(), key.to_string());
-
-                    if !in_flight.contains(&flight_key) {
-                        restate_send(&http, ingress_url, service, key, handler).await;
-                        in_flight.insert(flight_key);
-                        info!(service, key, handler, "Work dispatched");
-                    }
-                }
-
-                // Prune completed (disappeared from query)
-                let before = in_flight.len();
-                in_flight.retain(|k| current_keys.contains(k));
-                let pruned = before - in_flight.len();
-                if pruned > 0 {
-                    debug!(pruned, "Pruned completed items from in_flight set");
-                }
-            }
+            // ── Per-table subscription streams ──────────────────────────
+            Some(Ok(items)) = phone_auth_sub.next() => { handle_stream!(items, phone_auth_keys); }
+            Some(Ok(items)) = qr_auth_sub.next() => { handle_stream!(items, qr_auth_keys); }
+            Some(Ok(items)) = clients_sub.next() => { handle_stream!(items, clients_keys); }
+            Some(Ok(items)) = chats_sub.next() => { handle_stream!(items, chats_keys); }
+            Some(Ok(items)) = media_sub.next() => { handle_stream!(items, media_keys); }
         }
     }
 }

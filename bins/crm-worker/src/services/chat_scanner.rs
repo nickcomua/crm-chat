@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use convex_backend::{
     ChatsGetForWorkerArgs, ChatsWorkerCompleteScanArgs, ChatsWorkerStartScanArgs,
-    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, DomainOpsCreatePendingMediaArgs,
-    DomainOpsUpdateSyncProgressArgs, DomainOpsUpdateSyncProgressScanPhase, DomainOpsUpsertChatArgs,
-    DomainOpsUpsertMessageArgs,
+    ChatsWorkerUpdateSyncProgressArgs, ChatsWorkerUpdateSyncProgressScanPhase,
+    ChatsWorkerUpsertChatArgs, ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient,
+    MediaWorkerCreatePendingMediaArgs, MessagesWorkerUpsertMessageArgs,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -146,11 +146,11 @@ pub async fn scan_chat_messages(
         .unwrap_or(0);
 
     convex
-        .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
+        .chats_worker_update_sync_progress(ChatsWorkerUpdateSyncProgressArgs {
             chatId: req.chat_id.clone(),
             totalMessages: Some(total_messages as f64),
             syncedMessages: Some(0.0),
-            scanPhase: Some(DomainOpsUpdateSyncProgressScanPhase::ScanningMessages),
+            scanPhase: Some(ChatsWorkerUpdateSyncProgressScanPhase::ScanningMessages),
             fullScanned: None,
         })
         .await
@@ -184,7 +184,7 @@ pub async fn scan_chat_messages(
 
         let message_id_clone = message_id.clone();
         convex
-            .domain_ops_upsert_message(DomainOpsUpsertMessageArgs {
+            .messages_worker_upsert_message(MessagesWorkerUpsertMessageArgs {
                 messageId: message_id,
                 externalId: msg.external_id,
                 userId: req.user_id.clone(),
@@ -208,7 +208,7 @@ pub async fn scan_chat_messages(
         if let Some(ref summary) = msg.media_summary
             && let Some(ref media_ext_id) = msg.media_external_id
             && let Err(e) = convex
-                .domain_ops_create_pending_media(DomainOpsCreatePendingMediaArgs {
+                .media_worker_create_pending_media(MediaWorkerCreatePendingMediaArgs {
                     telegramFileId: media_ext_id.clone(),
                     userId: req.user_id.clone(),
                     clientId: req.client_id.clone(),
@@ -231,7 +231,7 @@ pub async fn scan_chat_messages(
 
         if msg_count.is_multiple_of(100) {
             convex
-                .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
+                .chats_worker_update_sync_progress(ChatsWorkerUpdateSyncProgressArgs {
                     chatId: req.chat_id.clone(),
                     totalMessages: None,
                     syncedMessages: Some(msg_count as f64),
@@ -246,7 +246,7 @@ pub async fn scan_chat_messages(
     // Update lastMessageTs
     if last_ts > 0.0 {
         convex
-            .domain_ops_upsert_chat(DomainOpsUpsertChatArgs {
+            .chats_worker_upsert_chat(ChatsWorkerUpsertChatArgs {
                 chatId: req.chat_id.clone(),
                 userId: req.user_id.clone(),
                 clientId: req.client_id.clone(),
@@ -261,11 +261,11 @@ pub async fn scan_chat_messages(
 
     // Mark scan complete with final progress
     convex
-        .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
+        .chats_worker_update_sync_progress(ChatsWorkerUpdateSyncProgressArgs {
             chatId: req.chat_id.clone(),
             totalMessages: None,
             syncedMessages: Some(msg_count as f64),
-            scanPhase: Some(DomainOpsUpdateSyncProgressScanPhase::Listening),
+            scanPhase: Some(ChatsWorkerUpdateSyncProgressScanPhase::Listening),
             fullScanned: Some(true),
         })
         .await

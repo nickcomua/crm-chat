@@ -1,41 +1,91 @@
+import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { query } from "./_generated/server";
-import { mutation } from "./functions";
 import {
-  isPhoneAuthTerminal,
-  isQrAuthTerminal,
-  requireHuman,
-  requireOwner,
-  requireWorker,
-} from "./helpers/auth";
-import { err, ok, result } from "./helpers/result";
-import { clientDoc, clientKind, clientPhase } from "./schema";
+  humanMutation,
+  humanQuery,
+  workerMutation,
+  workerQuery,
+} from "../functions";
+import { err, ok, result } from "../helpers/result";
+import { mediaSettingsValidator, workItem } from "../helpers/validators";
+
+// =============================================================================
+// Table-specific validators
+// =============================================================================
+
+export const clientKind = v.literal("Telegram");
+
+export const clientPhase = v.union(
+  v.literal("Authenticating"),
+  v.literal("NeedsSync"),
+  v.literal("Syncing"),
+  v.literal("Listening"),
+  v.literal("Disconnected")
+);
+
+export const clientStatus = v.union(
+  v.object({ type: v.literal("Authenticating") }),
+  v.object({ type: v.literal("Connected") }),
+  v.object({ type: v.literal("Error"), message: v.string() })
+);
+
+const clientFields = v.object({
+  userId: v.string(),
+  kind: clientKind,
+  telegramId: v.string(),
+  externalId: v.optional(v.string()),
+  phoneNumber: v.optional(v.string()),
+  scanningChatIds: v.array(v.string()),
+  status: clientStatus,
+  phase: v.optional(clientPhase),
+  photosSynced: v.optional(v.boolean()),
+  mediaSettings: v.optional(mediaSettingsValidator),
+});
+
+export const clientDoc = clientFields.extend({
+  _id: v.id("clients"),
+  _creationTime: v.number(),
+});
+
+export const clientsTable = defineTable(clientFields)
+  .index("by_userId", ["userId"])
+  .index("by_userId_telegramId", ["userId", "telegramId"])
+  .index("by_userId_externalId", ["userId", "externalId"])
+  .index("by_phase", ["phase"]);
+
+const PHONE_AUTH_TERMINAL = new Set(["Connected", "Failed", "Cancelled"]);
+const QR_AUTH_TERMINAL = new Set([
+  "Authorized",
+  "AlreadyAuthorized",
+  "Failed",
+  "Cancelled",
+]);
 
 /** List all clients for the current human user. */
-export const list = query({
+export const list = humanQuery({
   args: {},
   returns: v.array(clientDoc),
   handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
     return await ctx.db
       .query("clients")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.caller.tokenIdentifier))
       .collect();
   },
 });
 
 /** Delete a client and cancel associated auth sessions.
  *  Sets phase to Disconnected so domain cancel-watchers fire. */
-export const deleteClient = mutation({
+export const deleteClient = humanMutation({
   args: { clientId: v.id("clients") },
   returns: result(v.null(), v.literal("Client not found")),
   handler: async (ctx, { clientId }) => {
-    const caller = await requireHuman(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
       return err("Client not found");
     }
-    requireOwner(caller.id, client.userId);
+    if (client.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
     // Cancel any active phone auth sessions for this client
     const phoneAuths = await ctx.db
@@ -45,7 +95,7 @@ export const deleteClient = mutation({
 
     const now = Date.now();
     for (const auth of phoneAuths) {
-      if (!isPhoneAuthTerminal(auth.step)) {
+      if (!PHONE_AUTH_TERMINAL.has(auth.step)) {
         await ctx.db.patch(auth._id, {
           step: "Cancelled",
           updatedAt: now,
@@ -60,7 +110,7 @@ export const deleteClient = mutation({
       .collect();
 
     for (const auth of qrAuths) {
-      if (!isQrAuthTerminal(auth.step)) {
+      if (!QR_AUTH_TERMINAL.has(auth.step)) {
         await ctx.db.patch(auth._id, {
           step: "Cancelled",
           updatedAt: now,
@@ -74,18 +124,17 @@ export const deleteClient = mutation({
 });
 
 /** Get a single client by ID. Worker-only. */
-export const getForWorker = query({
+export const getForWorker = workerQuery({
   args: { clientId: v.id("clients") },
   returns: v.union(clientDoc, v.null()),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     return await ctx.db.get(clientId);
   },
 });
 
 /** Register a pre-authenticated client as Connected. Worker-only.
  *  Sets phase to NeedsSync — the reconciler dispatches DialogSync automatically. */
-export const workerRegisterConnected = mutation({
+export const workerRegisterConnected = workerMutation({
   args: {
     userId: v.string(),
     telegramId: v.string(),
@@ -95,7 +144,6 @@ export const workerRegisterConnected = mutation({
   },
   returns: v.id("clients"),
   handler: async (ctx, args) => {
-    await requireWorker(ctx);
     const { phoneNumber, externalId, ...lookupArgs } = args;
     const existing = await ctx.db
       .query("clients")
@@ -128,19 +176,20 @@ export const workerRegisterConnected = mutation({
 
 /** Trigger a dialog sync for a connected client. Human-only.
  *  Sets phase to NeedsSync — the reconciler dispatches DialogSync. */
-export const triggerDialogSync = mutation({
+export const triggerDialogSync = humanMutation({
   args: { clientId: v.id("clients") },
   returns: result(
     v.null(),
     v.union(v.literal("Client not found"), v.literal("Client not connected"))
   ),
   handler: async (ctx, { clientId }) => {
-    const caller = await requireHuman(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
       return err("Client not found");
     }
-    requireOwner(caller.id, client.userId);
+    if (client.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
     if (client.status.type !== "Connected") {
       return err("Client not connected");
     }
@@ -157,11 +206,10 @@ export const triggerDialogSync = mutation({
  * Lightweight phase query for domain cancel-watcher.
  * Rust handler subscribes to this and cancels when phase becomes "Disconnected".
  */
-export const getPhase = query({
+export const getPhase = workerQuery({
   args: { clientId: v.id("clients") },
   returns: v.union(clientPhase, v.null()),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     const client = await ctx.db.get(clientId);
     return client?.phase ?? null;
   },
@@ -172,11 +220,10 @@ export const getPhase = query({
 // =============================================================================
 
 /** Transition client NeedsSync → Syncing. Worker-only. */
-export const workerStartSync = mutation({
+export const workerStartSync = workerMutation({
   args: { clientId: v.id("clients") },
   returns: v.null(),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     const client = await ctx.db.get(clientId);
     if (!client || client.phase !== "NeedsSync") {
       return null;
@@ -187,11 +234,10 @@ export const workerStartSync = mutation({
 });
 
 /** Complete dialog sync: Syncing → Listening, photosSynced=false, queue chat scans. Worker-only. */
-export const workerCompleteSync = mutation({
+export const workerCompleteSync = workerMutation({
   args: { clientId: v.id("clients") },
   returns: v.null(),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
       return null;
@@ -218,16 +264,53 @@ export const workerCompleteSync = mutation({
 });
 
 /** Mark profile photos as synced for a client. Worker-only. */
-export const workerMarkPhotosSynced = mutation({
+export const workerMarkPhotosSynced = workerMutation({
   args: { clientId: v.id("clients") },
   returns: v.null(),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
       return null;
     }
     await ctx.db.patch(clientId, { photosSynced: true });
     return null;
+  },
+});
+
+// =============================================================================
+// Pending work (for reconciler dispatch)
+// =============================================================================
+
+/** Clients needing dialog sync, update listening, or profile photo sync. */
+export const pendingWork = workerQuery({
+  args: {},
+  returns: v.array(workItem),
+  handler: async (ctx) => {
+    const work: { service: string; key: string; handler: string }[] = [];
+
+    const needsSync = await ctx.db
+      .query("clients")
+      .withIndex("by_phase", (q) => q.eq("phase", "NeedsSync"))
+      .collect();
+    for (const c of needsSync) {
+      work.push({ service: "DialogSync", key: c._id, handler: "sync" });
+    }
+
+    const listening = await ctx.db
+      .query("clients")
+      .withIndex("by_phase", (q) => q.eq("phase", "Listening"))
+      .collect();
+    for (const c of listening) {
+      work.push({ service: "UpdateListener", key: c._id, handler: "listen" });
+      if (c.photosSynced === false) {
+        work.push({
+          service: "ProfilePhotoSync",
+          key: c._id,
+          handler: "sync",
+        });
+      }
+    }
+
+    return work;
   },
 });

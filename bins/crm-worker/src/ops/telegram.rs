@@ -1,33 +1,33 @@
 //! Telegram operation wrappers and media helpers.
 
-use convex_backend::{DomainOpsCreatePendingMediaKind, DomainOpsUpsertMessageMediaKind};
+use convex_backend::{MediaWorkerCreatePendingMediaKind, MessagesWorkerUpsertMessageMediaKind};
 use messanger_interface::media::MediaKind;
 
-/// Convert a `MediaKind` to the generated `DomainOpsUpsertMessageMediaKind`.
-pub fn to_upsert_media_kind(kind: MediaKind) -> DomainOpsUpsertMessageMediaKind {
+/// Convert a `MediaKind` to the generated `MessagesWorkerUpsertMessageMediaKind`.
+pub fn to_upsert_media_kind(kind: MediaKind) -> MessagesWorkerUpsertMessageMediaKind {
     match kind {
-        MediaKind::Photo => DomainOpsUpsertMessageMediaKind::Photo,
-        MediaKind::Video => DomainOpsUpsertMessageMediaKind::Video,
-        MediaKind::VideoNote => DomainOpsUpsertMessageMediaKind::VideoNote,
-        MediaKind::Audio => DomainOpsUpsertMessageMediaKind::Audio,
-        MediaKind::Voice => DomainOpsUpsertMessageMediaKind::Voice,
-        MediaKind::Sticker => DomainOpsUpsertMessageMediaKind::Sticker,
-        MediaKind::Animation => DomainOpsUpsertMessageMediaKind::Animation,
-        MediaKind::Document => DomainOpsUpsertMessageMediaKind::Document,
+        MediaKind::Photo => MessagesWorkerUpsertMessageMediaKind::Photo,
+        MediaKind::Video => MessagesWorkerUpsertMessageMediaKind::Video,
+        MediaKind::VideoNote => MessagesWorkerUpsertMessageMediaKind::VideoNote,
+        MediaKind::Audio => MessagesWorkerUpsertMessageMediaKind::Audio,
+        MediaKind::Voice => MessagesWorkerUpsertMessageMediaKind::Voice,
+        MediaKind::Sticker => MessagesWorkerUpsertMessageMediaKind::Sticker,
+        MediaKind::Animation => MessagesWorkerUpsertMessageMediaKind::Animation,
+        MediaKind::Document => MessagesWorkerUpsertMessageMediaKind::Document,
     }
 }
 
-/// Convert a `MediaKind` to the generated `DomainOpsCreatePendingMediaKind`.
-pub fn to_create_pending_kind(kind: MediaKind) -> DomainOpsCreatePendingMediaKind {
+/// Convert a `MediaKind` to the generated `MediaWorkerCreatePendingMediaKind`.
+pub fn to_create_pending_kind(kind: MediaKind) -> MediaWorkerCreatePendingMediaKind {
     match kind {
-        MediaKind::Photo => DomainOpsCreatePendingMediaKind::Photo,
-        MediaKind::Video => DomainOpsCreatePendingMediaKind::Video,
-        MediaKind::VideoNote => DomainOpsCreatePendingMediaKind::VideoNote,
-        MediaKind::Audio => DomainOpsCreatePendingMediaKind::Audio,
-        MediaKind::Voice => DomainOpsCreatePendingMediaKind::Voice,
-        MediaKind::Sticker => DomainOpsCreatePendingMediaKind::Sticker,
-        MediaKind::Animation => DomainOpsCreatePendingMediaKind::Animation,
-        MediaKind::Document => DomainOpsCreatePendingMediaKind::Document,
+        MediaKind::Photo => MediaWorkerCreatePendingMediaKind::Photo,
+        MediaKind::Video => MediaWorkerCreatePendingMediaKind::Video,
+        MediaKind::VideoNote => MediaWorkerCreatePendingMediaKind::VideoNote,
+        MediaKind::Audio => MediaWorkerCreatePendingMediaKind::Audio,
+        MediaKind::Voice => MediaWorkerCreatePendingMediaKind::Voice,
+        MediaKind::Sticker => MediaWorkerCreatePendingMediaKind::Sticker,
+        MediaKind::Animation => MediaWorkerCreatePendingMediaKind::Animation,
+        MediaKind::Document => MediaWorkerCreatePendingMediaKind::Document,
     }
 }
 

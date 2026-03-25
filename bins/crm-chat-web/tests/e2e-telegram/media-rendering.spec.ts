@@ -53,7 +53,7 @@ test.describe("Media Rendering — Real Telegram Data", () => {
 
     const robot = await getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
-      api.clients.workerRegisterConnected,
+      api.model.clients.workerRegisterConnected,
       {
         userId: convexUserId,
         telegramId,

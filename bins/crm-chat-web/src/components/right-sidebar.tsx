@@ -14,7 +14,7 @@ export function NotificationsBellPanel({
   open,
   onOpenChange,
 }: NotificationsBellPanelProps): React.ReactNode {
-  const notifications = useQuery(api.notifications.list);
+  const notifications = useQuery(api.model.notifications.list);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 

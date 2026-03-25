@@ -27,12 +27,12 @@ async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const items = (await robot.query(api.orchestrator.pendingWork, {
-      maxMediaDownloads: 0,
-    })) as Array<{ service: string }>;
+    const items = (await robot.query(
+      api.model.qrAuth.pendingWork,
+      {}
+    )) as Array<{ service: string }>;
 
-    const qrItems = items.filter((i) => i.service === "QrAuthWorkflow");
-    if (qrItems.length === 0) {
+    if (items.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));

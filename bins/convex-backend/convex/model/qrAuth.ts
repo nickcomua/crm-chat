@@ -1,32 +1,86 @@
+import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
-import { query } from "./_generated/server";
-import { mutation } from "./functions";
+import type { Id } from "../_generated/dataModel";
+import type { MutationCtx } from "../_generated/server";
 import {
-  isQrAuthTerminal,
-  requireHuman,
-  requireWorker,
+  humanMutation,
+  humanQuery,
   sendError,
-} from "./helpers/auth";
-import { err, ok, result } from "./helpers/result";
-import { qrAuthPublicDoc, qrAuthStep } from "./schema";
+  workerMutation,
+  workerQuery,
+} from "../functions";
+import { err, ok, result } from "../helpers/result";
+import { workItem } from "../helpers/validators";
+
+// =============================================================================
+// Table-specific validators
+// =============================================================================
+
+export const qrAuthStep = v.union(
+  v.literal("Pending"),
+  v.literal("Generating"),
+  v.literal("Token"),
+  v.literal("Authorized"),
+  v.literal("AlreadyAuthorized"),
+  v.literal("Failed"),
+  v.literal("Cancelled")
+);
+
+const qrAuthFields = v.object({
+  userId: v.string(),
+  clientId: v.id("clients"),
+  step: qrAuthStep,
+  qrUrl: v.optional(v.string()),
+  qrExpires: v.optional(v.number()),
+  telegramUserId: v.optional(v.int64()),
+  phoneNumber: v.optional(v.string()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const qrAuthDoc = qrAuthFields.extend({
+  _id: v.id("qrAuths"),
+  _creationTime: v.number(),
+});
+
+/** qrAuthDoc without secrets -- safe for human-facing queries. */
+export const qrAuthPublicDoc = v.object({
+  _id: v.id("qrAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  step: qrAuthStep,
+  qrUrl: v.optional(v.string()),
+  qrExpires: v.optional(v.number()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const qrAuthsTable = defineTable(qrAuthFields)
+  .index("by_userId", ["userId"])
+  .index("by_step", ["step"])
+  .index("by_clientId", ["clientId"]);
+
+const QR_AUTH_TERMINAL = new Set([
+  "Authorized",
+  "AlreadyAuthorized",
+  "Failed",
+  "Cancelled",
+]);
 
 // =============================================================================
 // Human Mutations
 // =============================================================================
 
 /** Start QR code authentication. Creates a qrAuth record and returns its ID. */
-export const start = mutation({
+export const start = humanMutation({
   args: {},
   returns: v.id("qrAuths"),
   handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
-
     // Create a client placeholder in Authenticating state (for UI tracking)
     const clientId = await ctx.db.insert("clients", {
-      userId: caller.id,
+      userId: ctx.caller.tokenIdentifier,
       kind: "Telegram",
       telegramId: `qr-pending:${Date.now()}`,
       scanningChatIds: [],
@@ -35,7 +89,7 @@ export const start = mutation({
     });
 
     const authId = await ctx.db.insert("qrAuths", {
-      userId: caller.id,
+      userId: ctx.caller.tokenIdentifier,
       clientId,
       step: "Pending" as const,
       updatedAt: Date.now(),
@@ -46,7 +100,7 @@ export const start = mutation({
 });
 
 /** User cancels the QR auth flow. Worker detects via step subscription. */
-export const cancel = mutation({
+export const cancel = humanMutation({
   args: { authId: v.id("qrAuths") },
   returns: result(
     v.null(),
@@ -57,15 +111,14 @@ export const cancel = mutation({
     )
   ),
   handler: async (ctx, { authId }) => {
-    const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("Auth not found");
     }
-    if (auth.userId !== caller.id) {
+    if (auth.userId !== ctx.caller.tokenIdentifier) {
       return err("Unauthorized");
     }
-    if (isQrAuthTerminal(auth.step)) {
+    if (QR_AUTH_TERMINAL.has(auth.step)) {
       return err("Cannot cancel: auth is already in a terminal state");
     }
 
@@ -85,13 +138,12 @@ export const cancel = mutation({
 });
 
 /** Get a qrAuth record for the current user (for frontend subscription). */
-export const getForUser = query({
+export const getForUser = humanQuery({
   args: { authId: v.id("qrAuths") },
   returns: v.union(qrAuthPublicDoc, v.null()),
   handler: async (ctx, { authId }) => {
-    const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth || auth.userId !== caller.id) {
+    if (!auth || auth.userId !== ctx.caller.tokenIdentifier) {
       return null;
     }
     return {
@@ -113,7 +165,7 @@ export const getForUser = query({
 // =============================================================================
 
 /** Get the full qrAuth record for the worker. Worker-only. */
-export const getForWorker = query({
+export const getForWorker = workerQuery({
   args: { authId: v.id("qrAuths") },
   returns: v.union(
     v.object({
@@ -132,13 +184,12 @@ export const getForWorker = query({
     v.null()
   ),
   handler: async (ctx, { authId }) => {
-    await requireWorker(ctx);
     return await ctx.db.get(authId);
   },
 });
 
 /** Worker updates the QR token URL. Worker-only. */
-export const workerUpdateToken = mutation({
+export const workerUpdateToken = workerMutation({
   args: {
     authId: v.id("qrAuths"),
     step: qrAuthStep,
@@ -147,9 +198,8 @@ export const workerUpdateToken = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { authId, step, qrUrl, qrExpires }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
-    if (!auth || isQrAuthTerminal(auth.step)) {
+    if (!auth || QR_AUTH_TERMINAL.has(auth.step)) {
       return null;
     }
     await ctx.db.patch(authId, {
@@ -165,7 +215,7 @@ export const workerUpdateToken = mutation({
 /** Worker completes QR auth (success or failure). Worker-only.
  *  On success: creates/updates client with phase=NeedsSync.
  *  On failure: sends error notification. */
-export const workerComplete = mutation({
+export const workerComplete = workerMutation({
   args: {
     authId: v.id("qrAuths"),
     step: qrAuthStep,
@@ -178,7 +228,6 @@ export const workerComplete = mutation({
     ctx,
     { authId, step, telegramUserId, phoneNumber, error: errorMsg }
   ) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return null;
@@ -312,12 +361,32 @@ async function completeQrAuth(
  * Lightweight step query for domain cancel-watcher.
  * Rust handler subscribes to this and cancels when step becomes terminal.
  */
-export const getStep = query({
+export const getStep = workerQuery({
   args: { authId: v.id("qrAuths") },
   returns: v.union(qrAuthStep, v.null()),
   handler: async (ctx, { authId }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     return auth?.step ?? null;
+  },
+});
+
+// =============================================================================
+// Pending work (for reconciler dispatch)
+// =============================================================================
+
+/** QR auth sessions that need a worker. */
+export const pendingWork = workerQuery({
+  args: {},
+  returns: v.array(workItem),
+  handler: async (ctx) => {
+    const pending = await ctx.db
+      .query("qrAuths")
+      .withIndex("by_step", (q) => q.eq("step", "Pending"))
+      .collect();
+    return pending.map((a) => ({
+      service: "QrAuthWorkflow",
+      key: a._id,
+      handler: "run",
+    }));
   },
 });

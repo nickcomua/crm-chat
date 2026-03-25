@@ -205,7 +205,7 @@ function useDownloadSpeed(bytesDownloaded: number): number {
 // ---------------------------------------------------------------------------
 
 function CancelButton({ record }: { record: MediaRecord }): React.ReactNode {
-  const cancelDownload = useMutation(api.media.cancelDownload);
+  const cancelDownload = useMutation(api.model.media.cancelDownload);
   return (
     <button
       className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/50 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -305,7 +305,7 @@ function QueuedRow({ record }: { record: MediaRecord }): React.ReactNode {
 }
 
 function FailedRow({ record }: { record: MediaRecord }): React.ReactNode {
-  const retryDownload = useMutation(api.media.retryDownload);
+  const retryDownload = useMutation(api.model.media.retryDownload);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10">
@@ -420,18 +420,18 @@ function Section({
 // ---------------------------------------------------------------------------
 
 export function DownloadManager(): React.ReactNode {
-  const activeMedia = useQuery(api.media.listByStatus, {
+  const activeMedia = useQuery(api.model.media.listByStatus, {
     statuses: ["Downloading", "Pending"],
-  });
-  const failedMedia = useQuery(api.media.listByStatus, {
+  }) as MediaRecord[] | undefined;
+  const failedMedia = useQuery(api.model.media.listByStatus, {
     statuses: ["Failed"],
-  });
-  const recentMedia = useQuery(api.media.listByStatus, {
+  }) as MediaRecord[] | undefined;
+  const recentMedia = useQuery(api.model.media.listByStatus, {
     statuses: ["Stored"],
-  });
-  const counts = useQuery(api.media.countByStatus, {
+  }) as MediaRecord[] | undefined;
+  const counts = useQuery(api.model.media.countByStatus, {
     statuses: ["Pending", "Failed"],
-  });
+  }) as Array<{ status: string; count: number }> | undefined;
 
   const isLoading =
     activeMedia === undefined ||

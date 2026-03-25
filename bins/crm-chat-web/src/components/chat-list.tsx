@@ -94,11 +94,11 @@ export function ChatList({
   selectedChatId,
   onSelectChat,
 }: ChatListProps): React.ReactNode {
-  const chats = useQuery(api.chats.list);
-  const clients = useQuery(api.clients.list) as Client[] | undefined;
+  const chats = useQuery(api.model.chats.list);
+  const clients = useQuery(api.model.clients.list) as Client[] | undefined;
   const chatIds = chats?.map((c: { chatId: string }) => c.chatId);
   const lastMessages = useQuery(
-    api.messages.getLastPerChat,
+    api.model.messages.getLastPerChat,
     chatIds ? { chatIds } : "skip"
   ) as
     | Array<{

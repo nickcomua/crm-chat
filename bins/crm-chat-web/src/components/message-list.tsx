@@ -267,10 +267,10 @@ export function MessageList({
   onBack,
   targetMessageId,
 }: MessageListProps): React.ReactNode {
-  const chats = useQuery(api.chats.list);
-  const clients = useQuery(api.clients.list);
+  const chats = useQuery(api.model.chats.list);
+  const clients = useQuery(api.model.clients.list);
   const { results, status, loadMore } = usePaginatedQuery(
-    api.messages.listByChat,
+    api.model.messages.listByChat,
     { chatId },
     { initialNumItems: PAGE_SIZE }
   );
@@ -295,7 +295,7 @@ export function MessageList({
 
   // Single indexed scan for all media in this chat (avoids per-message reads
   // that hit Convex's 4096 read limit with large message sets).
-  const mediaRecords = useQuery(api.media.getForChat, { chatId });
+  const mediaRecords = useQuery(api.model.media.getForChat, { chatId });
   const mediaMap = new Map<string, MediaInfo>();
   if (mediaRecords) {
     for (const record of mediaRecords) {

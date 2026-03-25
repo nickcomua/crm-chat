@@ -2,7 +2,7 @@
 //!
 //! Leaf services (DialogSync, ChatScanner, etc.) are Restate virtual objects
 //! and workflows with full durable execution. The Reconciler runs as a plain
-//! tokio task that subscribes to `orchestrator.pendingWork` and dispatches work
+//! tokio task that subscribes to per-table `pendingWork` queries and dispatches work
 //! to leaf services via HTTP POST to the Restate ingress endpoint — zero journal
 //! noise. Domain entity state IS the queue (Pattern B: domain-driven dispatch).
 
@@ -158,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     register_deployment(&config).await;
 
     // Spawn the reconciler as a plain tokio task — subscribes to
-    // orchestrator.pendingWork and dispatches to Restate leaf services
+    // per-table pendingWork queries and dispatches to Restate leaf services
     let orch_convex = convex_client.clone();
     let orch_config = config.clone();
     let orch_sessions = sessions.clone();

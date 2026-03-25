@@ -7,13 +7,13 @@
 //! - The `map_chat_type` helper
 //! - Best-effort (fire-and-forget) wrappers for domain operations
 
+pub use convex_backend::ChatsWorkerUpsertChatChatType;
 pub use convex_backend::ConvexApi;
 pub use convex_backend::ConvexApiClient;
-pub use convex_backend::DomainOpsUpsertChatChatType;
 
 use convex_backend::{
-    ChatsScanEnabledChatIdsArgs, DomainOpsMarkMediaFailedArgs, DomainOpsStartMediaDownloadArgs,
-    DomainOpsUpdateMediaProgressArgs,
+    ChatsScanEnabledChatIdsArgs, MediaWorkerMarkMediaFailedArgs, MediaWorkerStartMediaDownloadArgs,
+    MediaWorkerUpdateMediaProgressArgs,
 };
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -81,10 +81,10 @@ impl<T> ConvexWarnExt for Result<T, convex_backend::ConvexError> {
 }
 
 /// Map a Telegram chat type string to a Convex ChatType enum.
-pub fn map_chat_type(chat_type: Option<&str>) -> DomainOpsUpsertChatChatType {
+pub fn map_chat_type(chat_type: Option<&str>) -> ChatsWorkerUpsertChatChatType {
     match chat_type {
-        Some("user") => DomainOpsUpsertChatChatType::Dialog,
-        _ => DomainOpsUpsertChatChatType::Group,
+        Some("user") => ChatsWorkerUpsertChatChatType::Dialog,
+        _ => ChatsWorkerUpsertChatChatType::Group,
     }
 }
 
@@ -94,7 +94,7 @@ pub fn map_chat_type(chat_type: Option<&str>) -> DomainOpsUpsertChatChatType {
 
 pub async fn start_download(client: &ConvexApiClient, telegram_file_id: &str) {
     if let Err(e) = client
-        .domain_ops_start_media_download(DomainOpsStartMediaDownloadArgs {
+        .media_worker_start_media_download(MediaWorkerStartMediaDownloadArgs {
             telegramFileId: telegram_file_id.into(),
         })
         .await
@@ -110,7 +110,7 @@ pub async fn update_download_progress(
     file_size: Option<f64>,
 ) {
     if let Err(e) = client
-        .domain_ops_update_media_progress(DomainOpsUpdateMediaProgressArgs {
+        .media_worker_update_media_progress(MediaWorkerUpdateMediaProgressArgs {
             telegramFileId: telegram_file_id.into(),
             bytesDownloaded: bytes_downloaded,
             fileSize: file_size,
@@ -123,7 +123,7 @@ pub async fn update_download_progress(
 
 pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str, error: &str) {
     if let Err(e) = client
-        .domain_ops_mark_media_failed(DomainOpsMarkMediaFailedArgs {
+        .media_worker_mark_media_failed(MediaWorkerMarkMediaFailedArgs {
             telegramFileId: telegram_file_id.into(),
             error: error.into(),
         })

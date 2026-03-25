@@ -52,7 +52,7 @@ test.describe("Client Settings & Chat Scanning", () => {
     // Register the TG client as Connected — subscriber picks it up and starts scanning
     const robot = await getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
-      api.clients.workerRegisterConnected,
+      api.model.clients.workerRegisterConnected,
       {
         userId: convexUserId,
         telegramId,
@@ -251,13 +251,13 @@ test.describe("Client Settings & Chat Scanning", () => {
     test.fail();
 
     // The "Test" chat in real Telegram data contains forwarded messages.
-    // The worker pipeline (MessageSummary → domainOps.upsertMessage) should
+    // The worker pipeline (MessageSummary → messages.workerUpsertMessage) should
     // extract Telegram's fwd_from header and store it as forwardedFrom.
     //
     // THIS TEST IS EXPECTED TO FAIL until the extraction pipeline is
     // implemented: MessageSummary needs a forwardedFrom field, the
     // Telegram parser must call msg.forward_header(), and
-    // domainOps.upsertMessage must accept and store forwardedFrom.
+    // messages.workerUpsertMessage must accept and store forwardedFrom.
     const robot = await getRobotClient(workerCfg);
     const allChats = (await robot.query(api.testHelpers.queryChats, {
       userId: convexUserId,

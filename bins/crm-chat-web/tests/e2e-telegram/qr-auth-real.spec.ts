@@ -51,10 +51,9 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     let qrItems: Array<{ service: string }> = [];
 
     while (Date.now() < deadline) {
-      const items = (await robot.query(api.orchestrator.pendingWork, {
-        maxMediaDownloads: 0,
-      })) as Array<{ service: string }>;
-      qrItems = items.filter((i) => i.service === "QrAuthWorkflow");
+      qrItems = (await robot.query(api.model.qrAuth.pendingWork, {})) as Array<{
+        service: string;
+      }>;
       if (qrItems.length >= 1) {
         break;
       }
@@ -139,10 +138,11 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     const robot = await getRobotClient(workerCfg);
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      const items = (await robot.query(api.orchestrator.pendingWork, {
-        maxMediaDownloads: 0,
-      })) as Array<{ service: string }>;
-      if (items.some((i) => i.service === "QrAuthWorkflow")) {
+      const items = (await robot.query(
+        api.model.qrAuth.pendingWork,
+        {}
+      )) as Array<{ service: string }>;
+      if (items.length > 0) {
         break;
       }
       await new Promise((r) => setTimeout(r, 500));
@@ -178,12 +178,12 @@ async function waitForNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const items = (await robot.query(api.orchestrator.pendingWork, {
-      maxMediaDownloads: 0,
-    })) as Array<{ service: string }>;
+    const items = (await robot.query(
+      api.model.qrAuth.pendingWork,
+      {}
+    )) as Array<{ service: string }>;
 
-    const qrItems = items.filter((i) => i.service === "QrAuthWorkflow");
-    if (qrItems.length === 0) {
+    if (items.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));

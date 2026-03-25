@@ -44,7 +44,7 @@ test.describe("Settings — Backend", () => {
     expect(connectedClientId).toBeTruthy();
 
     // Query the client and verify status
-    const client = (await robot.query(api.clients.getForWorker, {
+    const client = (await robot.query(api.model.clients.getForWorker, {
       clientId: connectedClientId,
     })) as { status: { type: string } } | null;
 
@@ -55,18 +55,21 @@ test.describe("Settings — Backend", () => {
   test("client list returns registered clients", async () => {
     const robot = await getRobotClient(workerCfg);
     // Register a second client
-    errorClientId = (await robot.mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId: `telegram:settings-error-${Date.now()}`,
-      kind: "Telegram",
-    })) as Id<"clients">;
+    errorClientId = (await robot.mutation(
+      api.model.clients.workerRegisterConnected,
+      {
+        userId,
+        telegramId: `telegram:settings-error-${Date.now()}`,
+        kind: "Telegram",
+      }
+    )) as Id<"clients">;
 
     // Set it to Error status via a direct patch (robot can do this)
     // Since there's no direct "setError" mutation, we verify both exist
-    const client1 = await robot.query(api.clients.getForWorker, {
+    const client1 = await robot.query(api.model.clients.getForWorker, {
       clientId: connectedClientId,
     });
-    const client2 = await robot.query(api.clients.getForWorker, {
+    const client2 = await robot.query(api.model.clients.getForWorker, {
       clientId: errorClientId,
     });
 
@@ -84,7 +87,7 @@ test.describe("Settings — Backend", () => {
     );
 
     // Verify it exists
-    const before = await robot.query(api.clients.getForWorker, {
+    const before = await robot.query(api.model.clients.getForWorker, {
       clientId: tempClientId,
     });
     expect(before).toBeTruthy();
@@ -95,7 +98,7 @@ test.describe("Settings — Backend", () => {
     });
 
     // Verify it's gone
-    const after = await robot.query(api.clients.getForWorker, {
+    const after = await robot.query(api.model.clients.getForWorker, {
       clientId: tempClientId,
     });
     expect(after).toBeNull();
@@ -126,7 +129,7 @@ test.describe("Settings — Backend", () => {
     });
 
     // Client should be gone
-    const client = await robot.query(api.clients.getForWorker, {
+    const client = await robot.query(api.model.clients.getForWorker, {
       clientId: tempClientId,
     });
     expect(client).toBeNull();

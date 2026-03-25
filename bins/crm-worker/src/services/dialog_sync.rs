@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ClientsGetForWorkerArgs, ClientsWorkerCompleteSyncArgs, ClientsWorkerStartSyncArgs, ConvexApi,
-    ConvexApiClient, DomainOpsUpsertChatArgs,
+    ChatsWorkerUpsertChatArgs, ClientsGetForWorkerArgs, ClientsWorkerCompleteSyncArgs,
+    ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -125,7 +125,7 @@ pub async fn sync_dialogs(
         let chat_type = cx::map_chat_type(dialog.chat_type.as_deref());
 
         convex
-            .domain_ops_upsert_chat(DomainOpsUpsertChatArgs {
+            .chats_worker_upsert_chat(ChatsWorkerUpsertChatArgs {
                 chatId: chat_id,
                 userId: client.user_id.clone(),
                 clientId: client.client_id.clone(),

@@ -140,7 +140,7 @@ function EditableName({
   chatId: string;
   currentName: string;
 }): React.ReactNode {
-  const updatePinnedName = useMutation(api.chats.updatePinnedName);
+  const updatePinnedName = useMutation(api.model.chats.updatePinnedName);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(currentName);
 
@@ -242,7 +242,7 @@ function ProgressBar({
 
 function ChatProgressBars({ chat }: { chat: ChatDoc }): React.ReactNode {
   const mediaCounts = useQuery(
-    api.media.countByStatusForChat,
+    api.model.media.countByStatusForChat,
     chat.scanEnabled ? { chatId: chat.chatId } : "skip"
   );
 
@@ -295,7 +295,7 @@ function MediaSettingsPanel({
   chat: ChatDoc;
   clientSettings?: MediaSettings;
 }): React.ReactNode {
-  const updateMediaSettings = useMutation(api.chats.updateMediaSettings);
+  const updateMediaSettings = useMutation(api.model.chats.updateMediaSettings);
 
   const handleToggle = (key: keyof MediaSettings, checked: boolean): void => {
     const current = chat.mediaSettings ?? {};
@@ -349,8 +349,8 @@ function ChatRow({
   chat: ChatDoc;
   clientSettings?: MediaSettings;
 }): React.ReactNode {
-  const updateScanEnabled = useMutation(api.chats.updateScanEnabled);
-  const rescan = useMutation(api.chats.rescan);
+  const updateScanEnabled = useMutation(api.model.chats.updateScanEnabled);
+  const rescan = useMutation(api.model.chats.rescan);
   const [expanded, setExpanded] = useState(false);
   const scanStatus = getScanStatus(chat);
   const displayName = getChatDisplayName(chat);
@@ -453,10 +453,12 @@ export function ClientSettings({
 }: {
   clientId: Id<"clients">;
 }): React.ReactNode {
-  const chats = useQuery(api.chats.listByClient, { clientId });
-  const clients = useQuery(api.clients.list);
+  const chats = useQuery(api.model.chats.listByClient, { clientId }) as
+    | ChatDoc[]
+    | undefined;
+  const clients = useQuery(api.model.clients.list);
   const navigate = useNavigate();
-  const triggerSync = useMutation(api.clients.triggerDialogSync);
+  const triggerSync = useMutation(api.model.clients.triggerDialogSync);
 
   if (chats === undefined || clients === undefined) {
     return (

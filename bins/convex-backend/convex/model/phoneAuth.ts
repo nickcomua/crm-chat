@@ -1,16 +1,70 @@
+import { defineTable } from "convex/server";
 import { v } from "convex/values";
-
-import { query } from "./_generated/server";
-import { mutation } from "./functions";
 import {
-  isPhoneAuthTerminal,
-  requireHuman,
-  requireOwner,
-  requireWorker,
+  humanMutation,
+  humanQuery,
   sendError,
-} from "./helpers/auth";
-import { err, ok, result } from "./helpers/result";
-import { phoneAuthDoc, phoneAuthPublicDoc, phoneAuthStep } from "./schema";
+  workerMutation,
+  workerQuery,
+} from "../functions";
+import { err, ok, result } from "../helpers/result";
+import { workItem } from "../helpers/validators";
+
+// =============================================================================
+// Table-specific validators
+// =============================================================================
+
+export const phoneAuthStep = v.union(
+  v.literal("SendingCode"),
+  v.literal("WaitingCode"),
+  v.literal("VerifyingCode"),
+  v.literal("WaitingPassword"),
+  v.literal("VerifyingPassword"),
+  v.literal("Connected"),
+  v.literal("Failed"),
+  v.literal("Cancelled")
+);
+
+const phoneAuthFields = v.object({
+  userId: v.string(),
+  clientId: v.id("clients"),
+  phone: v.string(),
+  step: phoneAuthStep,
+  phoneCodeHash: v.optional(v.string()),
+  loginCode: v.optional(v.string()),
+  passwordToken: v.optional(v.string()),
+  password: v.optional(v.string()),
+  passwordHint: v.optional(v.string()),
+  error: v.optional(v.string()),
+  claimedByWorkerId: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const phoneAuthDoc = phoneAuthFields.extend({
+  _id: v.id("phoneAuths"),
+  _creationTime: v.number(),
+});
+
+/** phoneAuthDoc without secrets -- safe for human-facing queries. */
+export const phoneAuthPublicDoc = v.object({
+  _id: v.id("phoneAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  phone: v.string(),
+  step: phoneAuthStep,
+  passwordHint: v.optional(v.string()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const phoneAuthsTable = defineTable(phoneAuthFields)
+  .index("by_userId", ["userId"])
+  .index("by_step", ["step"])
+  .index("by_claimedByWorkerId", ["claimedByWorkerId"])
+  .index("by_clientId", ["clientId"]);
+
+const PHONE_AUTH_TERMINAL = new Set(["Connected", "Failed", "Cancelled"]);
 
 // =============================================================================
 // Validation — returns error string or null
@@ -45,17 +99,16 @@ function validatePassword(password: string): string | null {
 // =============================================================================
 
 /** Active (non-terminal) phone auths for the current human user. Secrets are stripped. */
-export const active = query({
+export const active = humanQuery({
   args: {},
   returns: v.array(phoneAuthPublicDoc),
   handler: async (ctx) => {
-    const caller = await requireHuman(ctx);
     const all = await ctx.db
       .query("phoneAuths")
-      .withIndex("by_userId", (q) => q.eq("userId", caller.id))
+      .withIndex("by_userId", (q) => q.eq("userId", ctx.caller.tokenIdentifier))
       .collect();
     return all
-      .filter((a) => !isPhoneAuthTerminal(a.step))
+      .filter((a) => !PHONE_AUTH_TERMINAL.has(a.step))
       .map(
         ({
           phoneCodeHash: _phoneCodeHash,
@@ -73,11 +126,10 @@ export const active = query({
  * Get a phoneAuth row by ID. Worker-only.
  * The worker subscribes to this to detect step changes (e.g., WaitingCode → VerifyingCode).
  */
-export const getForWorker = query({
+export const getForWorker = workerQuery({
   args: { authId: v.id("phoneAuths") },
   returns: v.union(phoneAuthDoc, v.null()),
   handler: async (ctx, { authId }) => {
-    await requireWorker(ctx);
     return await ctx.db.get(authId);
   },
 });
@@ -86,11 +138,10 @@ export const getForWorker = query({
  * Lightweight step query for domain cancel-watcher.
  * Rust handler subscribes to this and cancels when step becomes terminal.
  */
-export const getStep = query({
+export const getStep = workerQuery({
   args: { authId: v.id("phoneAuths") },
   returns: v.union(phoneAuthStep, v.null()),
   handler: async (ctx, { authId }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     return auth?.step ?? null;
   },
@@ -101,11 +152,10 @@ export const getStep = query({
 // =============================================================================
 
 /** Start phone-based authentication. Creates a Client and PhoneAuth row. */
-export const start = mutation({
+export const start = humanMutation({
   args: { phone: v.string() },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { phone }) => {
-    const caller = await requireHuman(ctx);
     const phoneErr = validatePhone(phone);
     if (phoneErr) {
       return err(phoneErr);
@@ -118,7 +168,7 @@ export const start = mutation({
     const existing = await ctx.db
       .query("clients")
       .withIndex("by_userId_telegramId", (q) =>
-        q.eq("userId", caller.id).eq("telegramId", telegramId)
+        q.eq("userId", ctx.caller.tokenIdentifier).eq("telegramId", telegramId)
       )
       .unique();
 
@@ -128,38 +178,39 @@ export const start = mutation({
 
     // Create the client
     const clientId = await ctx.db.insert("clients", {
-      userId: caller.id,
+      userId: ctx.caller.tokenIdentifier,
       kind: "Telegram",
       telegramId,
       scanningChatIds: [],
       status: { type: "Authenticating" },
     });
 
-    // Create the PhoneAuth row — orchestrator.pendingWork discovers it via step
+    // Create the PhoneAuth row — phoneAuth.pendingWork discovers it via step
     await ctx.db.insert("phoneAuths", {
-      userId: caller.id,
+      userId: ctx.caller.tokenIdentifier,
       clientId,
       phone,
       step: "SendingCode",
       updatedAt: now,
     });
 
-    // phoneAuth step "SendingCode" is picked up by orchestrator.pendingWork
+    // phoneAuth step "SendingCode" is picked up by phoneAuth.pendingWork
     return ok(null);
   },
 });
 
 /** User submits the SMS code. */
-export const submitCode = mutation({
+export const submitCode = humanMutation({
   args: { authId: v.id("phoneAuths"), code: v.string() },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, code }) => {
-    const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
     }
-    requireOwner(caller.id, auth.userId);
+    if (auth.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
     if (auth.step !== "WaitingCode") {
       return err(`Invalid step: expected WaitingCode, got ${auth.step}`);
@@ -181,16 +232,17 @@ export const submitCode = mutation({
 });
 
 /** User submits 2FA password. */
-export const submitPassword = mutation({
+export const submitPassword = humanMutation({
   args: { authId: v.id("phoneAuths"), password: v.string() },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, password }) => {
-    const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
     }
-    requireOwner(caller.id, auth.userId);
+    if (auth.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
     if (auth.step !== "WaitingPassword") {
       return err(`Invalid step: expected WaitingPassword, got ${auth.step}`);
@@ -212,7 +264,7 @@ export const submitPassword = mutation({
 });
 
 /** User cancels the phone auth flow. Worker detects via task status + phoneAuth step. */
-export const cancel = mutation({
+export const cancel = humanMutation({
   args: { authId: v.id("phoneAuths") },
   returns: result(
     v.null(),
@@ -222,14 +274,15 @@ export const cancel = mutation({
     )
   ),
   handler: async (ctx, { authId }) => {
-    const caller = await requireHuman(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
     }
-    requireOwner(caller.id, auth.userId);
+    if (auth.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
-    if (isPhoneAuthTerminal(auth.step)) {
+    if (PHONE_AUTH_TERMINAL.has(auth.step)) {
       return err("Cannot cancel: auth is already in a terminal state");
     }
 
@@ -251,7 +304,7 @@ export const cancel = mutation({
 // =============================================================================
 
 /** Worker reports the result of sending the SMS code. */
-export const workerCompleteSendCode = mutation({
+export const workerCompleteSendCode = workerMutation({
   args: {
     authId: v.id("phoneAuths"),
     result: v.union(
@@ -262,7 +315,6 @@ export const workerCompleteSendCode = mutation({
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: sendCodeResult }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
@@ -309,7 +361,7 @@ export const workerCompleteSendCode = mutation({
 });
 
 /** Worker reports the result of verifying the login code. */
-export const workerCompleteVerifyCode = mutation({
+export const workerCompleteVerifyCode = workerMutation({
   args: {
     authId: v.id("phoneAuths"),
     result: v.union(
@@ -326,7 +378,6 @@ export const workerCompleteVerifyCode = mutation({
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: verifyResult }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
@@ -405,7 +456,7 @@ export const workerCompleteVerifyCode = mutation({
 });
 
 /** Worker reports the result of verifying the 2FA password. */
-export const workerCompleteVerifyPassword = mutation({
+export const workerCompleteVerifyPassword = workerMutation({
   args: {
     authId: v.id("phoneAuths"),
     result: v.union(
@@ -416,7 +467,6 @@ export const workerCompleteVerifyPassword = mutation({
   },
   returns: result(v.null(), v.string()),
   handler: async (ctx, { authId, result: pwResult }) => {
-    await requireWorker(ctx);
     const auth = await ctx.db.get(authId);
     if (!auth) {
       return err("PhoneAuth not found");
@@ -472,5 +522,36 @@ export const workerCompleteVerifyPassword = mutation({
         );
     }
     return ok(null);
+  },
+});
+
+// =============================================================================
+// Pending work (for reconciler dispatch)
+// =============================================================================
+
+/** Phone auth sessions that need a worker. */
+export const pendingWork = workerQuery({
+  args: {},
+  returns: v.array(workItem),
+  handler: async (ctx) => {
+    const work: { service: string; key: string; handler: string }[] = [];
+    for (const step of [
+      "SendingCode",
+      "VerifyingCode",
+      "VerifyingPassword",
+    ] as const) {
+      const auths = await ctx.db
+        .query("phoneAuths")
+        .withIndex("by_step", (q) => q.eq("step", step))
+        .collect();
+      for (const a of auths) {
+        work.push({
+          service: "PhoneAuthWorkflow",
+          key: a._id,
+          handler: "run",
+        });
+      }
+    }
+    return work;
   },
 });

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use convex_backend::{ConvexApi, ConvexApiClient, DomainOpsStoreMediaArgs};
+use convex_backend::{ConvexApi, ConvexApiClient, MediaWorkerStoreMediaArgs};
 use futures::StreamExt;
 use messanger_interface::media::MediaSummary;
 use messanger_telegram::TelegramClient;
@@ -167,7 +167,7 @@ pub async fn download_and_upload(
     // Step 5: Store the media record
     let final_size = file_size.unwrap_or(total_bytes);
     convex
-        .domain_ops_store_media(DomainOpsStoreMediaArgs {
+        .media_worker_store_media(MediaWorkerStoreMediaArgs {
             telegramFileId: external_id.to_string(),
             storageId: storage_id.to_string(),
             mimeType: mime_type.map(String::from),

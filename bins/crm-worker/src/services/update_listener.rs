@@ -12,8 +12,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use convex_backend::{
-    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, DomainOpsMarkMessageDeletedArgs,
-    DomainOpsUpsertMessageArgs,
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MessagesWorkerMarkMessageDeletedArgs,
+    MessagesWorkerUpsertMessageArgs,
 };
 use futures::StreamExt;
 use messanger_interface::{MessengerClient, Update};
@@ -191,7 +191,7 @@ async fn process_update(
             let ts = msg.timestamp_ms.map(|t| t as f64).unwrap_or(0.0);
 
             convex
-                .domain_ops_upsert_message(DomainOpsUpsertMessageArgs {
+                .messages_worker_upsert_message(MessagesWorkerUpsertMessageArgs {
                     messageId: message_id,
                     externalId: msg.external_id.clone(),
                     userId: req.user_id.clone(),
@@ -255,7 +255,7 @@ async fn process_update(
 
             for ext_id in message_external_ids {
                 convex
-                    .domain_ops_mark_message_deleted(DomainOpsMarkMessageDeletedArgs {
+                    .messages_worker_mark_message_deleted(MessagesWorkerMarkMessageDeletedArgs {
                         externalId: ext_id.clone(),
                     })
                     .await

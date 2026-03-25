@@ -1,7 +1,7 @@
 //! Restate service definitions and reconciler.
 //!
 //! - `reconciler`: Plain async loop (NOT a Restate service) — subscribes
-//!   to the `orchestrator.pendingWork` query and dispatches to leaf services
+//!   to per-table `pendingWork` queries and dispatches to leaf services
 //!   via HTTP ingress
 //! - `DialogSync`: Syncs Telegram dialog list to Convex
 //! - `ProfilePhotoSync`: Downloads and uploads chat profile photos

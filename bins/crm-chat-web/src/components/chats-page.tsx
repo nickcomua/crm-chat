@@ -13,8 +13,8 @@ export function ChatsPage(): React.ReactNode {
   const selectedChatId = params.chatId ?? null;
   const targetMessageId = search?.messageId;
 
-  const clients = useQuery(api.clients.list);
-  const chats = useQuery(api.chats.list);
+  const clients = useQuery(api.model.clients.list);
+  const chats = useQuery(api.model.chats.list);
 
   if (import.meta.env.DEV) {
     console.log({ clients });

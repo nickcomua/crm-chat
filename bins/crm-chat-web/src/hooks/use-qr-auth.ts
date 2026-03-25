@@ -43,12 +43,12 @@ interface UseQrAuthReturn {
  */
 export function useQrAuth(): UseQrAuthReturn {
   const [authId, setAuthId] = useState<Id<"qrAuths"> | null>(null);
-  const startMutation = useMutation(api.qrAuth.start);
-  const cancelMutation = useMutation(api.qrAuth.cancel);
+  const startMutation = useMutation(api.model.qrAuth.start);
+  const cancelMutation = useMutation(api.model.qrAuth.cancel);
 
   // Subscribe to the qrAuth record
   const queryResult = useQuery(
-    api.qrAuth.getForUser,
+    api.model.qrAuth.getForUser,
     authId ? { authId } : "skip"
   );
 

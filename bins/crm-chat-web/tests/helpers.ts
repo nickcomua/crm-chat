@@ -101,11 +101,14 @@ export async function seedTestClient(
 ): Promise<Id<"clients">> {
   const client = robot;
 
-  const clientId = await client.mutation(api.clients.workerRegisterConnected, {
-    userId,
-    telegramId,
-    kind: "Telegram",
-  });
+  const clientId = await client.mutation(
+    api.model.clients.workerRegisterConnected,
+    {
+      userId,
+      telegramId,
+      kind: "Telegram",
+    }
+  );
 
   // Create some test chats
   await client.mutation(api.testHelpers.seedChat, {
@@ -342,12 +345,12 @@ export async function waitForPendingScanners(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const items = (await client.query(api.orchestrator.pendingWork, {
-      maxMediaDownloads: 0,
-    })) as Array<{ service: string }>;
+    const items = (await client.query(
+      api.model.chats.pendingWork,
+      {}
+    )) as Array<{ service: string }>;
 
-    const scanners = items.filter((i) => i.service === "ChatScanner");
-    if (scanners.length === 0) {
+    if (items.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 1000));

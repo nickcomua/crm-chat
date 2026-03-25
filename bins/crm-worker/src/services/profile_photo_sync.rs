@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use convex_backend::{
-    ChatsListChatsForWorkerArgs, ChatsTable, ClientsGetForWorkerArgs,
-    ClientsWorkerMarkPhotosSyncedArgs, ConvexApi, ConvexApiClient, DomainOpsUpdateChatPhotoArgs,
+    ChatsListChatsForWorkerArgs, ChatsTable, ChatsWorkerUpdateChatPhotoArgs,
+    ClientsGetForWorkerArgs, ClientsWorkerMarkPhotosSyncedArgs, ConvexApi, ConvexApiClient,
 };
 use messanger_telegram::TelegramClient;
 use restate_sdk::prelude::*;
@@ -199,7 +199,7 @@ async fn upload_photo_to_convex(
     })?;
 
     convex
-        .domain_ops_update_chat_photo(DomainOpsUpdateChatPhotoArgs {
+        .chats_worker_update_chat_photo(ChatsWorkerUpdateChatPhotoArgs {
             chatId: chat_id.to_string(),
             storageId: storage_id.to_string(),
             photoExternalId: photo_external_id.to_string(),
