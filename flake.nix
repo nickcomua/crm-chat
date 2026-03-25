@@ -215,7 +215,7 @@
           {
             inherit crm-worker;
             # crm-chat-web build requires convex-backend generated types outside sandbox
-            inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint;
+            inherit (crm-chat-web-app.checks.${system}) crm-chat-web-lint crm-chat-convex-backend-lint;
             crm-chat-clippy = craneLib.cargoClippy (
               commonArgs
               // {
@@ -338,11 +338,14 @@
               lib,
               ...
             }: {
-              # Allow devenv to detect the project root in pure eval mode
               devenv.root = let
-                devenvRootFileContent = builtins.readFile ./.devenv-root;
+                pwd = builtins.getEnv "PWD";
               in
-                lib.mkForce (lib.strings.removeSuffix "\n" devenvRootFileContent);
+                lib.mkForce (
+                  if pwd != ""
+                  then pwd
+                  else builtins.toString ./.
+                );
 
               # Rust toolchain (replaces fenix in dev shell)
               languages.rust = {
@@ -367,14 +370,12 @@
 
               packages = with pkgs; [
                 openssl
-                bun
                 taplo
                 cargo-hakari
                 cargo-audit
                 cargo-watch
                 cargo-sweep
                 cargo-nextest
-                biome
                 pkg-config
                 llvmPackages.libclang
                 lld

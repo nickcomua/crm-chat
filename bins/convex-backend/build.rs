@@ -16,6 +16,7 @@ fn main() {
                 && name != "schema.ts"
                 && name != "auth.config.ts"
                 && name != "convex.config.ts"
+                && name != "env.ts"
                 && !name.starts_with('_')
             {
                 println!("cargo:rerun-if-changed=convex/{}", name);

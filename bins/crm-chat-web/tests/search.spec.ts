@@ -38,7 +38,7 @@ test.describe("Search — Backend (Data Integrity)", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:search-test-${Date.now()}`,
@@ -60,7 +60,7 @@ test.describe("Search — Backend (Data Integrity)", () => {
   });
 
   test("seeded messages with known text are stored correctly", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msg1Id = `${chatId}:search-msg-1`;
     const msg2Id = `${chatId}:search-msg-2`;
     const msg3Id = `${chatId}:search-msg-3`;
@@ -106,7 +106,7 @@ test.describe("Search — Backend (Data Integrity)", () => {
   });
 
   test("messages with empty text are stored as undefined", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const msgId = `${chatId}:search-empty-text`;
     await seedMessage(userId, clientId, chatId, msgId, undefined, robot);
 
@@ -132,7 +132,7 @@ test.describe("Search — Convex Full-Text", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:search-ft-${Date.now()}`,
@@ -188,7 +188,7 @@ test.describe("Search — Convex Full-Text", () => {
   });
 
   test("search returns messages matching a keyword", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const results = (await robot.query(api.testHelpers.searchMessages, {
       searchText: "quarterly",
       userId,
@@ -205,7 +205,7 @@ test.describe("Search — Convex Full-Text", () => {
   });
 
   test("search scoped to a chat only returns messages from that chat", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
 
     // Create a second chat with a message containing the same keyword
     const chatId2 = `${clientId}:search-ft-chat-2`;
@@ -245,7 +245,7 @@ test.describe("Search — Convex Full-Text", () => {
   });
 
   test("search with no matching text returns empty results", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const results = (await robot.query(api.testHelpers.searchMessages, {
       searchText: "xyznonexistentkeyword",
       userId,
@@ -255,7 +255,7 @@ test.describe("Search — Convex Full-Text", () => {
   });
 
   test("search respects limit parameter", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const results = (await robot.query(api.testHelpers.searchMessages, {
       searchText: "quarterly",
       userId,
@@ -280,7 +280,7 @@ test.describe("Search — UI (Dialog Shell)", () => {
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     userId = await getConvexUserId(page);
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     clientId = await seedTestClient(
       userId,
       `telegram:search-ui-${Date.now()}`,

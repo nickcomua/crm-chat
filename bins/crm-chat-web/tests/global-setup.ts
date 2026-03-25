@@ -51,7 +51,7 @@ export default function globalSetup(): void {
     }
   }
 
-  // Install Convex dependencies (needed for bunx convex deploy in workers)
+  // Install Convex dependencies (needed for bun x convex deploy in workers)
   console.log("[e2e] Installing Convex dependencies...");
   const bunResult = spawnSync("bun", ["install"], {
     cwd: CONVEX_DIR,

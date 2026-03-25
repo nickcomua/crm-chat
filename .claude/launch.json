@@ -9,7 +9,7 @@
 				".",
 				"zsh",
 				"-c",
-				"cd bins/crm-chat-web && bunx vite --host 0.0.0.0"
+				"cd bins/crm-chat-web && bun x vite --host 0.0.0.0"
 			],
 			"port": 5173
 		},
@@ -21,7 +21,7 @@
 				".",
 				"zsh",
 				"-c",
-				"cd bins/convex-backend && bunx convex dev"
+				"cd bins/convex-backend && bun x convex dev"
 			],
 			"port": 6791
 		},

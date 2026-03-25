@@ -44,7 +44,7 @@ TG_HASH=abcdef1234567890
 
 # These get filled in by later steps:
 # CONVEX_SELF_HOSTED_ADMIN_KEY=  (step 3)
-# ROBOT_JWT_PRIVATE_KEY=         (step 4)
+# CLERK_M2M_SECRET_KEY=          (step 4)
 ```
 
 Also create the Convex backend env:
@@ -84,18 +84,15 @@ Copy that key into both `.env` and `bins/convex-backend/.env.local` as `CONVEX_S
 
 ---
 
-## Step 4: Generate robot JWT keys
+## Step 4: Set Clerk M2M key
+
+Add your Clerk machine-to-machine secret key to `.env`:
 
 ```bash
-./scripts/setup-robot-keys.sh
+CLERK_M2M_SECRET_KEY=ak_...
 ```
 
-This script:
-1. Generates an RSA 2048-bit keypair
-2. Writes `ROBOT_JWT_PRIVATE_KEY`, `ROBOT_ID`, `ROBOT_KID` to your `.env`
-3. Pushes the public JWKS to Convex via `bunx convex env set`
-
-The robot auth allows the Rust worker (crm-worker) to authenticate with Convex independently of Clerk.
+Get this from the Clerk Dashboard under **Machines**. The worker uses this key to fetch JWTs from Clerk's M2M API at runtime.
 
 ---
 
@@ -104,14 +101,14 @@ The robot auth allows the Rust worker (crm-worker) to authenticate with Convex i
 ```bash
 cd bins/convex-backend
 bun install
-bunx convex dev    # dev mode with hot-reload
+bun x convex dev    # dev mode with hot-reload
 ```
 
 This deploys your schema + queries + mutations to the self-hosted backend and generates typed bindings in `convex/_generated/`.
 
 Leave this running in a terminal — it watches for changes.
 
-The project uses **dual auth**: Clerk JWTs for human users in the browser, and self-signed RS256 JWTs for the robot service. Both are validated by Convex auth config. The `convex/helpers/auth.ts` file provides `requireHuman()` and `requireRobot()` helpers that mutations use to enforce access.
+The project uses **dual auth**: Clerk JWTs for human users in the browser, and Clerk M2M JWTs for the worker service. Both are validated by the same Clerk provider in Convex auth config. Workers are identified by the `mch_` subject prefix. The `convex/helpers/auth.ts` file provides `requireHuman()` and `requireWorker()` helpers that mutations use to enforce access.
 
 ---
 
@@ -132,7 +129,7 @@ This builds all workspace members: `crm-worker`, `es-proxy`, and the messenger l
 ```bash
 cd bins/crm-chat-web
 bun install
-bunx vite dev
+bun x vite dev
 ```
 
 The dev server starts at **http://localhost:5173**. It connects to Convex at the URL from `VITE_CONVEX_URL` (defaults to `http://127.0.0.1:3210`).
@@ -179,7 +176,7 @@ open http://localhost:5173
 
 # Run tests
 cargo test --workspace
-cd bins/crm-chat-web && bunx ultracite check
+cd bins/crm-chat-web && bun x ultracite check
 ```
 
 ---
@@ -206,14 +203,14 @@ cargo fmt                                # format
 cargo nextest run                        # fast test runner
 
 # Frontend (from bins/crm-chat-web/)
-bunx vite dev                             # dev server
-bunx vite build                           # production build
-bunx ultracite fix                        # auto-fix lint/format
-bunx ultracite check                      # verify compliance
+bun x vite dev                             # dev server
+bun x vite build                           # production build
+bun x ultracite fix                        # auto-fix lint/format
+bun x ultracite check                      # verify compliance
 
 # Convex (from bins/convex-backend/)
-bunx convex dev                           # dev with hot-reload
-bunx convex deploy                        # deploy to self-hosted
+bun x convex dev                           # dev with hot-reload
+bun x convex deploy                        # deploy to self-hosted
 
 # Docker
 docker compose up -d                     # start all services

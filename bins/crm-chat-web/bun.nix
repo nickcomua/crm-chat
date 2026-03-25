@@ -2193,6 +2193,10 @@
     url = "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz";
     hash = "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==";
   };
+  "typescript@6.0.2" = fetchurl {
+    url = "https://registry.npmjs.org/typescript/-/typescript-6.0.2.tgz";
+    hash = "sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==";
+  };
   "ultracite@7.2.3" = fetchurl {
     url = "https://registry.npmjs.org/ultracite/-/ultracite-7.2.3.tgz";
     hash = "sha512-WKNS2sKAZe4BHu+JGbZebXvy/A1QagDaBnndrK/zwOJAze/mQ8jeHfdG2bPlv3qcJ5fdS3w2Kd7c/eIcH78HvA==";

@@ -1,42 +1,39 @@
-//! Worker JWT minting for Convex authentication.
+//! Worker authentication via Clerk M2M (machine-to-machine) JWTs.
 //!
-//! The worker service authenticates to Convex using a self-signed RS256 JWT.
-//! TODO: Migrate to Clerk M2M JWTs when Clerk ships JWT-format M2M tokens.
+//! The worker service authenticates to Convex using a Clerk M2M JWT obtained
+//! from the Clerk Backend API. The JWT is issued for the machine identified by
+//! the `CLERK_M2M_SECRET_KEY` environment variable.
 
-use anyhow::Result;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use serde::Serialize;
+use anyhow::{Context, Result};
+use serde::Deserialize;
 
-#[derive(Serialize)]
-struct WorkerClaims {
-    sub: String,
-    iss: String,
-    aud: String,
-    iat: u64,
-    exp: u64,
+#[derive(Deserialize)]
+struct M2mTokenResponse {
+    token: String,
 }
 
-/// Mint a new JWT for the worker service.
+/// Fetch a fresh M2M JWT from the Clerk Backend API.
 ///
-/// The token is valid for 24 hours and uses RS256 signing.
-/// The `kid` must match the key ID in the JWKS configured in Convex auth.config.ts.
-pub fn mint_worker_jwt(private_key_pem: &str, robot_id: &str, kid: &str) -> Result<String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
+/// The token is valid for ~24 hours. Call periodically to refresh before expiry.
+pub async fn fetch_m2m_jwt(http: &reqwest::Client, m2m_secret_key: &str) -> Result<String> {
+    let resp = http
+        .post("https://api.clerk.com/v1/m2m_tokens")
+        .bearer_auth(m2m_secret_key)
+        .json(&serde_json::json!({ "token_format": "jwt" }))
+        .send()
+        .await
+        .context("Failed to reach Clerk M2M API")?;
 
-    let claims = WorkerClaims {
-        sub: robot_id.to_string(),
-        iss: "https://crm-chat-robot.local".to_string(),
-        aud: "convex".to_string(),
-        iat: now,
-        exp: now + 3600 * 24,
-    };
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Clerk M2M API returned {status}: {body}");
+    }
 
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(kid.to_string());
+    let body: M2mTokenResponse = resp
+        .json()
+        .await
+        .context("Failed to parse Clerk M2M response")?;
 
-    let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())?;
-    let token = encode(&header, &claims, &key)?;
-    Ok(token)
+    Ok(body.token)
 }

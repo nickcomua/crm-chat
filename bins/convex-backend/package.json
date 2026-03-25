@@ -10,17 +10,28 @@
   "scripts": {
     "dev": "convex dev",
     "deploy": "convex deploy",
-    "lint": "eslint convex/"
+    "lint": "eslint convex/ && biome check && tsc -b",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "postinstall": "if [ -z \"$NIX_BUILD_TOP\" ]; then bun2nix -o bun.nix && nix fmt .; fi"
   },
   "dependencies": {
     "@convex-dev/presence": "^0.3.0",
+    "@t3-oss/env-core": "^0.13.10",
     "convex": "^1.25.4",
-    "convex-helpers": "^0.1.112"
+    "convex-helpers": "^0.1.112",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
     "@convex-dev/eslint-plugin": "^1.1.1",
-    "@types/node": "^25.2.3",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.56.0"
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^25.5.0",
+    "bun2nix": "^2.0.0",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.56.0",
+    "ultracite": "^7.1.1"
   }
 }

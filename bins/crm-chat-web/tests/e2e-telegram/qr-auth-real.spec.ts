@@ -59,7 +59,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
     // Poll backend for QrAuth task creation (any status — worker may pick it up fast)
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const deadline = Date.now() + 15_000;
     let qrTasks: Array<{ taskType: string; status: string }> = [];
 
@@ -98,7 +98,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     test.setTimeout(90_000);
 
     // Drain pending ChatScanner tasks so the worker can process QrAuth
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     await waitForPendingScanners(robot);
 
     await page.goto("/#/settings");
@@ -163,7 +163,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
     // Wait for QrAuth task to be created in the backend
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
@@ -201,7 +201,7 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
 // ---------------------------------------------------------------------------
 
 async function waitForNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
-  const robot = getRobotClient(workerCfg);
+  const robot = await getRobotClient(workerCfg);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

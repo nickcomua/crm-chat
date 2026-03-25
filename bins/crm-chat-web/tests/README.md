@@ -7,7 +7,7 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 1. **Install Playwright browsers:**
    ```bash
    cd bins/crm-chat-web
-   bunx playwright install chromium
+   bun x playwright install chromium
    ```
 
 2. **Set environment variables** (or add them to the repo-root `.env` file):

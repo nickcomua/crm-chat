@@ -19,14 +19,14 @@ React + TypeScript frontend for CRM Chat, built with Vite.
 bun install
 
 # Start dev server
-bunx vite dev
+bun x vite dev
 
 # Build for production
-bunx vite build
+bun x vite build
 
 # Lint/format
-bunx ultracite check   # check only
-bunx ultracite fix     # auto-fix
+bun x ultracite check   # check only
+bun x ultracite fix     # auto-fix
 ```
 
 ## Environment Variables

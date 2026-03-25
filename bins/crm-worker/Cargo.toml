@@ -14,7 +14,6 @@ futures = "0.3"
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = [
     "impl-serde",
 ] }
-jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
 reqwest = { version = "0.13.2", default-features = false, features = [

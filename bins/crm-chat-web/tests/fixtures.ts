@@ -1,5 +1,5 @@
+/* eslint-disable no-empty-pattern */
 import { type ChildProcess, spawn } from "node:child_process";
-import crypto from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -193,7 +193,7 @@ interface TestFixtures {
 interface WorkerFixtures {
   workerBackend: {
     convexUrl: string;
-    robotPrivateKey: string;
+    m2mSecretKey: string;
     sessionDir: string;
     baseURL: string;
   };
@@ -209,7 +209,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(workerBackend.baseURL);
   },
   workerBackend: [
-    async (_deps, use) => {
+    // biome-ignore lint/correctness/noEmptyPattern: playwright whant this
+    async ({}, use) => {
       ensureDockerHost();
 
       const wid = `worker-${process.pid}`;
@@ -312,34 +313,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         }
         console.log(`[${wid}] Admin key: ${adminKey.slice(0, 30)}...`);
 
-        // ── 3. Generate RSA keypair for robot auth ────────────────────
-        console.log(`[${wid}] Generating robot RSA keypair...`);
-        const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
-          modulusLength: 2048,
-        });
-        const privateKeyPem = privateKey.export({
-          type: "pkcs8",
-          format: "pem",
-        }) as string;
-        const jwk = publicKey.export({ format: "jwk" });
-        const jwks = {
-          keys: [
-            {
-              kty: "RSA",
-              use: "sig",
-              alg: "RS256",
-              kid: "e2e-robot-key",
-              n: jwk.n,
-              e: jwk.e,
-            },
-          ],
-        };
-        const jwksB64 = Buffer.from(JSON.stringify(jwks)).toString("base64");
-        const jwksDataUri = `data:application/json;base64,${jwksB64}`;
-        console.log(`[${wid}] Robot keypair generated`);
+        // ── 3. Read Clerk M2M secret key ──────────────────────────────
+        const m2mSecretKey = process.env.CLERK_M2M_SECRET_KEY;
+        if (!m2mSecretKey) {
+          throw new Error("CLERK_M2M_SECRET_KEY must be set for E2E tests");
+        }
+        console.log(`[${wid}] Clerk M2M key available`);
 
         // ── 4. Set Convex env vars and deploy ─────────────────────────
-        // Write a temp env file so `bunx convex` uses our test backend
+        // Write a temp env file so `bun x convex` uses our test backend
         // instead of .env.local (which has CONVEX_DEPLOYMENT for dev).
         const convexEnvFile = path.join(
           os.tmpdir(),
@@ -356,11 +338,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const convex$ = $({ cwd: CONVEX_DIR, env: convexEnv });
 
         console.log(`[${wid}] Setting Convex env vars...`);
-        await convex$`bunx convex env set --env-file ${convexEnvFile} CLERK_JWT_ISSUER_DOMAIN https://noted-rabbit-14.clerk.accounts.dev`;
-        await convex$`bunx convex env set --env-file ${convexEnvFile} ROBOT_JWKS ${jwksDataUri}`;
+        await convex$`bun x convex env set --env-file ${convexEnvFile} CLERK_JWT_ISSUER_DOMAIN https://noted-rabbit-14.clerk.accounts.dev`;
 
         console.log(`[${wid}] Deploying Convex functions...`);
-        await convex$`bunx convex deploy --env-file ${convexEnvFile}`;
+        await convex$`bun x convex deploy --env-file ${convexEnvFile}`;
         console.log(`[${wid}] Deploy complete`);
 
         // ── 5. Create session directory ───────────────────────────────
@@ -388,9 +369,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           env: {
             PATH: process.env.PATH ?? "",
             CONVEX_URL: convexUrl,
-            ROBOT_JWT_PRIVATE_KEY: privateKeyPem,
-            ROBOT_ID: "e2e-robot",
-            ROBOT_KID: "e2e-robot-key",
+            CLERK_M2M_SECRET_KEY: m2mSecretKey,
             TG_ID: env.TG_ID,
             TG_HASH: env.TG_HASH,
             TG_SESSION_DIR: sessionDir,
@@ -421,12 +400,20 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
             VITE_TEST_USERNAME: env.TEST_CLERK_USERNAME,
             VITE_TEST_PASSWORD: env.TEST_CLERK_PASSWORD,
           },
-        })`bunx vite build --outDir ${outDir}`;
+        })`bun x vite build --outDir ${outDir}`;
 
         console.log(`[${wid}] Starting Vite preview on port ${vitePort}...`);
         vitePreview = spawn(
-          "bunx",
-          ["vite", "preview", "--port", String(vitePort), "--outDir", outDir],
+          "bun",
+          [
+            "x",
+            "vite",
+            "preview",
+            "--port",
+            String(vitePort),
+            "--outDir",
+            outDir,
+          ],
           {
             cwd: WEB_DIR,
             env: {
@@ -446,7 +433,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         // eslint-disable-next-line react-hooks/rules-of-hooks
         await use({
           convexUrl,
-          robotPrivateKey: privateKeyPem,
+          m2mSecretKey,
           sessionDir,
           baseURL,
         });

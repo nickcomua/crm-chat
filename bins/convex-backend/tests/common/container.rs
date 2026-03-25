@@ -7,7 +7,6 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::sync::OnceCell;
 
-use super::crypto::generate_keypair_and_jwks;
 use super::deploy::deploy_convex;
 
 static DOCKER_HOST_INIT: Once = Once::new();
@@ -15,8 +14,7 @@ static DOCKER_HOST_INIT: Once = Once::new();
 /// Shared test environment backed by a Convex Docker container.
 pub struct ConvexTestEnv {
     pub convex_url: String,
-    pub robot_private_key_pem: String,
-    pub robot_id: String,
+    pub m2m_secret_key: String,
     // Held to keep the container alive via RAII.
     _container: ContainerAsync<GenericImage>,
 }
@@ -122,20 +120,18 @@ impl ConvexTestEnv {
             &admin_key[..admin_key.len().min(30)]
         );
 
-        // Generate RSA keypair for robot JWT auth
-        let (private_pem, jwks_data_uri) = generate_keypair_and_jwks();
+        // Read Clerk M2M secret key from environment
+        let m2m_secret_key = std::env::var("CLERK_M2M_SECRET_KEY")
+            .expect("CLERK_M2M_SECRET_KEY must be set for integration tests");
 
         // Deploy Convex functions
         eprintln!("[test] Deploying Convex functions...");
-        deploy_convex(&convex_url, &admin_key, &jwks_data_uri).await?;
+        deploy_convex(&convex_url, &admin_key).await?;
         eprintln!("[test] Deploy complete!");
-
-        let robot_id = "integration-test-robot".to_string();
 
         Ok(Self {
             convex_url,
-            robot_private_key_pem: private_pem,
-            robot_id,
+            m2m_secret_key,
             _container: container,
         })
     }

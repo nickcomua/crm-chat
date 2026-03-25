@@ -31,7 +31,7 @@ test.describe("Chat List — Backend", () => {
   });
 
   test("seeded chats appear in list query ordered by timestamp", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
       `telegram:chatlist-backend-${Date.now()}`,
@@ -62,7 +62,7 @@ test.describe("Chat List — Backend", () => {
   });
 
   test("last message preview is returned for seeded chats", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
       `telegram:chatlist-preview-${Date.now()}`,
@@ -94,7 +94,7 @@ test.describe("Chat List — Backend", () => {
   });
 
   test("pinnedName update persists", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const cId = await seedTestClient(
       userId,
       `telegram:chatlist-rename-${Date.now()}`,
@@ -129,7 +129,7 @@ test.describe("Chat List — Backend", () => {
 test.describe("Chat List — UI", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
@@ -268,7 +268,7 @@ test.describe("Chat List — UI", () => {
 
   test("deleting client removes its chats from the backend", async () => {
     // Verify chats exist before deletion
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const chatsBefore = (await robot.query(api.testHelpers.queryChats, {
       userId,
     })) as Array<{

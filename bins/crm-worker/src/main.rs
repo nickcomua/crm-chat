@@ -77,8 +77,9 @@ async fn main() -> anyhow::Result<()> {
         config.api_hash.clone(),
     ));
 
-    // Mint JWT and create Convex client for Restate handlers
-    let token = auth::mint_worker_jwt(&config.private_key, &config.robot_id, &config.robot_kid)?;
+    // Fetch Clerk M2M JWT and create Convex client for Restate handlers
+    let http_for_auth = reqwest::Client::new();
+    let token = auth::fetch_m2m_jwt(&http_for_auth, &config.m2m_secret_key).await?;
     let mut raw_client = ::convex::ConvexClient::new(&config.convex_url).await?;
     raw_client.set_auth(Some(token)).await;
     let convex_client = convex_backend::ConvexApiClient::new(raw_client);

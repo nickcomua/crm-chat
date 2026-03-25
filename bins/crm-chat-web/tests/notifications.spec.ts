@@ -17,7 +17,7 @@ let workerCfg: WorkerConfig;
 test.describe("Notifications — Backend", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });
@@ -32,7 +32,7 @@ test.describe("Notifications — Backend", () => {
   });
 
   test("seedNotification creates undismissed notification", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const notifId = await seedNotification(
       userId,
       "Info",
@@ -43,7 +43,7 @@ test.describe("Notifications — Backend", () => {
   });
 
   test("seeds notifications at all severity levels", async () => {
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const infoId = await seedNotification(
       userId,
       "Info",
@@ -75,7 +75,7 @@ test.describe("Notifications — Backend", () => {
 test.describe("Notifications — UI", () => {
   test.beforeAll(async ({ browser, workerBackend }) => {
     workerCfg = workerBackend;
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     const context = await browser.newContext({
       storageState: "tests/.auth/user.json",
     });

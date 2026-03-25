@@ -62,7 +62,7 @@ test.describe("Media Visual — Real Telegram Data", () => {
     }
     writeOwnerFile(copiedSessionPath, convexUserId);
 
-    const robot = getRobotClient(workerCfg);
+    const robot = await getRobotClient(workerCfg);
     registeredClientId = (await robot.mutation(
       api.clients.workerRegisterConnected,
       {

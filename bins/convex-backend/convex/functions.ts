@@ -9,14 +9,14 @@
  */
 
 import {
-	customCtx,
-	customMutation,
+  customCtx,
+  customMutation,
 } from "convex-helpers/server/customFunctions";
 import { Triggers } from "convex-helpers/server/triggers";
 import type { DataModel } from "./_generated/dataModel";
 import {
-	internalMutation as rawInternalMutation,
-	mutation as rawMutation,
+  internalMutation as rawInternalMutation,
+  mutation as rawMutation,
 } from "./_generated/server";
 
 const triggers = new Triggers<DataModel>();
@@ -31,33 +31,40 @@ const triggers = new Triggers<DataModel>();
  */
 // TODO crop trigers and move this directly to @presence.ts
 triggers.register("humans", async (ctx, change) => {
-	if (change.operation === "delete") return;
-	if (change.operation === "insert") return;
+  if (change.operation === "delete") {
+    return;
+  }
+  if (change.operation === "insert") {
+    return;
+  }
 
-	const { oldDoc, newDoc } = change;
-	if (oldDoc.online && !newDoc.online) {
-		const { userId } = newDoc;
-		const tasks = await ctx.db
-			.query("workerTasks")
-			.withIndex("by_userId", (q) => q.eq("userId", userId))
-			.collect();
+  const { oldDoc, newDoc } = change;
+  if (oldDoc.online && !newDoc.online) {
+    const { userId } = newDoc;
+    const tasks = await ctx.db
+      .query("workerTasks")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
 
-		for (const task of tasks) {
-			if (task.task.type !== "QrAuth") continue;
-			if (
-				task.status !== "Pending" &&
-				task.status !== "Dispatched" &&
-				task.status !== "Running"
-			)
-				continue;
+    for (const task of tasks) {
+      if (task.task.type !== "QrAuth") {
+        continue;
+      }
+      if (
+        task.status !== "Pending" &&
+        task.status !== "Dispatched" &&
+        task.status !== "Running"
+      ) {
+        continue;
+      }
 
-			await ctx.db.patch(task._id, { status: "Cancelled" });
-		}
-	}
+      await ctx.db.patch(task._id, { status: "Cancelled" });
+    }
+  }
 });
 
 export const mutation = customMutation(rawMutation, customCtx(triggers.wrapDB));
 export const internalMutation = customMutation(
-	rawInternalMutation,
-	customCtx(triggers.wrapDB),
+  rawInternalMutation,
+  customCtx(triggers.wrapDB)
 );

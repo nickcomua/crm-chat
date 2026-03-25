@@ -11,6 +11,8 @@ export const env = createEnv({
     TEST_CLERK_USERNAME: z.string().min(1),
     TEST_CLERK_PASSWORD: z.string().min(1),
     VITE_CLERK_PUBLISHABLE_KEY: z.string().min(1),
+    CLERK_JWT_ISSUER_DOMAIN: z.string().url(),
+    CLERK_M2M_SECRET_KEY: z.string().min(1),
     TG_ID: z.string().min(1),
     TG_HASH: z.string().min(1),
     TG_SESSION_FILE_1: z.string().min(1),

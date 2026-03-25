@@ -36,6 +36,47 @@
           overlays = [inputs.bun2nix.overlays.default];
         }
     );
+
+    # Fetch biome binary from GitHub releases to match the exact version
+    # in package.json. nixpkgs biome lags behind npm releases.
+    biomeVersion = "2.4.8";
+    biomeFor = eachSystem (system: let
+      pkgs = pkgsFor.${system};
+      biomeBinSrc =
+        {
+          "aarch64-darwin" = pkgs.fetchurl {
+            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-arm64";
+            hash = "sha256-J3fWLS+ts0zYIgUKP4qssx9ToVQjlG+9jP0a/7DtZSw=";
+          };
+          "x86_64-darwin" = pkgs.fetchurl {
+            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-x64";
+            hash = "sha256-rBxeuTO+K7GGyK6kzIEkmTiFXgj+iPgHOWt8tB3+smQ=";
+          };
+          "x86_64-linux" = pkgs.fetchurl {
+            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-x64";
+            hash = "sha256-urIF3qLSQyY44B+0HRNtbMsm3QflQ9L0DSC3seVb4mM=";
+          };
+          "aarch64-linux" = pkgs.fetchurl {
+            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-arm64";
+            hash = "sha256-453zoJaX9D3I14mJ14GQKcSn3cRbyismhAOENXUVT4Y=";
+          };
+        }.${
+          system
+        };
+    in
+      pkgs.stdenv.mkDerivation {
+        pname = "biome";
+        version = biomeVersion;
+        src = biomeBinSrc;
+        dontUnpack = true;
+        nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.autoPatchelfHook];
+        buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.stdenv.cc.cc.lib];
+        installPhase = ''
+          mkdir -p $out/bin
+          cp $src $out/bin/biome
+          chmod +x $out/bin/biome
+        '';
+      });
   in {
     packages = eachSystem (
       system: let
@@ -180,50 +221,12 @@
     checks = eachSystem (
       system: let
         pkgs = pkgsFor.${system};
+        biome = biomeFor.${system};
         combinedSrc = pkgs.runCommand "crm-chat-web-combined-src" {} ''
           mkdir -p $out/crm-chat-web $out/convex-backend
           cp -r ${pkgs.lib.cleanSource ./.}/. $out/crm-chat-web/
           cp -r ${pkgs.lib.cleanSource ../convex-backend}/. $out/convex-backend/
         '';
-
-        # Fetch biome binary from GitHub releases to match the exact version
-        # in package.json. bun2nix only installs platform-specific optional
-        # deps for the host, so cross-platform builds need this.
-        biomeVersion = "2.4.4";
-        biomeBinSrc =
-          {
-            "aarch64-darwin" = pkgs.fetchurl {
-              url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-arm64";
-              hash = "sha256-6JARsXFKIOvUtoMyG6cYTOKnmij07j0zvadKTqdJBio=";
-            };
-            "x86_64-darwin" = pkgs.fetchurl {
-              url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-x64";
-              hash = "sha256-T60NUBXrtr5SuJOY7Q6Qch7gI59M3qDDRyV6CihujYQ=";
-            };
-            "x86_64-linux" = pkgs.fetchurl {
-              url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-x64";
-              hash = "sha256-ulBzAX7AOnAOW5JwskVN99vsalEkYRu3hbaK5xdQbUU=";
-            };
-            "aarch64-linux" = pkgs.fetchurl {
-              url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-arm64";
-              hash = "sha256-cIz6oB0SsrsWScW32X894koXQfvPzwpGHF+b5Idcdgs=";
-            };
-          }.${
-            system
-          };
-        biome = pkgs.stdenv.mkDerivation {
-          pname = "biome";
-          version = biomeVersion;
-          src = biomeBinSrc;
-          dontUnpack = true;
-          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.autoPatchelfHook];
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.stdenv.cc.cc.lib];
-          installPhase = ''
-            mkdir -p $out/bin
-            cp $src $out/bin/biome
-            chmod +x $out/bin/biome
-          '';
-        };
       in {
         crm-chat-web-lint = pkgs.stdenv.mkDerivation {
           pname = "crm-chat-web-lint";
@@ -268,6 +271,44 @@
 
           doCheck = false;
         };
+
+        crm-chat-convex-backend-lint = pkgs.stdenv.mkDerivation {
+          pname = "crm-chat-convex-backend-lint";
+          version = "0.0.0";
+          src = combinedSrc;
+
+          nativeBuildInputs = [
+            pkgs.bun2nix.hook
+            biome
+          ];
+
+          bunDeps = pkgs.bun2nix.fetchBunDeps {
+            bunNix = ../convex-backend/bun.nix;
+          };
+
+          bunRoot = "convex-backend";
+          dontUseBunBuild = true;
+
+          bunInstallFlags =
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then ["--linker=hoisted" "--backend=copyfile"]
+            else ["--linker=hoisted"];
+
+          buildPhase = ''
+            cd convex-backend
+            sed -i '/\/build/d' node_modules/ultracite/config/biome/core/biome.jsonc
+            mkdir -p .git
+            node_modules/.bin/eslint convex/
+            biome check
+            node_modules/.bin/tsc -b
+          '';
+
+          installPhase = ''
+            touch $out
+          '';
+
+          doCheck = false;
+        };
       }
     );
 
@@ -276,9 +317,10 @@
         pkgs = pkgsFor.${system};
       in {
         default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            bun
-            bun2nix
+          packages = [
+            pkgs.bun
+            pkgs.bun2nix
+            biomeFor.${system}
           ];
         };
       }
