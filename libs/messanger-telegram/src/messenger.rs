@@ -721,6 +721,7 @@ impl MessengerClient for TelegramClient {
                             .media()
                             .map(|_| format!("media:{}:{}", chat_bare_id, msg.id())),
                         media_summary,
+                        reply_to_message_id: msg.reply_to_message_id(),
                     };
                     count += 1;
                     // If receiver is dropped, stop producing to avoid unnecessary work

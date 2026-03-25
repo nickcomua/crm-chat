@@ -101,7 +101,6 @@ export const seedMessage = workerMutation({
     mediaExternalId: v.optional(v.string()),
     mediaKind: v.optional(mediaKind),
     replyToMessageId: v.optional(v.string()),
-    replyToText: v.optional(v.string()),
     forwardedFrom: v.optional(forwardedFromValidator),
     reactions: v.optional(v.array(reactionValidator)),
   },

@@ -200,6 +200,9 @@ pub async fn scan_chat_messages(
                     .media_summary
                     .as_ref()
                     .map(|s| to_upsert_media_kind(s.kind)),
+                replyToMessageId: msg
+                    .reply_to_message_id
+                    .map(|id| format!("{}:{}", req.chat_id, id)),
             })
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;

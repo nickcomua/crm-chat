@@ -226,7 +226,6 @@ export async function seedMessage(
     deleted?: boolean;
     timestamp?: number;
     replyToMessageId?: string;
-    replyToText?: string;
     forwardedFrom?: { senderName: string; date?: number };
     reactions?: Array<{
       emoji: string;
@@ -248,7 +247,6 @@ export async function seedMessage(
     deleted: opts?.deleted ?? false,
     timestamp: opts?.timestamp ?? Date.now(),
     replyToMessageId: opts?.replyToMessageId,
-    replyToText: opts?.replyToText,
     forwardedFrom: opts?.forwardedFrom,
     reactions: opts?.reactions,
   });

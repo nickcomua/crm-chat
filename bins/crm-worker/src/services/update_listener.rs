@@ -190,6 +190,10 @@ async fn process_update(
             let message_id = format!("{}:{}", chat_id, msg.external_id);
             let ts = msg.timestamp_ms.map(|t| t as f64).unwrap_or(0.0);
 
+            let reply_to_message_id = msg
+                .reply_to_message_id
+                .map(|id| format!("{}:{}", chat_id, id));
+
             convex
                 .messages_worker_upsert_message(MessagesWorkerUpsertMessageArgs {
                     messageId: message_id,
@@ -207,6 +211,7 @@ async fn process_update(
                         .media_summary
                         .as_ref()
                         .map(|s| to_upsert_media_kind(s.kind)),
+                    replyToMessageId: reply_to_message_id,
                 })
                 .await
                 .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;

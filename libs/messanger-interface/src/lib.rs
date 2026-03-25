@@ -122,6 +122,7 @@ mod tests {
                 timestamp_ms: Some(1000),
                 media_external_id: Some(media1.external_id.clone()),
                 media_summary: Some(media1.clone()),
+                reply_to_message_id: None,
             };
 
             let mut messages = HashMap::new();
@@ -367,6 +368,7 @@ mod tests {
                 timestamp_ms: Some(1000),
                 media_external_id: None,
                 media_summary: None,
+                reply_to_message_id: None,
             },
             MessageSummary {
                 external_id: "msg:2".to_string(),
@@ -377,6 +379,7 @@ mod tests {
                 timestamp_ms: Some(2000),
                 media_external_id: None,
                 media_summary: None,
+                reply_to_message_id: None,
             },
         ];
 
@@ -502,6 +505,7 @@ mod tests {
             timestamp_ms: Some(1000),
             media_external_id: None,
             media_summary: None,
+            reply_to_message_id: None,
         });
 
         let json = serde_json::to_string(&update).unwrap();
@@ -542,6 +546,7 @@ mod tests {
             timestamp_ms: Some(1000),
             media_external_id: Some("media:1".to_string()),
             media_summary: None,
+            reply_to_message_id: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
