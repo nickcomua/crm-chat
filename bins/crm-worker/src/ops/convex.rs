@@ -5,16 +5,15 @@
 //! - Re-exports of commonly used generated types
 //! - [`ConvexResultExt`] for collapsing transport + business-logic errors
 //! - The `map_chat_type` helper
-//! - Best-effort (fire-and-forget) wrappers for operations where errors are ignored
+//! - Best-effort (fire-and-forget) wrappers for domain operations
 
 pub use convex_backend::ConvexApi;
 pub use convex_backend::ConvexApiClient;
-pub use convex_backend::WorkerOpsUpsertChatChatType;
+pub use convex_backend::DomainOpsUpsertChatChatType;
 
 use convex_backend::{
-    ChatsScanEnabledChatIdsArgs, WorkerOpsMarkMediaFailedArgs, WorkerOpsStartMediaDownloadArgs,
-    WorkerOpsUpdateMediaProgressArgs, WorkerTasksRunTaskArgs, WorkerTasksTask as Task,
-    WorkerTasksWorkerCompleteArgs,
+    ChatsScanEnabledChatIdsArgs, DomainOpsMarkMediaFailedArgs, DomainOpsStartMediaDownloadArgs,
+    DomainOpsUpdateMediaProgressArgs,
 };
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -61,11 +60,31 @@ impl<T, E: std::fmt::Display> ConvexResultExt
     }
 }
 
+/// Extension trait for single-layer `Result<T, ConvexError>` (no inner result).
+pub trait ConvexWarnExt {
+    type Value;
+    fn warn_on_err(self, context: &str) -> Option<Self::Value>;
+}
+
+impl<T> ConvexWarnExt for Result<T, convex_backend::ConvexError> {
+    type Value = T;
+
+    fn warn_on_err(self, context: &str) -> Option<T> {
+        match self {
+            Ok(v) => Some(v),
+            Err(e) => {
+                warn!(error = %e, "{context}");
+                None
+            }
+        }
+    }
+}
+
 /// Map a Telegram chat type string to a Convex ChatType enum.
-pub fn map_chat_type(chat_type: Option<&str>) -> WorkerOpsUpsertChatChatType {
+pub fn map_chat_type(chat_type: Option<&str>) -> DomainOpsUpsertChatChatType {
     match chat_type {
-        Some("user") => WorkerOpsUpsertChatChatType::Dialog,
-        _ => WorkerOpsUpsertChatChatType::Group,
+        Some("user") => DomainOpsUpsertChatChatType::Dialog,
+        _ => DomainOpsUpsertChatChatType::Group,
     }
 }
 
@@ -73,10 +92,9 @@ pub fn map_chat_type(chat_type: Option<&str>) -> WorkerOpsUpsertChatChatType {
 // Best-effort wrappers (fire-and-forget, warnings on error)
 // ────────────────────────────────────────────────────────────────────────────
 
-pub async fn start_download(client: &ConvexApiClient, task_id: &str, telegram_file_id: &str) {
+pub async fn start_download(client: &ConvexApiClient, telegram_file_id: &str) {
     if let Err(e) = client
-        .worker_ops_start_media_download(WorkerOpsStartMediaDownloadArgs {
-            taskId: task_id.into(),
+        .domain_ops_start_media_download(DomainOpsStartMediaDownloadArgs {
             telegramFileId: telegram_file_id.into(),
         })
         .await
@@ -87,14 +105,12 @@ pub async fn start_download(client: &ConvexApiClient, task_id: &str, telegram_fi
 
 pub async fn update_download_progress(
     client: &ConvexApiClient,
-    task_id: &str,
     telegram_file_id: &str,
     bytes_downloaded: f64,
     file_size: Option<f64>,
 ) {
     if let Err(e) = client
-        .worker_ops_update_media_progress(WorkerOpsUpdateMediaProgressArgs {
-            taskId: task_id.into(),
+        .domain_ops_update_media_progress(DomainOpsUpdateMediaProgressArgs {
             telegramFileId: telegram_file_id.into(),
             bytesDownloaded: bytes_downloaded,
             fileSize: file_size,
@@ -105,15 +121,9 @@ pub async fn update_download_progress(
     }
 }
 
-pub async fn mark_media_failed(
-    client: &ConvexApiClient,
-    task_id: &str,
-    telegram_file_id: &str,
-    error: &str,
-) {
+pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str, error: &str) {
     if let Err(e) = client
-        .worker_ops_mark_media_failed(WorkerOpsMarkMediaFailedArgs {
-            taskId: task_id.into(),
+        .domain_ops_mark_media_failed(DomainOpsMarkMediaFailedArgs {
             telegramFileId: telegram_file_id.into(),
             error: error.into(),
         })
@@ -123,40 +133,15 @@ pub async fn mark_media_failed(
     }
 }
 
-/// Mark a task as Running (Dispatched → Running). Called at handler start.
-pub async fn run_task(convex: &ConvexApiClient, task_id: &str) {
-    convex
-        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
-            taskId: task_id.to_string(),
-        })
-        .await
-        .warn_on_err("Failed to mark task running");
-}
-
-/// Best-effort task completion: runs type-specific logic then deletes the task.
-/// Pass `None` for tasks with no completion data; pass `Some(task)` for types
-/// that carry final state (e.g. QrAuth with telegramUserId).
-pub async fn worker_complete(convex: &ConvexApiClient, task_id: &str) {
-    convex
-        .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-            taskId: task_id.to_string(),
-            task: None,
-        })
-        .await
-        .warn_on_err("Failed to complete task");
-}
-
 // ────────────────────────────────────────────────────────────────────────────
-// Shared payload type
+// Shared request type
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Wrapper around a Task variant with `task_id` injected by the orchestrator.
-/// All Restate handlers deserialize this instead of raw `Task`.
+/// Request payload for domain-driven handlers. Contains only the entity ID.
+/// Each handler queries fresh domain state from Convex using this ID.
 #[derive(Serialize, Deserialize)]
-pub struct TaskPayload {
-    pub task_id: String,
-    #[serde(flatten)]
-    pub task: Task,
+pub struct EntityRequest {
+    pub entity_id: String,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

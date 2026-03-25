@@ -7,6 +7,14 @@ import { v } from "convex/values";
 
 export const clientKind = v.literal("Telegram");
 
+export const clientPhase = v.union(
+  v.literal("Authenticating"),
+  v.literal("NeedsSync"),
+  v.literal("Syncing"),
+  v.literal("Listening"),
+  v.literal("Disconnected")
+);
+
 export const clientStatus = v.union(
   v.object({ type: v.literal("Authenticating") }),
   v.object({ type: v.literal("Connected") }),
@@ -73,81 +81,10 @@ export const mediaSettingsValidator = v.object({
 });
 
 export const scanPhase = v.union(
+  v.literal("Queued"),
   v.literal("ScanningMessages"),
   v.literal("DownloadingMedia"),
   v.literal("Listening")
-);
-
-export const workerTaskStatus = v.union(
-  v.literal("Pending"),
-  v.literal("Dispatched"),
-  v.literal("Running"),
-  v.literal("Cancelled")
-);
-
-// =============================================================================
-// Worker task discriminated union — one variant per workflow
-// =============================================================================
-
-const clientTaskBase = {
-  clientId: v.id("clients" as const),
-  userId: v.string(),
-  telegramId: v.string(),
-};
-
-export const workerTask = v.union(
-  // Auth — QR fields live directly on the variant
-  v.object({
-    type: v.literal("QrAuth"),
-    step: qrAuthStep,
-    qrUrl: v.optional(v.string()),
-    qrExpires: v.optional(v.number()),
-    telegramUserId: v.optional(v.int64()),
-    phoneNumber: v.optional(v.string()),
-    error: v.optional(v.string()),
-  }),
-  // Auth — phone auth references its phoneAuths row
-  v.object({
-    type: v.literal("PhoneAuth"),
-    authId: v.id("phoneAuths"),
-  }),
-
-  // Client lifecycle
-  v.object({ type: v.literal("DialogSync"), ...clientTaskBase }),
-  v.object({ type: v.literal("UpdateListener"), ...clientTaskBase }),
-  v.object({
-    type: v.literal("ProfilePhotoSync"),
-    ...clientTaskBase,
-    chats: v.array(
-      v.object({
-        chatId: v.string(),
-        photoExternalId: v.optional(v.string()),
-      })
-    ),
-  }),
-
-  // Chat scanning
-  v.object({
-    type: v.literal("ChatScanner"),
-    chatId: v.string(),
-    clientId: v.id("clients"),
-    userId: v.string(),
-    isPinned: v.boolean(),
-    pinnedName: v.optional(v.string()),
-  }),
-
-  // Per-file media download
-  v.object({
-    type: v.literal("MediaDownloader"),
-    telegramFileId: v.string(),
-    userId: v.string(),
-    clientId: v.id("clients"),
-    telegramId: v.string(),
-    chatId: v.string(),
-    kind: mediaKind,
-    mimeType: v.optional(v.string()),
-    fileSize: v.optional(v.number()),
-  })
 );
 
 // =============================================================================
@@ -166,6 +103,8 @@ export const clientDoc = v.object({
   phoneNumber: v.optional(v.string()),
   scanningChatIds: v.array(v.string()),
   status: clientStatus,
+  phase: v.optional(clientPhase),
+  photosSynced: v.optional(v.boolean()),
   mediaSettings: v.optional(mediaSettingsValidator),
 });
 
@@ -298,6 +237,33 @@ export const phoneAuthPublicDoc = v.object({
   updatedAt: v.number(),
 });
 
+export const qrAuthDoc = v.object({
+  _id: v.id("qrAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  step: qrAuthStep,
+  qrUrl: v.optional(v.string()),
+  qrExpires: v.optional(v.number()),
+  telegramUserId: v.optional(v.int64()),
+  phoneNumber: v.optional(v.string()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+/** qrAuthDoc without secrets — safe for human-facing queries. */
+export const qrAuthPublicDoc = v.object({
+  _id: v.id("qrAuths"),
+  _creationTime: v.number(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  step: qrAuthStep,
+  qrUrl: v.optional(v.string()),
+  qrExpires: v.optional(v.number()),
+  error: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
 export const notificationDoc = v.object({
   _id: v.id("notifications"),
   _creationTime: v.number(),
@@ -305,17 +271,6 @@ export const notificationDoc = v.object({
   severity: messageSeverity,
   message: v.string(),
   dismissed: v.boolean(),
-});
-
-export const workerTaskDoc = v.object({
-  _id: v.id("workerTasks"),
-  _creationTime: v.number(),
-  task: workerTask,
-  status: workerTaskStatus,
-  createdAt: v.number(),
-  dispatchedAt: v.optional(v.number()),
-  claimedByWorkerId: v.optional(v.string()),
-  userId: v.optional(v.string()),
 });
 
 // =============================================================================
@@ -326,7 +281,8 @@ export default defineSchema({
   clients: defineTable(clientDoc.omit("_id", "_creationTime"))
     .index("by_userId", ["userId"])
     .index("by_userId_telegramId", ["userId", "telegramId"])
-    .index("by_userId_externalId", ["userId", "externalId"]),
+    .index("by_userId_externalId", ["userId", "externalId"])
+    .index("by_phase", ["phase"]),
 
   chats: defineTable(chatDoc.omit("_id", "_creationTime"))
     .index("by_chatId", ["chatId"])
@@ -338,7 +294,8 @@ export default defineSchema({
       "scanEnabled",
       "lastMessageTimestamp",
     ])
-    .index("by_clientId_userId", ["clientId", "userId"]),
+    .index("by_clientId_userId", ["clientId", "userId"])
+    .index("by_scanPhase", ["scanPhase"]),
 
   messages: defineTable(messageDoc.omit("_id", "_creationTime"))
     .index("by_messageId", ["messageId"])
@@ -374,9 +331,10 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_userId_dismissed", ["userId", "dismissed"]),
 
-  workerTasks: defineTable(workerTaskDoc.omit("_id", "_creationTime"))
-    .index("by_status", ["status"])
-    .index("by_userId", ["userId"]),
+  qrAuths: defineTable(qrAuthDoc.omit("_id", "_creationTime"))
+    .index("by_userId", ["userId"])
+    .index("by_step", ["step"])
+    .index("by_clientId", ["clientId"]),
 
   humans: defineTable({
     userId: v.string(),

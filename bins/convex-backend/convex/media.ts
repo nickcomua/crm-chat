@@ -7,8 +7,9 @@ import {
   requireOwner,
   requireWorker,
 } from "./helpers/auth";
-import { enqueueTask } from "./helpers/tasks";
-import { mediaKind, mediaStatus } from "./schema";
+import { mediaDoc, mediaKind, mediaStatus } from "./schema";
+
+// TODO regroup everything in convex by tables . file per table . organize files here its too flat right now
 
 /** Generate a short-lived upload URL for Convex file storage. */
 export const generateUploadUrl = mutation({
@@ -20,7 +21,9 @@ export const generateUploadUrl = mutation({
   },
 });
 
-/** Reset a failed media record back to pending so the worker retries it. */
+/** Reset a failed media record back to pending so the worker retries it.
+ *  Domain-driven: setting status to "Pending" causes the reconciler to
+ *  dispatch a MediaDownloader automatically. */
 export const retryDownload = mutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
@@ -43,21 +46,6 @@ export const retryDownload = mutation({
       error: undefined,
       bytesDownloaded: undefined,
     });
-
-    const client = await ctx.db.get(existing.clientId);
-    if (client) {
-      await enqueueTask(ctx, {
-        type: "MediaDownloader",
-        telegramFileId: existing.telegramFileId,
-        userId: existing.userId,
-        clientId: existing.clientId,
-        telegramId: client.telegramId,
-        chatId: existing.chatId,
-        kind: existing.kind,
-        mimeType: existing.mimeType,
-        fileSize: existing.fileSize,
-      });
-    }
 
     return null;
   },
@@ -95,7 +83,9 @@ export const cancelDownload = mutation({
   },
 });
 
-/** Request download for a skipped media record (human-callable). */
+/** Request download for a skipped media record (human-callable).
+ *  Domain-driven: setting status to "Pending" causes the reconciler to
+ *  dispatch a MediaDownloader automatically. */
 export const requestDownload = mutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
@@ -121,21 +111,6 @@ export const requestDownload = mutation({
     await ctx.db.patch(existing._id, {
       status: "Pending" as const,
     });
-
-    const client = await ctx.db.get(existing.clientId);
-    if (client) {
-      await enqueueTask(ctx, {
-        type: "MediaDownloader",
-        telegramFileId: existing.telegramFileId,
-        userId: existing.userId,
-        clientId: existing.clientId,
-        telegramId: client.telegramId,
-        chatId: existing.chatId,
-        kind: existing.kind,
-        mimeType: existing.mimeType,
-        fileSize: existing.fileSize,
-      });
-    }
 
     return null;
   },
@@ -441,5 +416,33 @@ export const countByStatus = query({
       results.push({ status, count: records.length });
     }
     return results;
+  },
+});
+
+// =============================================================================
+// Cancel-watcher query (for domain-driven dispatch)
+// =============================================================================
+
+/**
+ * Lightweight status query for domain cancel-watcher.
+ * Rust handler subscribes to this and cancels when status becomes "Skipped".
+ */
+export const getStatus = query({
+  args: { mediaId: v.id("media") },
+  returns: v.union(mediaStatus, v.null()),
+  handler: async (ctx, { mediaId }) => {
+    await requireWorker(ctx);
+    const media = await ctx.db.get(mediaId);
+    return media?.status ?? null;
+  },
+});
+
+/** Get a media record by _id for the download handler. Worker-only. */
+export const getForDownload = query({
+  args: { mediaId: v.id("media") },
+  returns: v.union(mediaDoc, v.null()),
+  handler: async (ctx, { mediaId }) => {
+    await requireWorker(ctx);
+    return await ctx.db.get(mediaId);
   },
 });

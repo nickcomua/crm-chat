@@ -10,8 +10,7 @@ import {
   sendError,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { cancelClientTasks, enqueueTask } from "./helpers/tasks";
-import { phoneAuthDoc, phoneAuthPublicDoc } from "./schema";
+import { phoneAuthDoc, phoneAuthPublicDoc, phoneAuthStep } from "./schema";
 
 // =============================================================================
 // Validation — returns error string or null
@@ -83,6 +82,20 @@ export const getForWorker = query({
   },
 });
 
+/**
+ * Lightweight step query for domain cancel-watcher.
+ * Rust handler subscribes to this and cancels when step becomes terminal.
+ */
+export const getStep = query({
+  args: { authId: v.id("phoneAuths") },
+  returns: v.union(phoneAuthStep, v.null()),
+  handler: async (ctx, { authId }) => {
+    await requireWorker(ctx);
+    const auth = await ctx.db.get(authId);
+    return auth?.step ?? null;
+  },
+});
+
 // =============================================================================
 // Human Mutations
 // =============================================================================
@@ -122,8 +135,8 @@ export const start = mutation({
       status: { type: "Authenticating" },
     });
 
-    // Create the PhoneAuth row
-    const authId = await ctx.db.insert("phoneAuths", {
+    // Create the PhoneAuth row — orchestrator.pendingWork discovers it via step
+    await ctx.db.insert("phoneAuths", {
       userId: caller.id,
       clientId,
       phone,
@@ -131,9 +144,7 @@ export const start = mutation({
       updatedAt: now,
     });
 
-    // Enqueue worker task — worker subscribes to phoneAuths row for step changes
-    await enqueueTask(ctx, { type: "PhoneAuth", authId });
-
+    // phoneAuth step "SendingCode" is picked up by orchestrator.pendingWork
     return ok(null);
   },
 });
@@ -222,29 +233,14 @@ export const cancel = mutation({
       return err("Cannot cancel: auth is already in a terminal state");
     }
 
-    // Delete the associated client and cancel its tasks
-    await cancelClientTasks(ctx, auth.clientId);
+    // Set phase to Disconnected so domain cancel-watchers fire
+    await ctx.db.patch(auth.clientId, { phase: "Disconnected" });
     await ctx.db.delete(auth.clientId);
 
     await ctx.db.patch(authId, {
       step: "Cancelled",
       updatedAt: Date.now(),
     });
-
-    // Cancel the PhoneAuth worker task — worker detects via status subscription
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_status")
-      .collect();
-    for (const task of tasks) {
-      if (
-        task.task.type === "PhoneAuth" &&
-        task.task.authId === authId &&
-        task.status !== "Cancelled"
-      ) {
-        await ctx.db.patch(task._id, { status: "Cancelled" as const });
-      }
-    }
 
     return ok(null);
   },
@@ -285,24 +281,15 @@ export const workerCompleteSendCode = mutation({
         updatedAt: now,
       });
     } else if (sendCodeResult.type === "AlreadyAuthorized") {
-      // Update client to Connected
+      // Update client to Connected + NeedsSync — reconciler dispatches DialogSync
       await ctx.db.patch(auth.clientId, {
         status: { type: "Connected" },
+        phase: "NeedsSync" as const,
       });
       await ctx.db.patch(authId, {
         step: "Connected",
         updatedAt: now,
       });
-      // Enqueue UpdateListener for the connected client
-      const client = await ctx.db.get(auth.clientId);
-      if (client) {
-        await enqueueTask(ctx, {
-          type: "UpdateListener",
-          clientId: client._id,
-          userId: client.userId,
-          telegramId: client.telegramId,
-        });
-      }
     } else {
       // Failed
       await ctx.db.delete(auth.clientId);
@@ -355,19 +342,10 @@ export const workerCompleteVerifyCode = mutation({
       case "Success": {
         await ctx.db.patch(auth.clientId, {
           status: { type: "Connected" },
+          phase: "NeedsSync" as const,
           externalId: verifyResult.userId.toString(),
         });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
-        // Enqueue client services
-        const client = await ctx.db.get(auth.clientId);
-        if (client) {
-          await enqueueTask(ctx, {
-            type: "UpdateListener",
-            clientId: client._id,
-            userId: client.userId,
-            telegramId: client.telegramId,
-          });
-        }
         break;
       }
 
@@ -454,19 +432,10 @@ export const workerCompleteVerifyPassword = mutation({
       case "Success": {
         await ctx.db.patch(auth.clientId, {
           status: { type: "Connected" },
+          phase: "NeedsSync" as const,
           externalId: pwResult.userId.toString(),
         });
         await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
-        // Enqueue client services
-        const client = await ctx.db.get(auth.clientId);
-        if (client) {
-          await enqueueTask(ctx, {
-            type: "UpdateListener",
-            clientId: client._id,
-            userId: client.userId,
-            telegramId: client.telegramId,
-          });
-        }
         break;
       }
 

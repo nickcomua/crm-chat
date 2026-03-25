@@ -4,15 +4,16 @@
 //! new messages, edits, and deletions in real-time. Periodically refreshes
 //! the set of scan-enabled chats.
 //!
-//! Cancellation is handled via a cancel watcher that subscribes to the
-//! workerTask's status — when it becomes "Cancelled", the listener exits.
+//! Domain-driven: reads client state from Convex. Cancellation is handled via
+//! a domain watcher that subscribes to the client's phase — when it becomes
+//! "Disconnected" (or the client is deleted), the listener exits.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use convex_backend::{
-    ConvexApi, ConvexApiClient, WorkerOpsMarkMessageDeletedArgs, WorkerOpsUpsertMessageArgs,
-    WorkerTasksTask as Task,
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, DomainOpsMarkMessageDeletedArgs,
+    DomainOpsUpsertMessageArgs,
 };
 use futures::StreamExt;
 use messanger_interface::{MessengerClient, Update};
@@ -23,19 +24,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
-use crate::ops::cancel_watcher::spawn_cancel_watcher;
-use crate::ops::convex::{
-    self as cx, ConvexResultExt as _, TaskPayload, run_task, worker_complete,
-};
+use crate::ops::convex::{self as cx, ConvexResultExt as _, EntityRequest};
+use crate::ops::domain_watcher::spawn_client_phase_watcher;
 use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
-use super::dialog_sync::ClientTaskFields;
+use super::dialog_sync::ClientFields;
 
 #[restate_sdk::object]
 pub trait UpdateListener {
-    async fn listen(req: Json<TaskPayload>) -> Result<(), HandlerError>;
+    async fn listen(req: Json<EntityRequest>) -> Result<(), HandlerError>;
 }
 
 pub struct UpdateListenerImpl {
@@ -47,27 +46,34 @@ impl UpdateListener for UpdateListenerImpl {
     async fn listen(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<TaskPayload>,
+        req: Json<EntityRequest>,
     ) -> Result<(), HandlerError> {
-        let payload = req.into_inner();
-        let Task::UpdateListener {
-            clientId,
-            userId,
-            telegramId,
-        } = payload.task
-        else {
-            return Err(anyhow::anyhow!("Expected UpdateListener task").into());
-        };
+        let client_id = req.into_inner().entity_id;
 
-        run_task(&self.convex, &payload.task_id).await;
+        // Query fresh domain state
+        let client = self
+            .convex
+            .query_clients_get_for_worker(ClientsGetForWorkerArgs {
+                clientId: client_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("Client {} not found", client_id))?;
+
+        // Idempotency guard: only listen for Listening clients
+        let phase = client.phase.as_ref().map(|p| p.to_string());
+        if phase.as_deref() != Some("Listening") {
+            info!(client_id, ?phase, "UpdateListener: not Listening, skipping");
+            return Ok(());
+        }
 
         let cancel_token = CancellationToken::new();
-        let _watcher = spawn_cancel_watcher(&self.convex, &payload.task_id, cancel_token.clone());
+        let _watcher = spawn_client_phase_watcher(&self.convex, &client_id, cancel_token.clone());
 
-        let fields = ClientTaskFields {
-            client_id: clientId,
-            user_id: userId,
-            telegram_id: telegramId,
+        let fields = ClientFields {
+            client_id: client_id.clone(),
+            user_id: client.user_id,
+            telegram_id: client.telegram_id,
         };
 
         info!(client_id = %fields.client_id, "UpdateListener: starting");
@@ -78,16 +84,9 @@ impl UpdateListener for UpdateListenerImpl {
             .await
             .map_err(anyhow::Error::from)?;
 
-        let result = run_listener(
-            &self.convex,
-            &tg_client,
-            &fields,
-            &cancel_token,
-            &payload.task_id,
-        )
-        .await;
-        worker_complete(&self.convex, &payload.task_id).await;
-        result.map_err(anyhow::Error::from)?;
+        run_listener(&self.convex, &tg_client, &fields, &cancel_token)
+            .await
+            .map_err(anyhow::Error::from)?;
         Ok(())
     }
 }
@@ -95,9 +94,8 @@ impl UpdateListener for UpdateListenerImpl {
 async fn run_listener(
     convex: &ConvexApiClient,
     tg_client: &Arc<TelegramClient>,
-    req: &ClientTaskFields,
+    req: &ClientFields,
     token: &CancellationToken,
-    task_id: &str,
 ) -> Result<(), WorkerError> {
     info!(client_id = %req.client_id, "Starting real-time update listener");
 
@@ -118,9 +116,9 @@ async fn run_listener(
         tokio::select! {
             biased;
 
-            // Cancellation via cancel watcher (universal cancel mechanism)
+            // Cancellation via domain watcher (client disconnected/deleted)
             _ = token.cancelled() => {
-                info!("UpdateListener: cancelled");
+                info!("UpdateListener: cancelled (client phase changed)");
                 return Ok(());
             }
 
@@ -142,7 +140,7 @@ async fn run_listener(
             update = update_stream.next() => {
                 match update {
                     Some(Ok(update)) => {
-                        if let Err(e) = process_update(convex, tg_client, req, &update, &scan_enabled_chats, task_id).await {
+                        if let Err(e) = process_update(convex, tg_client, req, &update, &scan_enabled_chats).await {
                             warn!(error = %e, "Failed to process update");
                         }
                     }
@@ -162,7 +160,7 @@ async fn run_listener(
 /// Load the set of scan-enabled chat external IDs for filtering real-time updates.
 async fn load_scan_enabled_chats(
     convex: &ConvexApiClient,
-    req: &ClientTaskFields,
+    req: &ClientFields,
 ) -> Result<HashSet<String>, WorkerError> {
     let chat_ids = cx::scan_enabled_chat_ids(convex, &req.client_id).await?;
     Ok(chat_ids
@@ -178,10 +176,9 @@ async fn load_scan_enabled_chats(
 async fn process_update(
     convex: &ConvexApiClient,
     tg_client: &Arc<TelegramClient>,
-    req: &ClientTaskFields,
+    req: &ClientFields,
     update: &Update,
     scan_enabled_chats: &HashSet<String>,
-    task_id: &str,
 ) -> Result<(), WorkerError> {
     match update {
         Update::NewMessage(msg) | Update::MessageEdited(msg) => {
@@ -194,8 +191,7 @@ async fn process_update(
             let ts = msg.timestamp_ms.map(|t| t as f64).unwrap_or(0.0);
 
             convex
-                .worker_ops_upsert_message(WorkerOpsUpsertMessageArgs {
-                    taskId: task_id.to_string(),
+                .domain_ops_upsert_message(DomainOpsUpsertMessageArgs {
                     messageId: message_id,
                     externalId: msg.external_id.clone(),
                     userId: req.user_id.clone(),
@@ -226,7 +222,6 @@ async fn process_update(
                 let dl_msg_ext = msg.external_id.clone();
                 let dl_media_ext = media_ext_id.clone();
                 let dl_summary = summary.clone();
-                let dl_task_id = task_id.to_string();
                 tokio::spawn(async move {
                     if let Err(e) = download_and_upload_media(
                         &convex,
@@ -235,7 +230,6 @@ async fn process_update(
                         &dl_msg_ext,
                         &dl_media_ext,
                         &dl_summary,
-                        &dl_task_id,
                     )
                     .await
                     {
@@ -261,8 +255,7 @@ async fn process_update(
 
             for ext_id in message_external_ids {
                 convex
-                    .worker_ops_mark_message_deleted(WorkerOpsMarkMessageDeletedArgs {
-                        taskId: task_id.to_string(),
+                    .domain_ops_mark_message_deleted(DomainOpsMarkMessageDeletedArgs {
                         externalId: ext_id.clone(),
                     })
                     .await

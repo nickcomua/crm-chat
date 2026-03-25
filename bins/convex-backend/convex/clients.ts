@@ -3,13 +3,13 @@ import { query } from "./_generated/server";
 import { mutation } from "./functions";
 import {
   isPhoneAuthTerminal,
+  isQrAuthTerminal,
   requireHuman,
   requireOwner,
   requireWorker,
 } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { cancelClientTasks, enqueueTask } from "./helpers/tasks";
-import { clientDoc, clientKind } from "./schema";
+import { clientDoc, clientKind, clientPhase } from "./schema";
 
 /** List all clients for the current human user. */
 export const list = query({
@@ -24,7 +24,8 @@ export const list = query({
   },
 });
 
-/** Delete a client and cancel associated auth sessions. */
+/** Delete a client and cancel associated auth sessions.
+ *  Sets phase to Disconnected so domain cancel-watchers fire. */
 export const deleteClient = mutation({
   args: { clientId: v.id("clients") },
   returns: result(v.null(), v.literal("Client not found")),
@@ -52,8 +53,20 @@ export const deleteClient = mutation({
       }
     }
 
-    // Cancel all active worker tasks for this client
-    await cancelClientTasks(ctx, clientId);
+    // Cancel any active QR auth sessions for this client
+    const qrAuths = await ctx.db
+      .query("qrAuths")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
+      .collect();
+
+    for (const auth of qrAuths) {
+      if (!isQrAuthTerminal(auth.step)) {
+        await ctx.db.patch(auth._id, {
+          step: "Cancelled",
+          updatedAt: now,
+        });
+      }
+    }
 
     await ctx.db.delete(clientId);
     return ok(null);
@@ -70,7 +83,8 @@ export const getForWorker = query({
   },
 });
 
-/** Register a pre-authenticated client as Connected. Worker-only. */
+/** Register a pre-authenticated client as Connected. Worker-only.
+ *  Sets phase to NeedsSync — the reconciler dispatches DialogSync automatically. */
 export const workerRegisterConnected = mutation({
   args: {
     userId: v.string(),
@@ -94,20 +108,9 @@ export const workerRegisterConnected = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         status: { type: "Connected" },
+        phase: "NeedsSync" as const,
         ...(phoneNumber ? { phoneNumber } : {}),
         ...(externalId ? { externalId } : {}),
-      });
-      await enqueueTask(ctx, {
-        type: "UpdateListener",
-        clientId: existing._id,
-        userId: existing.userId,
-        telegramId: existing.telegramId,
-      });
-      await enqueueTask(ctx, {
-        type: "DialogSync",
-        clientId: existing._id,
-        userId: existing.userId,
-        telegramId: existing.telegramId,
       });
       return existing._id;
     }
@@ -117,24 +120,14 @@ export const workerRegisterConnected = mutation({
       externalId,
       scanningChatIds: [],
       status: { type: "Connected" },
-    });
-    await enqueueTask(ctx, {
-      type: "UpdateListener",
-      clientId: id,
-      userId: lookupArgs.userId,
-      telegramId: lookupArgs.telegramId,
-    });
-    await enqueueTask(ctx, {
-      type: "DialogSync",
-      clientId: id,
-      userId: lookupArgs.userId,
-      telegramId: lookupArgs.telegramId,
+      phase: "NeedsSync" as const,
     });
     return id;
   },
 });
 
-/** Trigger a dialog sync for a connected client. Human-only. */
+/** Trigger a dialog sync for a connected client. Human-only.
+ *  Sets phase to NeedsSync — the reconciler dispatches DialogSync. */
 export const triggerDialogSync = mutation({
   args: { clientId: v.id("clients") },
   returns: result(
@@ -151,12 +144,90 @@ export const triggerDialogSync = mutation({
     if (client.status.type !== "Connected") {
       return err("Client not connected");
     }
-    await enqueueTask(ctx, {
-      type: "DialogSync",
-      clientId: client._id,
-      userId: client.userId,
-      telegramId: client.telegramId,
-    });
+    await ctx.db.patch(clientId, { phase: "NeedsSync" as const });
     return ok(null);
+  },
+});
+
+// =============================================================================
+// Cancel-watcher query (for domain-driven dispatch)
+// =============================================================================
+
+/**
+ * Lightweight phase query for domain cancel-watcher.
+ * Rust handler subscribes to this and cancels when phase becomes "Disconnected".
+ */
+export const getPhase = query({
+  args: { clientId: v.id("clients") },
+  returns: v.union(clientPhase, v.null()),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    const client = await ctx.db.get(clientId);
+    return client?.phase ?? null;
+  },
+});
+
+// =============================================================================
+// Domain lifecycle mutations (for domain-driven dispatch)
+// =============================================================================
+
+/** Transition client NeedsSync → Syncing. Worker-only. */
+export const workerStartSync = mutation({
+  args: { clientId: v.id("clients") },
+  returns: v.null(),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    const client = await ctx.db.get(clientId);
+    if (!client || client.phase !== "NeedsSync") {
+      return null;
+    }
+    await ctx.db.patch(clientId, { phase: "Syncing" });
+    return null;
+  },
+});
+
+/** Complete dialog sync: Syncing → Listening, photosSynced=false, queue chat scans. Worker-only. */
+export const workerCompleteSync = mutation({
+  args: { clientId: v.id("clients") },
+  returns: v.null(),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    const client = await ctx.db.get(clientId);
+    if (!client) {
+      return null;
+    }
+    await ctx.db.patch(clientId, {
+      phase: "Listening",
+      photosSynced: false,
+    });
+
+    // Queue scan for scan-enabled chats that haven't been fully scanned
+    const chats = await ctx.db
+      .query("chats")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
+      .collect();
+
+    for (const chat of chats) {
+      if (chat.scanEnabled && !chat.fullScanned) {
+        await ctx.db.patch(chat._id, { scanPhase: "Queued" });
+      }
+    }
+
+    return null;
+  },
+});
+
+/** Mark profile photos as synced for a client. Worker-only. */
+export const workerMarkPhotosSynced = mutation({
+  args: { clientId: v.id("clients") },
+  returns: v.null(),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    const client = await ctx.db.get(clientId);
+    if (!client) {
+      return null;
+    }
+    await ctx.db.patch(clientId, { photosSynced: true });
+    return null;
   },
 });

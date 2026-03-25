@@ -45,7 +45,7 @@ interface ChatDoc {
   mediaSettings?: MediaSettings;
   pinnedName?: string;
   scanEnabled?: boolean;
-  scanPhase?: "ScanningMessages" | "DownloadingMedia" | "Listening";
+  scanPhase?: "Queued" | "ScanningMessages" | "DownloadingMedia" | "Listening";
   syncedMessages?: number;
   totalMessages?: number;
 }

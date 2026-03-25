@@ -22,7 +22,7 @@ import {
 const triggers = new Triggers<DataModel>();
 
 /**
- * When a human goes offline, cancel all their active QR auth tasks.
+ * When a human goes offline, cancel all their active QR auth sessions.
  *
  * This fires atomically inside the same mutation that sets `online: false`
  * (either our disconnect wrapper or the heartbeat timeout path).
@@ -41,24 +41,23 @@ triggers.register("humans", async (ctx, change) => {
   const { oldDoc, newDoc } = change;
   if (oldDoc.online && !newDoc.online) {
     const { userId } = newDoc;
-    const tasks = await ctx.db
-      .query("workerTasks")
+    const qrAuths = await ctx.db
+      .query("qrAuths")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
 
-    for (const task of tasks) {
-      if (task.task.type !== "QrAuth") {
-        continue;
-      }
+    for (const auth of qrAuths) {
+      // Only cancel non-terminal QR auth sessions
       if (
-        task.status !== "Pending" &&
-        task.status !== "Dispatched" &&
-        task.status !== "Running"
+        auth.step === "Pending" ||
+        auth.step === "Generating" ||
+        auth.step === "Token"
       ) {
-        continue;
+        await ctx.db.patch(auth._id, {
+          step: "Cancelled",
+          updatedAt: Date.now(),
+        });
       }
-
-      await ctx.db.patch(task._id, { status: "Cancelled" });
     }
   }
 });

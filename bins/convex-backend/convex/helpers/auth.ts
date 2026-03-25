@@ -1,4 +1,3 @@
-import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 /** Identity info extracted from ctx.auth */
@@ -21,7 +20,7 @@ export async function requireAuth(
   }
   return {
     id: identity.tokenIdentifier,
-    issuer: identity.issuer ?? "",
+    issuer: identity.issuer,
     name: identity.name ?? undefined,
     email: identity.email ?? undefined,
   };
@@ -47,7 +46,7 @@ export async function requireHuman(
 }
 
 /** Require the caller to be a worker (custom JWT). */
-// TODO create custom mutation/query in functions.ts
+// TODO create custom mutation/query in functions.ts add query to eslint rule same as mutation
 export async function requireWorker(
   ctx: QueryCtx | MutationCtx
 ): Promise<CallerIdentity> {
@@ -59,19 +58,10 @@ export async function requireWorker(
 }
 
 /** Require the caller to own the resource (match userId). */
+// TODO remove this we dont need 1 line helpers
 export function requireOwner(callerId: string, resourceUserId: string): void {
   if (callerId !== resourceUserId) {
     throw new Error("Unauthorized: you do not own this resource");
-  }
-}
-
-/** Require the caller to be the assigned worker for an auth session. */
-export function requireAssignedWorker(
-  callerId: string,
-  claimedByWorkerId: string | undefined
-): void {
-  if (!claimedByWorkerId || claimedByWorkerId !== callerId) {
-    throw new Error("Unauthorized: not assigned to this worker");
   }
 }
 
@@ -90,20 +80,6 @@ export function isQrAuthTerminal(step: string): boolean {
     step === "Failed" ||
     step === "Cancelled"
   );
-}
-
-/** Require the caller to be a worker with a Running task assigned to them. */
-export async function requireRunningTask(
-  ctx: MutationCtx,
-  taskId: Id<"workerTasks">
-): Promise<CallerIdentity> {
-  const caller = await requireWorker(ctx);
-  const task = await ctx.db.get(taskId);
-  if (!task || task.status !== "Running") {
-    throw new Error("Task is not in Running state");
-  }
-  requireAssignedWorker(caller.id, task.claimedByWorkerId);
-  return caller;
 }
 
 /** Insert an error notification for a user. */

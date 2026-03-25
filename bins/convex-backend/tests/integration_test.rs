@@ -14,8 +14,7 @@ use std::time::Duration;
 use common::{assert_mutation_error, fetch_m2m_jwt, get_test_env};
 use convex::ConvexClient;
 use convex_backend::{
-    ConvexApi, ConvexApiClient, WorkerTasksPendingForWorkerArgs, WorkerTasksRunTaskArgs,
-    WorkerTasksWorkerCompleteArgs,
+    ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient, OrchestratorPendingWorkArgs,
 };
 use futures::StreamExt;
 
@@ -37,12 +36,12 @@ async fn connect_robot_client() -> ConvexApiClient {
 // =============================================================================
 
 #[tokio::test]
-async fn test_subscribe_worker_tasks_pending_empty() {
+async fn test_subscribe_orchestrator_pending_work_empty() {
     let client = connect_robot_client().await;
 
     let mut sub = client
-        .subscribe_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
-            maxMediaWorkflows: None,
+        .subscribe_orchestrator_pending_work(OrchestratorPendingWorkArgs {
+            maxMediaDownloads: None,
         })
         .await
         .expect("Failed to subscribe");
@@ -55,18 +54,18 @@ async fn test_subscribe_worker_tasks_pending_empty() {
 
     assert!(
         result.is_empty(),
-        "Expected no pending tasks, got {}",
+        "Expected no pending work, got {}",
         result.len()
     );
 }
 
 #[tokio::test]
-async fn test_query_worker_tasks_pending_empty() {
+async fn test_query_orchestrator_pending_work_empty() {
     let client = connect_robot_client().await;
 
     let result = client
-        .query_worker_tasks_pending_for_worker(WorkerTasksPendingForWorkerArgs {
-            maxMediaWorkflows: Some(2.0),
+        .query_orchestrator_pending_work(OrchestratorPendingWorkArgs {
+            maxMediaDownloads: Some(2.0),
         })
         .await
         .expect("Query failed");
@@ -79,34 +78,20 @@ async fn test_query_worker_tasks_pending_empty() {
 }
 
 // =============================================================================
-// Typed Mutation Args
+// Typed Mutation Args (domain mutations with invalid IDs)
 // =============================================================================
 
 #[tokio::test]
-async fn test_run_task_invalid_id() {
+async fn test_worker_start_sync_invalid_id() {
     let client = connect_robot_client().await;
 
     let result = client
-        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
-            taskId: "not_a_valid_convex_id".into(),
+        .clients_worker_start_sync(ClientsWorkerStartSyncArgs {
+            clientId: "not_a_valid_convex_id".into(),
         })
         .await;
 
     // Convex rejects invalid document IDs at the validator level
-    assert_mutation_error(result, "");
-}
-
-#[tokio::test]
-async fn test_worker_complete_invalid_id() {
-    let client = connect_robot_client().await;
-
-    let result = client
-        .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-            taskId: "not_a_valid_convex_id".into(),
-            task: None,
-        })
-        .await;
-
     assert_mutation_error(result, "");
 }
 
@@ -115,24 +100,23 @@ async fn test_worker_complete_invalid_id() {
 // =============================================================================
 
 #[tokio::test]
-async fn test_run_task_args_serialization() {
-    let args = WorkerTasksRunTaskArgs {
-        taskId: "test_id_123".into(),
+async fn test_orchestrator_args_serialization() {
+    let args = OrchestratorPendingWorkArgs {
+        maxMediaDownloads: Some(5.0),
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_123")));
+    assert_eq!(map.get("maxMediaDownloads"), Some(&serde_json::json!(5.0)));
     assert_eq!(map.len(), 1);
 }
 
 #[tokio::test]
-async fn test_worker_complete_args_serialization() {
-    let args = WorkerTasksWorkerCompleteArgs {
-        taskId: "test_id_456".into(),
-        task: None,
+async fn test_worker_start_sync_args_serialization() {
+    let args = ClientsWorkerStartSyncArgs {
+        clientId: "test_id_123".into(),
     };
     let map: std::collections::BTreeMap<String, serde_json::Value> = args.into();
-    assert_eq!(map.get("taskId"), Some(&serde_json::json!("test_id_456")));
-    // task is None so it shouldn't be serialized (or serialized as null)
+    assert_eq!(map.get("clientId"), Some(&serde_json::json!("test_id_123")));
+    assert_eq!(map.len(), 1);
 }
 
 // =============================================================================
@@ -150,8 +134,8 @@ async fn test_unauthenticated_rejected() {
     // Deliberately do NOT call set_auth
 
     let result = client
-        .worker_tasks_run_task(WorkerTasksRunTaskArgs {
-            taskId: "test_id".into(),
+        .clients_worker_start_sync(ClientsWorkerStartSyncArgs {
+            clientId: "test_id".into(),
         })
         .await;
     assert_mutation_error(result, "");

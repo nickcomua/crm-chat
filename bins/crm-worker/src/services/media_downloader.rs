@@ -1,24 +1,25 @@
 //! MediaDownloader — Restate virtual object for per-file media downloads.
 //!
-//! Keyed by `telegram_file_id`. Each file gets its own short-lived workflow.
-//! Parallelism is controlled by `MAX_MEDIA_WORKFLOWS` in the Convex
-//! `pendingForWorker` query.
+//! Keyed by media record `_id`. Each file gets its own short-lived workflow.
+//! Parallelism is controlled by `maxMediaDownloads` in the orchestrator query.
 
 use std::sync::Arc;
 
-use convex_backend::{ConvexApiClient, WorkerTasksTask as Task};
+use convex_backend::{
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MediaGetForDownloadArgs, MediaStatus,
+};
 use restate_sdk::prelude::*;
 use restate_sdk::serde::Json;
 use tracing::{info, warn};
 
-use crate::ops::convex::{self as cx, TaskPayload, run_task, worker_complete};
+use crate::ops::convex::{self as cx, EntityRequest};
 use crate::ops::media::download_and_upload;
-use crate::ops::telegram::{default_mime_for_kind_str, media_kind_to_str, parse_media_external_id};
+use crate::ops::telegram::{default_mime_for_kind_str, parse_media_external_id};
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 #[restate_sdk::object]
 pub trait MediaDownloader {
-    async fn download(req: Json<TaskPayload>) -> Result<(), HandlerError>;
+    async fn download(req: Json<EntityRequest>) -> Result<(), HandlerError>;
 }
 
 pub struct MediaDownloaderImpl {
@@ -30,91 +31,94 @@ impl MediaDownloader for MediaDownloaderImpl {
     async fn download(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<TaskPayload>,
+        req: Json<EntityRequest>,
     ) -> Result<(), HandlerError> {
-        let payload = req.into_inner();
-        let Task::MediaDownloader {
-            telegramFileId,
-            userId,
-            clientId: _,
-            telegramId,
-            chatId,
-            kind,
-            mimeType,
-            fileSize,
-        } = payload.task
-        else {
-            return Err(anyhow::anyhow!("Expected MediaDownloader task").into());
-        };
+        let media_id = req.into_inner().entity_id;
 
-        run_task(&self.convex, &payload.task_id).await;
+        // Query fresh domain state
+        let media = self
+            .convex
+            .query_media_get_for_download(MediaGetForDownloadArgs {
+                mediaId: media_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to query media: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("Media record {} not found", media_id))?;
 
-        let kind_str = media_kind_to_str(&kind);
+        // Idempotency guard: only process Pending media
+        if media.status != MediaStatus::Pending {
+            info!(media_id, status = %media.status, "MediaDownloader: not Pending, skipping");
+            return Ok(());
+        }
+
+        let kind_str = media.kind.to_string();
         info!(
-            telegram_file_id = %telegramFileId,
-            chat_id = %chatId,
-            kind = kind_str,
+            telegram_file_id = %media.telegram_file_id,
+            chat_id = %media.chat_id,
+            kind = %kind_str,
             "MediaDownloader: downloading file"
         );
 
+        // Look up the client to get telegramId for session lookup
+        let client = self
+            .convex
+            .query_clients_get_for_worker(ClientsGetForWorkerArgs {
+                clientId: media.client_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("Client {} not found", media.client_id))?;
+
         let tg_client = self
             .sessions
-            .get_for_telegram_id(&userId, &telegramId)
+            .get_for_telegram_id(&media.user_id, &client.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        let (chat_ext_id, msg_id) = match parse_media_external_id(&telegramFileId) {
+        let (chat_ext_id, msg_id) = match parse_media_external_id(&media.telegram_file_id) {
             Some(parsed) => parsed,
             None => {
                 let err = "Invalid media external ID format";
-                warn!(telegram_file_id = %telegramFileId, err);
-                cx::mark_media_failed(&self.convex, &payload.task_id, &telegramFileId, err).await;
-                worker_complete(&self.convex, &payload.task_id).await;
+                warn!(telegram_file_id = %media.telegram_file_id, err);
+                cx::mark_media_failed(&self.convex, &media.telegram_file_id, err).await;
                 return Ok(());
             }
         };
 
-        let content_type = mimeType
+        let content_type = media
+            .mime_type
             .as_deref()
-            .unwrap_or_else(|| default_mime_for_kind_str(kind_str));
+            .unwrap_or_else(|| default_mime_for_kind_str(&kind_str));
 
         match download_and_upload(
             &self.convex,
             &tg_client,
             &chat_ext_id,
             msg_id,
-            &telegramFileId,
+            &media.telegram_file_id,
             content_type,
-            mimeType.as_deref(),
-            None, // fileName not in task
-            None, // width
-            None, // height
-            None, // duration
-            fileSize.map(|s| s as usize),
-            &payload.task_id,
+            media.mime_type.as_deref(),
+            media.file_name.as_deref(),
+            media.width,
+            media.height,
+            media.duration,
+            media.file_size.map(|s| s as usize),
         )
         .await
         {
             Ok(()) => {
-                info!(telegram_file_id = %telegramFileId, "File downloaded successfully");
+                info!(telegram_file_id = %media.telegram_file_id, "File downloaded successfully");
             }
             Err(e) => {
                 warn!(
-                    telegram_file_id = %telegramFileId,
+                    telegram_file_id = %media.telegram_file_id,
                     error = %e,
                     "Failed to download file"
                 );
-                cx::mark_media_failed(
-                    &self.convex,
-                    &payload.task_id,
-                    &telegramFileId,
-                    &e.to_string(),
-                )
-                .await;
+                cx::mark_media_failed(&self.convex, &media.telegram_file_id, &e.to_string()).await;
             }
         }
 
-        worker_complete(&self.convex, &payload.task_id).await;
         Ok(())
     }
 }

@@ -1,14 +1,16 @@
 //! ChatScanner — Restate virtual object for scanning messages in a single chat.
 //!
-//! Keyed by `chat_id` (e.g. "client_id:chat_external_id"). Each chat scans
-//! independently, allowing parallel message scanning across chats.
+//! Keyed by chat `_id`. Each chat scans independently, allowing parallel
+//! message scanning across chats.
+//! Domain-driven: reads chat state from Convex, transitions Queued → ScanningMessages → Listening.
 
 use std::sync::Arc;
 
 use convex_backend::{
-    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, WorkerOpsCreatePendingMediaArgs,
-    WorkerOpsUpdateSyncProgressArgs, WorkerOpsUpdateSyncProgressScanPhase, WorkerOpsUpsertChatArgs,
-    WorkerOpsUpsertMessageArgs, WorkerTasksTask as Task,
+    ChatsGetForWorkerArgs, ChatsWorkerCompleteScanArgs, ChatsWorkerStartScanArgs,
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, DomainOpsCreatePendingMediaArgs,
+    DomainOpsUpdateSyncProgressArgs, DomainOpsUpdateSyncProgressScanPhase, DomainOpsUpsertChatArgs,
+    DomainOpsUpsertMessageArgs,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -19,9 +21,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::error::WorkerError;
-use crate::ops::convex::{
-    self as cx, ConvexResultExt as _, TaskPayload, run_task, worker_complete,
-};
+use crate::ops::convex::{self as cx, ConvexResultExt as _, EntityRequest};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
@@ -41,7 +41,7 @@ pub struct ChatScanRequest {
 
 #[restate_sdk::object]
 pub trait ChatScanner {
-    async fn scan(req: Json<TaskPayload>) -> Result<(), HandlerError>;
+    async fn scan(req: Json<EntityRequest>) -> Result<(), HandlerError>;
 }
 
 pub struct ChatScannerImpl {
@@ -53,60 +53,81 @@ impl ChatScanner for ChatScannerImpl {
     async fn scan(
         &self,
         _ctx: ObjectContext<'_>,
-        req: Json<TaskPayload>,
+        req: Json<EntityRequest>,
     ) -> Result<(), HandlerError> {
-        let payload = req.into_inner();
-        let Task::ChatScanner {
-            chatId,
-            clientId,
-            userId,
-            isPinned,
-            pinnedName,
-        } = payload.task
-        else {
-            return Err(anyhow::anyhow!("Expected ChatScanner task").into());
-        };
+        let chat_doc_id = req.into_inner().entity_id;
 
-        run_task(&self.convex, &payload.task_id).await;
-        info!(chat_id = %chatId, "ChatScanner: starting scan");
+        // Query fresh domain state
+        let chat = self
+            .convex
+            .query_chats_get_for_worker(ChatsGetForWorkerArgs {
+                chatId: chat_doc_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get chat: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("Chat {} not found", chat_doc_id))?;
+
+        // Idempotency guard: only process Queued chats
+        let scan_phase = chat.scan_phase.as_ref().map(|p| p.to_string());
+        if scan_phase.as_deref() != Some("Queued") {
+            info!(chat_id = %chat.chat_id, ?scan_phase, "ChatScanner: not Queued, skipping");
+            return Ok(());
+        }
+
+        // Transition: Queued → ScanningMessages
+        self.convex
+            .chats_worker_start_scan(ChatsWorkerStartScanArgs {
+                chatId: chat_doc_id.clone(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start scan: {e}"))?;
+
+        info!(chat_id = %chat.chat_id, "ChatScanner: starting scan");
 
         // Resolve telegram_id from the client record
         let client = self
             .convex
             .query_clients_get_for_worker(ClientsGetForWorkerArgs {
-                clientId: clientId.clone(),
+                clientId: chat.client_id.clone(),
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Client {} not found", clientId))?;
+            .ok_or_else(|| anyhow::anyhow!("Client {} not found", chat.client_id))?;
 
         let tg_client = self
             .sessions
-            .get_for_telegram_id(&userId, &client.telegram_id)
+            .get_for_telegram_id(&chat.user_id, &client.telegram_id)
             .await
             .map_err(anyhow::Error::from)?;
 
-        let chat_external_id = chatId
-            .strip_prefix(&format!("{}:", clientId))
-            .unwrap_or(&chatId)
+        let chat_external_id = chat
+            .chat_id
+            .strip_prefix(&format!("{}:", chat.client_id))
+            .unwrap_or(&chat.chat_id)
             .to_string();
 
         let scan_req = ChatScanRequest {
-            client_id: clientId,
-            user_id: userId,
+            client_id: chat.client_id.clone(),
+            user_id: chat.user_id.clone(),
             external_id: client.telegram_id,
-            chat_id: chatId,
+            chat_id: chat.chat_id.clone(),
             chat_external_id,
-            is_pinned: isPinned,
-            pinned_name: pinnedName,
+            is_pinned: chat.is_pinned,
+            pinned_name: chat.pinned_name,
         };
 
-        scan_chat_messages(&self.convex, &tg_client, &scan_req, &payload.task_id)
+        scan_chat_messages(&self.convex, &tg_client, &scan_req)
             .await
             .map_err(anyhow::Error::from)?;
 
-        // Completion handler (completeChatScanner) sets fullScanned + scanPhase atomically
-        worker_complete(&self.convex, &payload.task_id).await;
+        // Transition: → fullScanned=true, scanPhase=Listening
+        self.convex
+            .chats_worker_complete_scan(ChatsWorkerCompleteScanArgs {
+                chatId: chat_doc_id,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to complete scan: {e}"))?;
+
         Ok(())
     }
 }
@@ -116,7 +137,6 @@ pub async fn scan_chat_messages(
     convex: &ConvexApiClient,
     tg_client: &TelegramClient,
     req: &ChatScanRequest,
-    task_id: &str,
 ) -> Result<(), WorkerError> {
     info!(chat_id = %req.chat_id, chat_external_id = %req.chat_external_id, "Scanning messages");
 
@@ -126,12 +146,11 @@ pub async fn scan_chat_messages(
         .unwrap_or(0);
 
     convex
-        .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
-            taskId: task_id.to_string(),
+        .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
             chatId: req.chat_id.clone(),
             totalMessages: Some(total_messages as f64),
             syncedMessages: Some(0.0),
-            scanPhase: Some(WorkerOpsUpdateSyncProgressScanPhase::ScanningMessages),
+            scanPhase: Some(DomainOpsUpdateSyncProgressScanPhase::ScanningMessages),
             fullScanned: None,
         })
         .await
@@ -165,8 +184,7 @@ pub async fn scan_chat_messages(
 
         let message_id_clone = message_id.clone();
         convex
-            .worker_ops_upsert_message(WorkerOpsUpsertMessageArgs {
-                taskId: task_id.to_string(),
+            .domain_ops_upsert_message(DomainOpsUpsertMessageArgs {
                 messageId: message_id,
                 externalId: msg.external_id,
                 userId: req.user_id.clone(),
@@ -186,12 +204,11 @@ pub async fn scan_chat_messages(
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
-        // Create pending media record + enqueue per-file download task
+        // Create pending media record (reconciler dispatches MediaDownloader)
         if let Some(ref summary) = msg.media_summary
             && let Some(ref media_ext_id) = msg.media_external_id
             && let Err(e) = convex
-                .worker_ops_create_pending_media(WorkerOpsCreatePendingMediaArgs {
-                    taskId: task_id.to_string(),
+                .domain_ops_create_pending_media(DomainOpsCreatePendingMediaArgs {
                     telegramFileId: media_ext_id.clone(),
                     userId: req.user_id.clone(),
                     clientId: req.client_id.clone(),
@@ -214,8 +231,7 @@ pub async fn scan_chat_messages(
 
         if msg_count.is_multiple_of(100) {
             convex
-                .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
-                    taskId: task_id.to_string(),
+                .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
                     chatId: req.chat_id.clone(),
                     totalMessages: None,
                     syncedMessages: Some(msg_count as f64),
@@ -230,8 +246,7 @@ pub async fn scan_chat_messages(
     // Update lastMessageTs
     if last_ts > 0.0 {
         convex
-            .worker_ops_upsert_chat(WorkerOpsUpsertChatArgs {
-                taskId: task_id.to_string(),
+            .domain_ops_upsert_chat(DomainOpsUpsertChatArgs {
                 chatId: req.chat_id.clone(),
                 userId: req.user_id.clone(),
                 clientId: req.client_id.clone(),
@@ -246,12 +261,11 @@ pub async fn scan_chat_messages(
 
     // Mark scan complete with final progress
     convex
-        .worker_ops_update_sync_progress(WorkerOpsUpdateSyncProgressArgs {
-            taskId: task_id.to_string(),
+        .domain_ops_update_sync_progress(DomainOpsUpdateSyncProgressArgs {
             chatId: req.chat_id.clone(),
             totalMessages: None,
             syncedMessages: Some(msg_count as f64),
-            scanPhase: Some(WorkerOpsUpdateSyncProgressScanPhase::Listening),
+            scanPhase: Some(DomainOpsUpdateSyncProgressScanPhase::Listening),
             fullScanned: Some(true),
         })
         .await

@@ -5,12 +5,12 @@ import { query } from "./_generated/server";
 import { internalMutation, mutation } from "./functions";
 import { requireHuman, requireOwner, requireWorker } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { enqueueTask } from "./helpers/tasks";
 import {
   chatDoc,
   chatListItem,
   chatType,
   mediaSettingsValidator,
+  scanPhase,
 } from "./schema";
 
 /** List scan-enabled chats for the current user, sorted by last message time (newest first). */
@@ -132,7 +132,7 @@ export const updatePinnedName = mutation({
 
 /** Toggle scanning for a specific chat. Human-only.
  *  Turning OFF resets fullScanned and schedules data purge (messages + media).
- *  Turning ON triggers a fresh rescan since fullScanned is already false. */
+ *  Turning ON sets scanPhase="Queued" — the reconciler dispatches ChatScanner. */
 export const updateScanEnabled = mutation({
   args: { chatId: v.string(), scanEnabled: v.boolean() },
   returns: result(v.null(), v.literal("Chat not found")),
@@ -147,20 +147,18 @@ export const updateScanEnabled = mutation({
     }
     requireOwner(caller.id, chat.userId);
     if (scanEnabled) {
-      // Always reset fullScanned so the scanner re-runs from scratch.
-      // Without this, toggling OFF→ON on an already-scanned chat would
-      // read the stale `fullScanned: true` and skip the enqueue.
-      await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
-      await enqueueTask(ctx, {
-        type: "ChatScanner",
-        chatId,
-        clientId: chat.clientId,
-        userId: chat.userId,
-        isPinned: chat.isPinned,
-        pinnedName: chat.pinnedName,
+      // Reset fullScanned + set scanPhase=Queued so the reconciler dispatches a scan.
+      await ctx.db.patch(chat._id, {
+        scanEnabled,
+        fullScanned: false,
+        scanPhase: "Queued" as const,
       });
     } else {
-      await ctx.db.patch(chat._id, { scanEnabled, fullScanned: false });
+      await ctx.db.patch(chat._id, {
+        scanEnabled,
+        fullScanned: false,
+        scanPhase: undefined,
+      });
       await ctx.scheduler.runAfter(0, internal.chats.purgeChatData, { chatId });
     }
     return ok(null);
@@ -254,7 +252,7 @@ export const updateMediaSettings = mutation({
 });
 
 /** Re-scan all messages for a chat without purging data. Human-only.
- *  Resets fullScanned so the worker picks it up on the next refresh cycle. */
+ *  Sets scanPhase=Queued — the reconciler dispatches ChatScanner. */
 export const rescan = mutation({
   args: { chatId: v.string() },
   returns: result(
@@ -279,22 +277,89 @@ export const rescan = mutation({
     }
     await ctx.db.patch(chat._id, {
       fullScanned: false,
-      // TODO wtf
       syncedMessages: undefined,
       totalMessages: undefined,
-      scanPhase: undefined,
-    });
-
-    // Enqueue scan task
-    await enqueueTask(ctx, {
-      type: "ChatScanner",
-      chatId,
-      clientId: chat.clientId,
-      userId: chat.userId,
-      isPinned: chat.isPinned,
-      pinnedName: chat.pinnedName,
+      scanPhase: "Queued" as const,
     });
 
     return ok(null);
+  },
+});
+
+// =============================================================================
+// Cancel-watcher query (for domain-driven dispatch)
+// =============================================================================
+
+/**
+ * Lightweight scanPhase query for domain cancel-watcher.
+ * Rust handler subscribes to this and cancels if scan is no longer active.
+ */
+export const getScanPhase = query({
+  args: { chatId: v.id("chats") },
+  returns: v.union(scanPhase, v.null()),
+  handler: async (ctx, { chatId }) => {
+    await requireWorker(ctx);
+    const chat = await ctx.db.get(chatId);
+    return chat?.scanPhase ?? null;
+  },
+});
+
+/** Get a single chat by _id. Worker-only. */
+export const getForWorker = query({
+  args: { chatId: v.id("chats") },
+  returns: v.union(chatDoc, v.null()),
+  handler: async (ctx, { chatId }) => {
+    await requireWorker(ctx);
+    return await ctx.db.get(chatId);
+  },
+});
+
+/** List all chats for a client (worker version for ProfilePhotoSync). Worker-only. */
+export const listChatsForWorker = query({
+  args: { clientId: v.id("clients") },
+  returns: v.array(chatDoc),
+  handler: async (ctx, { clientId }) => {
+    await requireWorker(ctx);
+    return await ctx.db
+      .query("chats")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
+      .collect();
+  },
+});
+
+// =============================================================================
+// Domain lifecycle mutations (for domain-driven dispatch)
+// =============================================================================
+
+/** Transition chat Queued → ScanningMessages. Worker-only. */
+export const workerStartScan = mutation({
+  args: { chatId: v.id("chats") },
+  returns: v.null(),
+  handler: async (ctx, { chatId }) => {
+    await requireWorker(ctx);
+    const chat = await ctx.db.get(chatId);
+    if (!chat || chat.scanPhase !== "Queued") {
+      return null;
+    }
+    await ctx.db.patch(chatId, { scanPhase: "ScanningMessages" });
+    return null;
+  },
+});
+
+/** Complete chat scan: fullScanned=true, scanPhase=Listening. Worker-only. */
+export const workerCompleteScan = mutation({
+  args: { chatId: v.id("chats") },
+  returns: v.null(),
+  handler: async (ctx, { chatId }) => {
+    await requireWorker(ctx);
+    const chat = await ctx.db.get(chatId);
+    if (!chat) {
+      return null;
+    }
+    await ctx.db.patch(chatId, {
+      fullScanned: true,
+      scanPhase: "Listening",
+    });
+    return null;
   },
 });

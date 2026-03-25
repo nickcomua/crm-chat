@@ -1,10 +1,10 @@
 //! crm-worker — Restate-based Telegram integration service.
 //!
 //! Leaf services (DialogSync, ChatScanner, etc.) are Restate virtual objects
-//! and workflows with full durable execution. The TaskOrchestrator runs as a
-//! plain tokio task that subscribes to Convex queries and dispatches work to
-//! leaf services via HTTP POST to the Restate ingress endpoint — zero journal
-//! noise.
+//! and workflows with full durable execution. The Reconciler runs as a plain
+//! tokio task that subscribes to `orchestrator.pendingWork` and dispatches work
+//! to leaf services via HTTP POST to the Restate ingress endpoint — zero journal
+//! noise. Domain entity state IS the queue (Pattern B: domain-driven dispatch).
 
 mod auth;
 mod config;
@@ -30,7 +30,7 @@ use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
 use crate::services::phone_auth::{PhoneAuthWorkflow, PhoneAuthWorkflowImpl};
 use crate::services::profile_photo_sync::{ProfilePhotoSync, ProfilePhotoSyncImpl};
 use crate::services::qr_auth::{QrAuthWorkflow, QrAuthWorkflowImpl};
-use crate::services::task_orchestrator::run_orchestrator;
+use crate::services::reconciler::run_reconciler;
 use crate::services::update_listener::{UpdateListener, UpdateListenerImpl};
 use crate::session_manager::TelegramSessionManager;
 
@@ -157,15 +157,15 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_millis(500)).await;
     register_deployment(&config).await;
 
-    // Spawn the orchestrator as a plain tokio task — dispatches to Restate
-    // leaf services via HTTP ingress, zero journal entries
+    // Spawn the reconciler as a plain tokio task — subscribes to
+    // orchestrator.pendingWork and dispatches to Restate leaf services
     let orch_convex = convex_client.clone();
     let orch_config = config.clone();
     let orch_sessions = sessions.clone();
     let orch_ingress = ingress_url.clone();
     let orch_cancel = CancellationToken::new();
     let orchestrator_handle = tokio::spawn(async move {
-        if let Err(e) = run_orchestrator(
+        if let Err(e) = run_reconciler(
             &orch_convex,
             &orch_config,
             &orch_sessions,
@@ -174,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .await
         {
-            tracing::error!(error = %e, "TaskOrchestrator exited with error");
+            tracing::error!(error = %e, "Reconciler exited with error");
         }
     });
 

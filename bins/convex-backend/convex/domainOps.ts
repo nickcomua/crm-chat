@@ -1,25 +1,21 @@
 /**
- * Task-validated worker mutations.
+ * Domain-driven worker mutations — no taskId, no task system.
  *
- * Every mutation takes `taskId` as its first arg and validates that the caller
- * is the assigned worker for a Running task. This ensures all worker writes
- * go through the task system.
+ * Every mutation validates the caller is a worker via `requireWorker`.
  */
 import { v } from "convex/values";
 import { mutation } from "./functions";
-import { requireRunningTask } from "./helpers/auth";
+import { requireWorker } from "./helpers/auth";
 import { err, ok, result } from "./helpers/result";
-import { enqueueTask } from "./helpers/tasks";
 import { chatType, mediaKind, scanPhase } from "./schema";
 
 // =============================================================================
 // Chat operations
 // =============================================================================
 
-/** Upsert a chat record. Task-validated worker mutation. */
+/** Upsert a chat record. Worker-only. */
 export const upsertChat = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     chatId: v.string(),
     userId: v.string(),
     clientId: v.id("clients"),
@@ -29,8 +25,8 @@ export const upsertChat = mutation({
     lastMessageTimestamp: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, ...args }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, args) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("chats")
@@ -54,10 +50,9 @@ export const upsertChat = mutation({
   },
 });
 
-/** Update sync progress for a chat. Task-validated worker mutation. */
+/** Update sync progress for a chat. Worker-only. */
 export const updateSyncProgress = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     chatId: v.string(),
     totalMessages: v.optional(v.number()),
     syncedMessages: v.optional(v.number()),
@@ -65,8 +60,8 @@ export const updateSyncProgress = mutation({
     fullScanned: v.optional(v.boolean()),
   },
   returns: result(v.null(), v.literal("Chat not found")),
-  handler: async (ctx, { taskId, chatId, ...updates }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { chatId, ...updates }) => {
+    await requireWorker(ctx);
 
     const chat = await ctx.db
       .query("chats")
@@ -95,17 +90,16 @@ export const updateSyncProgress = mutation({
   },
 });
 
-/** Update a chat's profile photo. Task-validated worker mutation. */
+/** Update a chat's profile photo. Worker-only. */
 export const updateChatPhoto = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     chatId: v.string(),
     storageId: v.id("_storage"),
     photoExternalId: v.string(),
   },
   returns: result(v.null(), v.literal("Chat not found")),
-  handler: async (ctx, { taskId, chatId, storageId, photoExternalId }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { chatId, storageId, photoExternalId }) => {
+    await requireWorker(ctx);
 
     const chat = await ctx.db
       .query("chats")
@@ -130,12 +124,9 @@ export const updateChatPhoto = mutation({
 // Message operations
 // =============================================================================
 
-/** Upsert a message. Task-validated worker mutation.
- *  Unlike the human version, does NOT auto-create media records —
- *  the worker calls createPendingMedia explicitly. */
+/** Upsert a message. Worker-only. */
 export const upsertMessage = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     messageId: v.string(),
     externalId: v.string(),
     userId: v.string(),
@@ -150,8 +141,8 @@ export const upsertMessage = mutation({
     mediaKind: v.optional(mediaKind),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, ...args }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, args) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("messages")
@@ -174,18 +165,17 @@ export const upsertMessage = mutation({
   },
 });
 
-/** Soft-delete a message by external ID. Task-validated worker mutation. */
+/** Soft-delete a message by external ID. Worker-only. */
 export const markMessageDeleted = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     externalId: v.string(),
   },
   returns: result(
     v.null(),
     v.literal("Message not found or ambiguous (multiple matches)")
   ),
-  handler: async (ctx, { taskId, externalId }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { externalId }) => {
+    await requireWorker(ctx);
 
     const messages = await ctx.db
       .query("messages")
@@ -205,11 +195,11 @@ export const markMessageDeleted = mutation({
 // Media operations
 // =============================================================================
 
-/** Create a pending media record with full metadata. Task-validated worker mutation.
- *  Also enqueues a MediaDownloader task for the file. */
+/** Create a pending media record. Worker-only.
+ *  Domain-driven: no task enqueue — the reconciler dispatches MediaDownloader
+ *  when it sees media records with status "Pending". */
 export const createPendingMedia = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     telegramFileId: v.string(),
     userId: v.string(),
     clientId: v.id("clients"),
@@ -224,8 +214,8 @@ export const createPendingMedia = mutation({
     duration: v.optional(v.number()),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, ...args }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, args) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("media")
@@ -243,34 +233,18 @@ export const createPendingMedia = mutation({
       status: "Pending" as const,
     });
 
-    const client = await ctx.db.get(args.clientId);
-    if (client) {
-      await enqueueTask(ctx, {
-        type: "MediaDownloader",
-        telegramFileId: args.telegramFileId,
-        userId: args.userId,
-        clientId: args.clientId,
-        telegramId: client.telegramId,
-        chatId: args.chatId,
-        kind: args.kind,
-        mimeType: args.mimeType,
-        fileSize: args.fileSize,
-      });
-    }
-
     return null;
   },
 });
 
-/** Transition a media record to "Downloading". Task-validated worker mutation. */
+/** Transition a media record to "Downloading". Worker-only. */
 export const startMediaDownload = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     telegramFileId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, telegramFileId }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { telegramFileId }) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("media")
@@ -291,20 +265,16 @@ export const startMediaDownload = mutation({
   },
 });
 
-/** Update download progress. Task-validated worker mutation. */
+/** Update download progress. Worker-only. */
 export const updateMediaProgress = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     telegramFileId: v.string(),
     bytesDownloaded: v.number(),
     fileSize: v.optional(v.number()),
   },
   returns: v.null(),
-  handler: async (
-    ctx,
-    { taskId, telegramFileId, bytesDownloaded, fileSize }
-  ) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { telegramFileId, bytesDownloaded, fileSize }) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("media")
@@ -326,10 +296,9 @@ export const updateMediaProgress = mutation({
   },
 });
 
-/** Store media file after successful upload. Task-validated worker mutation. */
+/** Store media file after successful upload. Worker-only. */
 export const storeMedia = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     telegramFileId: v.string(),
     storageId: v.id("_storage"),
     mimeType: v.optional(v.string()),
@@ -340,8 +309,8 @@ export const storeMedia = mutation({
     duration: v.optional(v.number()),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, ...args }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, args) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("media")
@@ -370,16 +339,15 @@ export const storeMedia = mutation({
   },
 });
 
-/** Mark a media record as failed. Task-validated worker mutation. */
+/** Mark a media record as failed. Worker-only. */
 export const markMediaFailed = mutation({
   args: {
-    taskId: v.id("workerTasks"),
     telegramFileId: v.string(),
     error: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { taskId, telegramFileId, error: errorMsg }) => {
-    await requireRunningTask(ctx, taskId);
+  handler: async (ctx, { telegramFileId, error: errorMsg }) => {
+    await requireWorker(ctx);
 
     const existing = await ctx.db
       .query("media")

@@ -85,7 +85,6 @@ Auth helpers in `helpers/auth.ts`:
 | `requireWorker()` | Restrict to Clerk M2M workers (`mch_` subject prefix) |
 | `isWorkerCaller()` | Check if caller is a worker (no throw) |
 | `requireOwner()` | Verify resource ownership (row-level security) |
-| `requireAssignedWorker()` | Verify worker is assigned to an auth session |
 | `sendError()` | Insert an error notification for a user |
 
 ## Phone Auth State Machine

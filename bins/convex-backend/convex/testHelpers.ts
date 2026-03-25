@@ -152,15 +152,13 @@ export const deleteClient = mutation({
       await ctx.db.delete(auth._id);
     }
 
-    // Cancel worker tasks for this client
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_userId", (q) => q.eq("userId", client.userId))
+    // Cancel QR auth sessions for this client
+    const qrAuths = await ctx.db
+      .query("qrAuths")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
       .collect();
-    for (const t of tasks) {
-      if ("clientId" in t.task && t.task.clientId === clientId) {
-        await ctx.db.delete(t._id);
-      }
+    for (const auth of qrAuths) {
+      await ctx.db.delete(auth._id);
     }
 
     // Delete chats for this client
@@ -359,13 +357,13 @@ export const deleteAllForUser = mutation({
       await ctx.db.delete(m._id);
     }
 
-    // Delete worker tasks
-    const tasks = await ctx.db
-      .query("workerTasks")
+    // Delete QR auth sessions
+    const qrAuths = await ctx.db
+      .query("qrAuths")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
-    for (const t of tasks) {
-      await ctx.db.delete(t._id);
+    for (const qa of qrAuths) {
+      await ctx.db.delete(qa._id);
     }
 
     // Delete chats
@@ -428,28 +426,6 @@ export const searchMessages = query({
       text: msg.text,
       senderId: msg.senderId,
       timestamp: msg.timestamp,
-    }));
-  },
-});
-
-/** Query all worker tasks for a user (any status). For E2E assertions. */
-export const queryWorkerTasks = query({
-  args: { userId: v.string() },
-  returns: v.array(
-    v.object({
-      status: v.string(),
-      taskType: v.string(),
-    })
-  ),
-  handler: async (ctx, { userId }) => {
-    await requireWorker(ctx);
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
-    return tasks.map((t) => ({
-      status: t.status,
-      taskType: t.task.type,
     }));
   },
 });

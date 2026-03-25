@@ -329,7 +329,7 @@ export async function pollUntil(
 }
 
 /**
- * Wait for pending ChatScanner tasks to drain so the worker has capacity
+ * Wait for pending ChatScanner work items to drain so the worker has capacity
  * for QrAuth. tg-scan tests enqueue scanners that may still be pending
  * when tg-qr-auth starts — if the worker is busy dispatching those,
  * QrAuth token generation can exceed the timeout.
@@ -342,11 +342,11 @@ export async function waitForPendingScanners(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const tasks = (await client.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{ task: { type: string } }>;
+    const items = (await client.query(api.orchestrator.pendingWork, {
+      maxMediaDownloads: 0,
+    })) as Array<{ service: string }>;
 
-    const scanners = tasks.filter((t) => t.task.type === "ChatScanner");
+    const scanners = items.filter((i) => i.service === "ChatScanner");
     if (scanners.length === 0) {
       return;
     }

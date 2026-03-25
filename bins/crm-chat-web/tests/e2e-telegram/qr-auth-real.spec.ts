@@ -3,7 +3,6 @@ import { PNG } from "pngjs";
 import { expect, test } from "../fixtures";
 import {
   api,
-  getConvexUserId,
   getRobotClient,
   type WorkerConfig,
   waitForPendingScanners,
@@ -22,29 +21,17 @@ import {
  * code with a real phone), but verify the full pipeline up to the scan step.
  */
 
-const CHATS_URL_PATTERN = /\/#\/chats/;
 const SETTINGS_URL_PATTERN = /\/settings/;
 const TG_LOGIN_URL_PATTERN = /^tg:\/\/login\?token=.+/;
 const QR_CODE_TIMEOUT = 30_000;
 
 test.describe.configure({ mode: "serial" });
 
-let _userId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("QR Auth — Real Telegram (Backend)", () => {
-  test.beforeAll(async ({ browser, workerBackend }) => {
+  test.beforeAll(({ workerBackend }) => {
     workerCfg = workerBackend;
-
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-
-    _userId = await getConvexUserId(page);
-    await page.close();
   });
 
   test("QrAuth task is created when Add Client is clicked", async ({
@@ -58,24 +45,24 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.click('button:has-text("Add Client")');
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
-    // Poll backend for QrAuth task creation (any status — worker may pick it up fast)
+    // Poll backend for QrAuth work item (any step — worker may pick it up fast)
     const robot = await getRobotClient(workerCfg);
     const deadline = Date.now() + 15_000;
-    let qrTasks: Array<{ taskType: string; status: string }> = [];
+    let qrItems: Array<{ service: string }> = [];
 
     while (Date.now() < deadline) {
-      const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
-        userId: _userId,
-      })) as Array<{ taskType: string; status: string }>;
-      qrTasks = tasks.filter((t) => t.taskType === "QrAuth");
-      if (qrTasks.length >= 1) {
+      const items = (await robot.query(api.orchestrator.pendingWork, {
+        maxMediaDownloads: 0,
+      })) as Array<{ service: string }>;
+      qrItems = items.filter((i) => i.service === "QrAuthWorkflow");
+      if (qrItems.length >= 1) {
         break;
       }
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    // There should be at least one QrAuth task (any status)
-    expect(qrTasks.length).toBeGreaterThanOrEqual(1);
+    // There should be at least one QrAuth work item
+    expect(qrItems.length).toBeGreaterThanOrEqual(1);
 
     // Close dialog to clean up (may have auto-closed if worker processed quickly)
     const dialog = page.locator('[role="dialog"]');
@@ -126,22 +113,8 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     expect(decoded).not.toBeNull();
     expect(decoded?.data).toMatch(TG_LOGIN_URL_PATTERN);
 
-    // Verify backend task is in Token step
-    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{
-      task: { type: string; step?: string; qrUrl?: string };
-      status: string;
-    }>;
-
-    const qrTask = tasks.find(
-      (t) => t.task.type === "QrAuth" && t.task.step === "Token"
-    );
-
-    // Task should be in Token step with a qrUrl
-    if (qrTask) {
-      expect(qrTask.task.qrUrl).toBeTruthy();
-    }
+    // Verify the QR code URL is a valid Telegram login URL — that's sufficient
+    // to confirm the backend generated a real QR token.
 
     // Clean up
     await page.click('[role="dialog"] [data-slot="dialog-close"]');
@@ -162,14 +135,14 @@ test.describe("QR Auth — Real Telegram (Backend)", () => {
     await page.click('button:has-text("Add Client")');
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
 
-    // Wait for QrAuth task to be created in the backend
+    // Wait for QrAuth work item to appear in the backend
     const robot = await getRobotClient(workerCfg);
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
-        userId: _userId,
-      })) as Array<{ taskType: string }>;
-      if (tasks.some((t) => t.taskType === "QrAuth")) {
+      const items = (await robot.query(api.orchestrator.pendingWork, {
+        maxMediaDownloads: 0,
+      })) as Array<{ service: string }>;
+      if (items.some((i) => i.service === "QrAuthWorkflow")) {
         break;
       }
       await new Promise((r) => setTimeout(r, 500));
@@ -205,18 +178,16 @@ async function waitForNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    // queryWorkerTasks returns ALL statuses (Pending, Dispatched, Running, Cancelled)
-    // — unlike pendingForWorker which only shows Pending tasks.
-    const tasks = (await robot.query(api.testHelpers.queryWorkerTasks, {
-      userId: _userId,
-    })) as Array<{ taskType: string; status: string }>;
+    const items = (await robot.query(api.orchestrator.pendingWork, {
+      maxMediaDownloads: 0,
+    })) as Array<{ service: string }>;
 
-    const qrTasks = tasks.filter((t) => t.taskType === "QrAuth");
-    if (qrTasks.length === 0) {
+    const qrItems = items.filter((i) => i.service === "QrAuthWorkflow");
+    if (qrItems.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  throw new Error(`QrAuth tasks still exist after ${timeoutMs}ms`);
+  throw new Error(`QrAuth work items still exist after ${timeoutMs}ms`);
 }

@@ -1,17 +1,24 @@
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
-import { api, type Doc, type Id } from "@/lib/convex";
+import { api, type Id } from "@/lib/convex";
 
-type QrAuthTask = Extract<Doc<"workerTasks">["task"], { type: "QrAuth" }>;
+type QrAuthStep =
+  | "Pending"
+  | "Generating"
+  | "Token"
+  | "Authorized"
+  | "AlreadyAuthorized"
+  | "Failed"
+  | "Cancelled";
 
 export interface QrAuthProgress {
   error: string | undefined;
   qrExpires: number | undefined;
   qrUrl: string | undefined;
-  step: QrAuthTask["step"];
+  step: QrAuthStep;
 }
 
-function isTerminalStep(step: QrAuthTask["step"]): boolean {
+function isTerminalStep(step: QrAuthStep): boolean {
   return (
     step === "Authorized" ||
     step === "AlreadyAuthorized" ||
@@ -23,63 +30,57 @@ function isTerminalStep(step: QrAuthTask["step"]): boolean {
 interface UseQrAuthReturn {
   /** Cancel the active QR auth session */
   cancelQrAuth: () => void;
-  /** True when the task existed but was deleted (auth flow finished) */
+  /** True when the auth reached a successful terminal state */
   isDone: boolean;
-  /** Current progress, or null if task doesn't exist / was deleted */
+  /** Current progress, or null if auth doesn't exist */
   progress: QrAuthProgress | null;
   /** Start a new QR auth session */
   startQrAuth: () => void;
 }
 
 /**
- * Extract QR auth progress from a workerTask doc.
- * Returns null if the task is not a QrAuth task.
- */
-function extractProgress(
-  task: Doc<"workerTasks"> | null | undefined
-): QrAuthProgress | null {
-  if (!task || task.task.type !== "QrAuth") {
-    return null;
-  }
-  return {
-    step: task.task.step,
-    qrUrl: task.task.qrUrl,
-    qrExpires: task.task.qrExpires,
-    error: task.task.error,
-  };
-}
-
-/**
- * Hook for managing QR auth sessions via the workerTasks table.
+ * Hook for managing QR auth sessions via the qrAuths table.
  */
 export function useQrAuth(): UseQrAuthReturn {
-  const [taskId, setTaskId] = useState<Id<"workerTasks"> | null>(null);
+  const [authId, setAuthId] = useState<Id<"qrAuths"> | null>(null);
   const startMutation = useMutation(api.qrAuth.start);
   const cancelMutation = useMutation(api.qrAuth.cancel);
 
-  // Subscribe to the full task doc (skip when no taskId)
+  // Subscribe to the qrAuth record
   const queryResult = useQuery(
-    api.workerTasks.getTaskById,
-    taskId ? { taskId } : "skip"
+    api.qrAuth.getForUser,
+    authId ? { authId } : "skip"
   );
 
-  const progress = extractProgress(queryResult);
+  let progress: QrAuthProgress | null = null;
+  if (queryResult) {
+    progress = {
+      step: queryResult.step as QrAuthStep,
+      qrUrl: queryResult.qrUrl,
+      qrExpires: queryResult.qrExpires,
+      error: queryResult.error,
+    };
+  }
 
-  // isDone = we started a task (taskId set) AND the query returned null
-  // (not undefined/loading, but explicitly null = task deleted)
-  const isDone = taskId !== null && queryResult === null;
+  // isDone = auth reached a successful terminal state (Authorized/AlreadyAuthorized)
+  const isDone =
+    authId !== null &&
+    queryResult !== undefined &&
+    queryResult !== null &&
+    (queryResult.step === "Authorized" ||
+      queryResult.step === "AlreadyAuthorized");
 
   const startQrAuth = (): void => {
-    setTaskId(null);
+    setAuthId(null);
     startMutation({}).then(
-      (id) => setTaskId(id),
+      (id) => setAuthId(id),
       (error) => console.error("[qrAuth.start]", error)
     );
   };
 
   const cancelQrAuth = (): void => {
-    if (taskId && progress && !isTerminalStep(progress.step)) {
-      cancelMutation({ taskId });
+    if (authId && progress && !isTerminalStep(progress.step)) {
+      cancelMutation({ authId });
     }
   };
 
