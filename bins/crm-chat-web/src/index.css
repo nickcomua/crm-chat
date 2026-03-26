@@ -159,6 +159,33 @@ input[type="search"]::-webkit-search-cancel-button {
   }
 }
 
+/* Highlight animation for scroll-to-message */
+@keyframes highlight-outline-fade {
+  0% {
+    box-shadow: 0 0 0 3px oklch(0.85 0.17 85);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@keyframes highlight-bg-fade {
+  0% {
+    background-color: oklch(0.85 0.17 85 / 12%);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-highlight-outline {
+  animation: highlight-outline-fade 2s ease-out forwards;
+}
+
+.animate-highlight-bg {
+  animation: highlight-bg-fade 2s ease-out forwards;
+}
+
 /* Subtle message area background pattern (dark mode only) */
 .dark .messages-bg {
   background-image: radial-gradient(oklch(1 0 0 / 2%) 1px, transparent 1px);
