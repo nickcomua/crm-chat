@@ -443,6 +443,118 @@ impl TelegramClient {
     }
 }
 
+/// Convert a grammers `TgUpdate` into our platform-agnostic `Update`.
+fn convert_tg_update(update: &TgUpdate) -> Update {
+    match update {
+        TgUpdate::NewMessage(message) => {
+            let chat_id = match message.peer() {
+                Some(chat) => chat.id().bare_id(),
+                None => message.peer_id().bare_id(),
+            };
+            let sender_id = message
+                .sender_id()
+                .map(|id| id.to_string())
+                .unwrap_or_default();
+            trace!(
+                message_id = message.id(),
+                chat_id = chat_id,
+                "Received new message update"
+            );
+            let media_summary = message
+                .media()
+                .and_then(|m| classify_media(&m, chat_id, message.id()));
+            Update::NewMessage(MessageSummary {
+                external_id: message.id().to_string(),
+                chat_external_id: chat_id.to_string(),
+                sender_id,
+                text: Some(message.text().to_string()),
+                outgoing: message.outgoing(),
+                timestamp_ms: Some(message.date().timestamp_millis() as u64),
+                media_external_id: message
+                    .media()
+                    .map(|_| format!("media:{}:{}", chat_id, message.id())),
+                media_summary,
+            })
+        }
+        TgUpdate::MessageEdited(message) => {
+            let chat_id = match message.peer() {
+                Some(chat) => chat.id().bare_id(),
+                None => message.peer_id().bare_id(),
+            };
+            let sender_id = message
+                .sender_id()
+                .map(|id| id.to_string())
+                .unwrap_or_default();
+            trace!(
+                message_id = message.id(),
+                chat_id = chat_id,
+                "Received message edited update"
+            );
+            let media_summary = message
+                .media()
+                .and_then(|m| classify_media(&m, chat_id, message.id()));
+            Update::MessageEdited(MessageSummary {
+                external_id: message.id().to_string(),
+                chat_external_id: chat_id.to_string(),
+                sender_id,
+                text: Some(message.text().to_string()),
+                outgoing: message.outgoing(),
+                timestamp_ms: Some(message.date().timestamp_millis() as u64),
+                media_external_id: message
+                    .media()
+                    .map(|_| format!("media:{}:{}", chat_id, message.id())),
+                media_summary,
+            })
+        }
+        TgUpdate::MessageDeleted(deleted) => {
+            let channel_id = deleted.channel_id();
+            trace!(
+                message_count = deleted.messages().len(),
+                "Received message deleted update"
+            );
+            Update::MessageDeleted {
+                message_external_ids: deleted.messages().iter().map(|id| id.to_string()).collect(),
+                chat_external_id: channel_id.map(|id| id.to_string()),
+            }
+        }
+        other => {
+            let update_type = format!("{:?}", std::mem::discriminant(other));
+            trace!(update_type = %update_type, "Received other update type");
+            let payload = serde_json::to_value(other.raw()).unwrap_or_else(|e| {
+                serde_json::json!({
+                    "error": format!("Failed to serialize update: {}", e),
+                    "type": update_type.clone(),
+                })
+            });
+            Update::Other {
+                update_type,
+                payload,
+            }
+        }
+    }
+}
+
+/// Create an `UpdateStream` from a broadcast receiver.
+fn subscribe_stream(
+    mut rx: tokio::sync::broadcast::Receiver<Result<Update, MessengerError>>,
+) -> impl tokio_stream::Stream<Item = Result<Update, MessengerError>> {
+    stream! {
+        loop {
+            match rx.recv().await {
+                Ok(item) => yield item,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Updates subscriber lagged by {n} messages, resuming");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    info!("Updates broadcast closed");
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl MessengerClient for TelegramClient {
     #[instrument(skip(self))]
@@ -637,135 +749,64 @@ impl MessengerClient for TelegramClient {
 
     #[instrument(skip(self))]
     async fn iter_updates(&self) -> Result<UpdateStream, MessengerError> {
+        let mut broadcast_guard = self.updates_broadcast.lock().await;
+
+        if let Some(ref tx) = *broadcast_guard {
+            // Already running — just subscribe to the existing broadcast.
+            info!("Subscribing to existing updates broadcast");
+            let rx = tx.subscribe();
+            drop(broadcast_guard);
+            return Ok(Box::pin(subscribe_stream(rx)));
+        }
+
+        // First call: take the raw grammers receiver and start a background
+        // forwarder task that converts TgUpdate → Update and fans out via broadcast.
         info!("Starting updates stream");
-        // Take the updates receiver (can only be done once)
         let updates_rx = self.updates_rx.lock().await.take().ok_or_else(|| {
-            error!("Updates stream already consumed");
+            error!("Updates receiver already consumed and no broadcast exists");
             MessengerError::Connection(
-                "Updates stream already consumed. iter_updates can only be called once."
-                    .to_string(),
+                "Updates stream setup failed: receiver consumed without broadcast".to_string(),
             )
         })?;
 
-        // Create updates configuration
         let config = UpdatesConfiguration {
             catch_up: true,
             update_queue_limit: Some(10_000),
         };
-
-        // Get the grammers update stream using stream_updates
         let client_guard = self.client.lock().await;
         let mut grammers_stream = client_guard.stream_updates(updates_rx, config);
         drop(client_guard);
 
-        debug!("Updates stream initialized");
+        let (tx, rx) = tokio::sync::broadcast::channel::<Result<Update, MessengerError>>(1024);
+        *broadcast_guard = Some(tx.clone());
+        drop(broadcast_guard);
 
-        let update_stream = stream! {
+        debug!("Updates stream initialized, spawning forwarder task");
+
+        // Background task: reads grammers stream → broadcasts processed updates.
+        tokio::spawn(async move {
             loop {
                 match grammers_stream.next().await {
                     Ok(update) => {
-                        let update_summary = match &update {
-                            TgUpdate::NewMessage(message) => {
-                                let chat_id = match message.peer() {
-                                    Some(chat) => chat.id().bare_id(),
-                                    None => message.peer_id().bare_id(),
-                                };
-                                let sender_id = message
-                                    .sender_id()
-                                    .map(|id| id.to_string())
-                                    .unwrap_or_default();
-                                trace!(
-                                    message_id = message.id(),
-                                    chat_id = chat_id,
-                                    "Received new message update"
-                                );
-                                let media_summary = message.media().and_then(|m| classify_media(&m, chat_id, message.id()));
-                                Update::NewMessage(MessageSummary {
-                                    external_id: message.id().to_string(),
-                                    chat_external_id: chat_id.to_string(),
-                                    sender_id,
-                                    text: Some(message.text().to_string()),
-                                    outgoing: message.outgoing(),
-                                    timestamp_ms: Some(message.date().timestamp_millis() as u64),
-                                    media_external_id: message
-                                        .media()
-                                        .map(|_| format!("media:{}:{}", chat_id, message.id())),
-                                    media_summary,
-                                })
-                            }
-                            TgUpdate::MessageEdited(message) => {
-                                let chat_id = match message.peer() {
-                                    Some(chat) => chat.id().bare_id(),
-                                    None => message.peer_id().bare_id(),
-                                };
-                                let sender_id = message
-                                    .sender_id()
-                                    .map(|id| id.to_string())
-                                    .unwrap_or_default();
-                                trace!(
-                                    message_id = message.id(),
-                                    chat_id = chat_id,
-                                    "Received message edited update"
-                                );
-                                let media_summary = message.media().and_then(|m| classify_media(&m, chat_id, message.id()));
-                                Update::MessageEdited(MessageSummary {
-                                    external_id: message.id().to_string(),
-                                    chat_external_id: chat_id.to_string(),
-                                    sender_id,
-                                    text: Some(message.text().to_string()),
-                                    outgoing: message.outgoing(),
-                                    timestamp_ms: Some(message.date().timestamp_millis() as u64),
-                                    media_external_id: message
-                                        .media()
-                                        .map(|_| format!("media:{}:{}", chat_id, message.id())),
-                                    media_summary,
-                                })
-                            }
-                            TgUpdate::MessageDeleted(deleted) => {
-                                let channel_id = deleted.channel_id();
-                                trace!(
-                                    message_count = deleted.messages().len(),
-                                    "Received message deleted update"
-                                );
-                                Update::MessageDeleted {
-                                    message_external_ids: deleted
-                                        .messages()
-                                        .iter()
-                                        .map(|id| id.to_string())
-                                        .collect(),
-                                    chat_external_id: channel_id.map(|id| id.to_string()),
-                                }
-                            }
-                            other => {
-                                // Update doesn't implement Serialize, so we'll create a minimal JSON representation
-                                let update_type = format!("{:?}", std::mem::discriminant(other));
-                                trace!(update_type = %update_type, "Received other update type");
-                                let payload = serde_json::to_value(other.raw()).unwrap_or_else(|e| {
-                                    serde_json::json!({
-                                        "error": format!("Failed to serialize update: {}", e),
-                                        "type": update_type.clone(),
-                                    })
-                                });
-                                Update::Other {
-                                    update_type,
-                                    payload,
-                                }
-                            }
-                        };
-                        yield Ok(update_summary);
+                        let converted = convert_tg_update(&update);
+                        if tx.send(Ok(converted)).is_err() {
+                            debug!("All update subscribers dropped, stopping forwarder");
+                            break;
+                        }
                     }
                     Err(e) => {
                         error!(error = %e, "Failed to get update from stream");
-                        yield Err(MessengerError::Connection(format!(
-                            "Failed to get update: {}",
-                            e
-                        )));
+                        // Send the error to subscribers but keep running — transient
+                        // errors shouldn't kill the forwarder.
+                        let _ = tx.send(Err(MessengerError::Connection(format!(
+                            "Failed to get update: {e}"
+                        ))));
                     }
                 }
             }
-        };
+        });
 
-        Ok(Box::pin(update_stream))
+        Ok(Box::pin(subscribe_stream(rx)))
     }
 
     #[instrument(skip(self), fields(chat_id = %chat_external_id))]

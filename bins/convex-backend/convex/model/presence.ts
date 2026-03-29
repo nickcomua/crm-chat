@@ -74,7 +74,6 @@ async function handleDisconnect(
   }
 }
 
-
 // =============================================================================
 // Presence mutations — called by the frontend usePresence hook
 // =============================================================================

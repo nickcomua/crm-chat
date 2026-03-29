@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 /// Error type for messenger client operations.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum MessengerError {
     #[error("Authentication failed: {0}")]
     Authentication(String),
