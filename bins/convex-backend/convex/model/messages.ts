@@ -34,7 +34,6 @@ const messageFields = v.object({
   mediaExternalId: v.optional(v.string()),
   mediaKind: v.optional(mediaKind),
   replyToMessageId: v.optional(v.string()),
-  replyToText: v.optional(v.string()),
   forwardedFrom: v.optional(forwardedFromValidator),
   reactions: v.optional(v.array(reactionValidator)),
 });
@@ -154,24 +153,7 @@ export const listByChat = humanQuery({
 /** Upsert a message. Human-only (workers use workerUpsertMessage).
  *  Auto-creates media records respecting per-chat/client media settings. */
 export const upsert = humanMutation({
-  args: {
-    messageId: v.string(),
-    externalId: v.string(),
-    userId: v.string(),
-    clientId: v.id("clients"),
-    chatId: v.string(),
-    senderId: v.string(),
-    text: v.optional(v.string()),
-    outgoing: v.boolean(),
-    deleted: v.boolean(),
-    timestamp: v.number(),
-    mediaExternalId: v.optional(v.string()),
-    mediaKind: v.optional(mediaKind),
-    replyToMessageId: v.optional(v.string()),
-    replyToText: v.optional(v.string()),
-    forwardedFrom: v.optional(forwardedFromValidator),
-    reactions: v.optional(v.array(reactionValidator)),
-  },
+  args: messageFields,
   returns: v.null(),
   handler: async (ctx, args) => {
     if (ctx.caller.tokenIdentifier !== args.userId) {
@@ -192,7 +174,6 @@ export const upsert = humanMutation({
         mediaExternalId: args.mediaExternalId,
         mediaKind: args.mediaKind,
         replyToMessageId: args.replyToMessageId,
-        replyToText: args.replyToText,
         forwardedFrom: args.forwardedFrom,
         reactions: args.reactions,
       });
