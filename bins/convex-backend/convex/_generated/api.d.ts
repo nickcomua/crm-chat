@@ -8,23 +8,19 @@
  * @module
  */
 
-import type * as chats from "../chats.js";
-import type * as clients from "../clients.js";
 import type * as env from "../env.js";
 import type * as functions from "../functions.js";
-import type * as helpers_auth from "../helpers/auth.js";
 import type * as helpers_result from "../helpers/result.js";
-import type * as helpers_tasks from "../helpers/tasks.js";
-import type * as media from "../media.js";
-import type * as messages from "../messages.js";
-import type * as notifications from "../notifications.js";
-import type * as phoneAuth from "../phoneAuth.js";
-import type * as presence from "../presence.js";
-import type * as qrAuth from "../qrAuth.js";
-import type * as search from "../search.js";
+import type * as helpers_validators from "../helpers/validators.js";
+import type * as model_chats from "../model/chats.js";
+import type * as model_clients from "../model/clients.js";
+import type * as model_media from "../model/media.js";
+import type * as model_messages from "../model/messages.js";
+import type * as model_notifications from "../model/notifications.js";
+import type * as model_phoneAuth from "../model/phoneAuth.js";
+import type * as model_presence from "../model/presence.js";
+import type * as model_qrAuth from "../model/qrAuth.js";
 import type * as testHelpers from "../testHelpers.js";
-import type * as workerOps from "../workerOps.js";
-import type * as workerTasks from "../workerTasks.js";
 
 import type {
   ApiFromModules,
@@ -33,23 +29,19 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  chats: typeof chats;
-  clients: typeof clients;
   env: typeof env;
   functions: typeof functions;
-  "helpers/auth": typeof helpers_auth;
   "helpers/result": typeof helpers_result;
-  "helpers/tasks": typeof helpers_tasks;
-  media: typeof media;
-  messages: typeof messages;
-  notifications: typeof notifications;
-  phoneAuth: typeof phoneAuth;
-  presence: typeof presence;
-  qrAuth: typeof qrAuth;
-  search: typeof search;
+  "helpers/validators": typeof helpers_validators;
+  "model/chats": typeof model_chats;
+  "model/clients": typeof model_clients;
+  "model/media": typeof model_media;
+  "model/messages": typeof model_messages;
+  "model/notifications": typeof model_notifications;
+  "model/phoneAuth": typeof model_phoneAuth;
+  "model/presence": typeof model_presence;
+  "model/qrAuth": typeof model_qrAuth;
   testHelpers: typeof testHelpers;
-  workerOps: typeof workerOps;
-  workerTasks: typeof workerTasks;
 }>;
 
 /**

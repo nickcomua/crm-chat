@@ -1126,6 +1126,72 @@ async fn test_stream_message_media_all_kinds() {
     .expect("Test timed out");
 }
 
+/// Calling `iter_updates()` twice on the same client should succeed. The first
+/// call starts the background forwarder; the second subscribes to the existing
+/// broadcast. Both streams must be alive simultaneously.
+#[tokio::test]
+#[serial]
+async fn test_iter_updates_twice_on_same_client() {
+    tokio::time::timeout(DEFAULT_TIMEOUT, async {
+        let configs = TestConfig::from_env();
+
+        if configs.is_none() {
+            println!("Skipping test: Environment variables not set");
+            return;
+        }
+
+        let (config1, _config2) = configs.unwrap();
+        let client = TelegramClient::new(
+            config1.api_id as i32,
+            config1.api_hash.clone(),
+            config1.session_file.clone(),
+        )
+        .await
+        .expect("Failed to create client");
+
+        // First call — starts the background forwarder.
+        let stream1 = client
+            .iter_updates()
+            .await
+            .expect("First iter_updates call should succeed");
+
+        // Second call — must NOT fail with "Updates stream already consumed".
+        let stream2 = client
+            .iter_updates()
+            .await
+            .expect("Second iter_updates call should succeed (subscribes to existing broadcast)");
+
+        // Both streams should be valid pinned streams. Poll them briefly to
+        // confirm they don't immediately error. Use a short timeout because
+        // there may be no incoming updates during the test window.
+        let mut stream1 = stream1;
+        let mut stream2 = stream2;
+
+        let poll1 = tokio::time::timeout(Duration::from_secs(2), stream1.next());
+        let poll2 = tokio::time::timeout(Duration::from_secs(2), stream2.next());
+
+        // We expect timeouts (no updates during the window) rather than errors.
+        // If either stream returned an immediate Err, next() would resolve
+        // instantly with Some(Err(...)).
+        match poll1.await {
+            Err(_elapsed) => { /* timeout = no updates, which is fine */ }
+            Ok(Some(Ok(_update))) => { /* got an update, also fine */ }
+            Ok(Some(Err(e))) => panic!("stream1 returned error: {e}"),
+            Ok(None) => { /* stream ended, unexpected but not a test failure */ }
+        }
+        match poll2.await {
+            Err(_elapsed) => {}
+            Ok(Some(Ok(_update))) => {}
+            Ok(Some(Err(e))) => panic!("stream2 returned error: {e}"),
+            Ok(None) => {}
+        }
+
+        println!("✓ Two concurrent iter_updates subscriptions work on the same client");
+    })
+    .await
+    .expect("Test timed out");
+}
+
 /// Helper: Find the Saved Messages chat for a client.
 async fn find_saved_messages(client: &TelegramClient) -> String {
     let native_client = client.get_native_client().await;

@@ -1,17 +1,19 @@
 //! QrAuthWorkflow — Restate durable workflow for QR-code-based Telegram auth.
 //!
-//! The workflow key is the worker task ID. The workflow actively polls the
+//! The workflow key is the qrAuth document ID. The workflow actively polls the
 //! Telegram `login_with_qr()` stream, posting new token URLs back to Convex as
-//! they arrive. Cancellation is handled via a cancel watcher that subscribes
-//! to the workerTask's status — when it becomes "Cancelled", the workflow exits.
+//! they arrive.
+//!
+//! Domain-driven: uses qrAuth domain mutations.
+//! Cancellation is handled via a domain watcher that subscribes to the qrAuth
+//! step — when it becomes terminal (Cancelled), the workflow exits.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use convex_backend::{
-    ConvexApi, ConvexApiClient, WorkerTasksWorkerCompleteArgs, WorkerTasksWorkerCompleteTask,
-    WorkerTasksWorkerCompleteTaskQrAuthStep, WorkerTasksWorkerUpdateTaskArgs,
-    WorkerTasksWorkerUpdateTaskTask, WorkerTasksWorkerUpdateTaskTaskQrAuthStep,
+    ConvexApi, ConvexApiClient, QrAuthGetForWorkerArgs, QrAuthWorkerCompleteArgs,
+    QrAuthWorkerCompleteStep, QrAuthWorkerUpdateTokenArgs, QrAuthWorkerUpdateTokenStep,
 };
 use futures::StreamExt;
 use messanger_interface::MessengerClient;
@@ -22,19 +24,13 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::ops::cancel_watcher::spawn_cancel_watcher;
-use crate::ops::convex::{ConvexResultExt, run_task};
+use crate::ops::convex::{ConvexWarnExt, EntityRequest};
+use crate::ops::domain_watcher::spawn_qr_auth_watcher;
 use crate::session_manager::{SessionManager as _, TelegramSessionManager};
 
 // ────────────────────────────────────────────────────────────────────────────
-// Input / result types
+// Result type
 // ────────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize)]
-pub struct QrAuthRunRequest {
-    pub task_id: String,
-    pub user_id: String,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct QrAuthResult {
@@ -48,7 +44,7 @@ pub struct QrAuthResult {
 
 #[restate_sdk::workflow]
 pub trait QrAuthWorkflow {
-    async fn run(req: Json<QrAuthRunRequest>) -> Result<Json<QrAuthResult>, HandlerError>;
+    async fn run(req: Json<EntityRequest>) -> Result<Json<QrAuthResult>, HandlerError>;
 }
 
 pub struct QrAuthWorkflowImpl {
@@ -60,87 +56,98 @@ impl QrAuthWorkflow for QrAuthWorkflowImpl {
     async fn run(
         &self,
         _ctx: WorkflowContext<'_>,
-        req: Json<QrAuthRunRequest>,
+        req: Json<EntityRequest>,
     ) -> Result<Json<QrAuthResult>, HandlerError> {
-        let req = req.into_inner();
-        let task_id = req.task_id.clone();
-        info!(task_id = %task_id, "QrAuthWorkflow started");
-        self.run_inner(req).await
+        let auth_id = req.into_inner().entity_id;
+        info!(auth_id = %auth_id, "QrAuthWorkflow started");
+        self.run_inner(&auth_id).await
     }
 }
 
 impl QrAuthWorkflowImpl {
-    async fn run_inner(&self, req: QrAuthRunRequest) -> Result<Json<QrAuthResult>, HandlerError> {
-        // Step 1: Mark task as Running
-        run_task(&self.convex, &req.task_id).await;
+    async fn run_inner(&self, auth_id: &str) -> Result<Json<QrAuthResult>, HandlerError> {
+        // Fetch the full qrAuth record to get userId
+        let auth = self
+            .convex
+            .query_qr_auth_get_for_worker(QrAuthGetForWorkerArgs {
+                authId: auth_id.to_string(),
+            })
+            .await
+            .map_err(|e| HandlerError::from(anyhow::anyhow!("Failed to fetch qrAuth: {e}")))?
+            .ok_or_else(|| HandlerError::from(anyhow::anyhow!("qrAuth {} not found", auth_id)))?;
 
-        // Spawn cancel watcher — fires when task status becomes "Cancelled"
+        let user_id = auth.user_id.clone();
+
+        // Idempotency guard: only process Pending
+        let step_str = auth.step.to_string();
+        if step_str != "Pending" {
+            info!(auth_id, step = %step_str, "QrAuth: not Pending, skipping");
+            return Ok(Json(QrAuthResult {
+                success: false,
+                error: Some(format!("Already in step: {step_str}")),
+            }));
+        }
+
+        // Spawn domain cancel watcher — fires when step becomes terminal
         let cancel_token = CancellationToken::new();
-        let _watcher = spawn_cancel_watcher(&self.convex, &req.task_id, cancel_token.clone());
+        let _watcher = spawn_qr_auth_watcher(&self.convex, auth_id, cancel_token.clone());
 
-        // Step 2: Get or create Telegram client (temp session for QR auth)
+        // Get or create Telegram client (temp session for QR auth)
         let tg_client = self
             .sessions
-            .get_or_create_for_qr(&req.user_id, &req.task_id)
+            .get_or_create_for_qr(&user_id, auth_id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
-        // Step 3: Check if already authorized
+        // Check if already authorized
         if let Ok(true) = tg_client.is_authorized().await {
-            info!(task_id = %req.task_id, "Client already authorized");
-            let user_id = tg_client.get_user_id().await.unwrap_or(0);
+            info!(auth_id = %auth_id, "Client already authorized");
+            let tg_user_id = tg_client.get_user_id().await.unwrap_or(0);
             let phone_number = tg_client.get_phone_number().await;
             self.sessions.promote_qr_session(
-                &req.user_id,
-                &req.task_id,
+                &user_id,
+                auth_id,
                 phone_number.as_deref(),
-                user_id as i64,
+                tg_user_id as i64,
             );
 
             self.convex
-                .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-                    taskId: req.task_id.clone(),
-                    task: Some(WorkerTasksWorkerCompleteTask::QrAuth {
-                        step: WorkerTasksWorkerCompleteTaskQrAuthStep::AlreadyAuthorized,
-                        qrUrl: None,
-                        qrExpires: None,
-                        telegramUserId: Some(user_id as i64),
-                        phoneNumber: phone_number,
-                        error: None,
-                    }),
+                .qr_auth_worker_complete(QrAuthWorkerCompleteArgs {
+                    authId: auth_id.to_string(),
+                    step: QrAuthWorkerCompleteStep::AlreadyAuthorized,
+                    telegramUserId: Some(tg_user_id as i64),
+                    phoneNumber: phone_number,
+                    error: None,
                 })
                 .await
-                .check()
                 .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
-            self.sessions.remove_temp(&req.user_id, &req.task_id);
+            self.sessions.remove_temp(&user_id, auth_id);
             return Ok(Json(QrAuthResult {
                 success: true,
                 error: None,
             }));
         }
 
-        // Step 4: Run QR login polling loop
-        let result = self.qr_polling_loop(&req, &cancel_token).await;
+        // Run QR login polling loop
+        let result = self.qr_polling_loop(auth_id, &user_id, &cancel_token).await;
 
         // Clean up temp session from cache regardless of outcome
-        self.sessions.remove_temp(&req.user_id, &req.task_id);
+        self.sessions.remove_temp(&user_id, auth_id);
 
         result
     }
 
     /// Run the QR login polling loop.
-    ///
-    /// Streams QR tokens from the Telegram client, posting each new token URL
-    /// to Convex. Completes when login succeeds, fails, or is cancelled.
     async fn qr_polling_loop(
         &self,
-        req: &QrAuthRunRequest,
+        auth_id: &str,
+        user_id: &str,
         cancel_token: &CancellationToken,
     ) -> Result<Json<QrAuthResult>, HandlerError> {
         let tg_client = self
             .sessions
-            .get_or_create_for_qr(&req.user_id, &req.task_id)
+            .get_or_create_for_qr(user_id, auth_id)
             .await
             .map_err(|e| HandlerError::from(anyhow::Error::from(e)))?;
 
@@ -154,9 +161,9 @@ impl QrAuthWorkflowImpl {
             tokio::select! {
                 biased;
 
-                // Cancel watcher detected task status = "Cancelled"
+                // Cancel watcher detected terminal step (e.g. user cancelled)
                 _ = cancel_token.cancelled() => {
-                    info!(task_id = %req.task_id, "QR login cancelled by user");
+                    info!(auth_id = %auth_id, "QR login cancelled by user");
                     return Ok(Json(QrAuthResult {
                         success: false,
                         error: Some("Cancelled by user".to_string()),
@@ -167,20 +174,15 @@ impl QrAuthWorkflowImpl {
                 token_result = async { tokio::time::timeout_at(deadline, stream.next()).await } => {
                     match token_result {
                         Err(_) => {
-                            // Overall timeout expired
                             let msg = "QR login timed out after 5 minutes";
-                            warn!(task_id = %req.task_id, msg);
+                            warn!(auth_id = %auth_id, msg);
                             self.convex
-                                .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-                                    taskId: req.task_id.clone(),
-                                    task: Some(WorkerTasksWorkerCompleteTask::QrAuth {
-                                        step: WorkerTasksWorkerCompleteTaskQrAuthStep::Failed,
-                                        qrUrl: None,
-                                        qrExpires: None,
-                                        telegramUserId: None,
-                                        phoneNumber: None,
-                                        error: Some(msg.to_string()),
-                                    }),
+                                .qr_auth_worker_complete(QrAuthWorkerCompleteArgs {
+                                    authId: auth_id.to_string(),
+                                    step: QrAuthWorkerCompleteStep::Failed,
+                                    telegramUserId: None,
+                                    phoneNumber: None,
+                                    error: Some(msg.to_string()),
                                 })
                                 .await
                                 .warn_on_err("Failed to report QR timeout");
@@ -190,20 +192,15 @@ impl QrAuthWorkflowImpl {
                             }));
                         }
                         Ok(None) => {
-                            // Stream ended unexpectedly
                             let msg = "QR login stream ended unexpectedly";
-                            warn!(task_id = %req.task_id, msg);
+                            warn!(auth_id = %auth_id, msg);
                             self.convex
-                                .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-                                    taskId: req.task_id.clone(),
-                                    task: Some(WorkerTasksWorkerCompleteTask::QrAuth {
-                                        step: WorkerTasksWorkerCompleteTaskQrAuthStep::Failed,
-                                        qrUrl: None,
-                                        qrExpires: None,
-                                        telegramUserId: None,
-                                        phoneNumber: None,
-                                        error: Some(msg.to_string()),
-                                    }),
+                                .qr_auth_worker_complete(QrAuthWorkerCompleteArgs {
+                                    authId: auth_id.to_string(),
+                                    step: QrAuthWorkerCompleteStep::Failed,
+                                    telegramUserId: None,
+                                    phoneNumber: None,
+                                    error: Some(msg.to_string()),
                                 })
                                 .await
                                 .warn_on_err("Failed to report QR stream ended");
@@ -213,20 +210,15 @@ impl QrAuthWorkflowImpl {
                             }));
                         }
                         Ok(Some(Err(e))) => {
-                            // Stream error
                             let msg = format!("QR login error: {e}");
-                            error!(task_id = %req.task_id, %msg);
+                            error!(auth_id = %auth_id, %msg);
                             self.convex
-                                .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-                                    taskId: req.task_id.clone(),
-                                    task: Some(WorkerTasksWorkerCompleteTask::QrAuth {
-                                        step: WorkerTasksWorkerCompleteTaskQrAuthStep::Failed,
-                                        qrUrl: None,
-                                        qrExpires: None,
-                                        telegramUserId: None,
-                                        phoneNumber: None,
-                                        error: Some(msg.clone()),
-                                    }),
+                                .qr_auth_worker_complete(QrAuthWorkerCompleteArgs {
+                                    authId: auth_id.to_string(),
+                                    step: QrAuthWorkerCompleteStep::Failed,
+                                    telegramUserId: None,
+                                    phoneNumber: None,
+                                    error: Some(msg.clone()),
                                 })
                                 .await
                                 .warn_on_err("Failed to report QR stream error");
@@ -237,52 +229,41 @@ impl QrAuthWorkflowImpl {
                         }
                         Ok(Some(Ok(token))) => match token {
                             QrLoginToken::Token { url, expires } => {
-                                // Only update Convex if the URL actually changed
                                 if last_token_url.as_ref() == Some(&url) {
                                     continue;
                                 }
-                                info!(task_id = %req.task_id, expires, "New QR token generated");
+                                info!(auth_id = %auth_id, expires, "New QR token generated");
                                 last_token_url = Some(url.clone());
 
                                 self.convex
-                                    .worker_tasks_worker_update_task(WorkerTasksWorkerUpdateTaskArgs {
-                                        taskId: req.task_id.clone(),
-                                        task: WorkerTasksWorkerUpdateTaskTask::QrAuth {
-                                            step: WorkerTasksWorkerUpdateTaskTaskQrAuthStep::Token,
-                                            qrUrl: Some(url),
-                                            qrExpires: Some(f64::from(expires)),
-                                            telegramUserId: None,
-                                            phoneNumber: None,
-                                            error: None,
-                                        },
+                                    .qr_auth_worker_update_token(QrAuthWorkerUpdateTokenArgs {
+                                        authId: auth_id.to_string(),
+                                        step: QrAuthWorkerUpdateTokenStep::Token,
+                                        qrUrl: Some(url),
+                                        qrExpires: Some(f64::from(expires)),
                                     })
                                     .await
                                     .warn_on_err("Failed to update QR token (transient, continuing)");
                             }
-                            QrLoginToken::Success { user_id } => {
-                                info!(task_id = %req.task_id, user_id, "QR login successful");
+                            QrLoginToken::Success { user_id: tg_user_id } => {
+                                info!(auth_id = %auth_id, tg_user_id, "QR login successful");
                                 let phone_number = tg_client.get_phone_number().await;
                                 self.sessions.promote_qr_session(
-                                    &req.user_id,
-                                    &req.task_id,
-                                    phone_number.as_deref(),
                                     user_id,
+                                    auth_id,
+                                    phone_number.as_deref(),
+                                    tg_user_id,
                                 );
 
                                 self.convex
-                                    .worker_tasks_worker_complete(WorkerTasksWorkerCompleteArgs {
-                                        taskId: req.task_id.clone(),
-                                        task: Some(WorkerTasksWorkerCompleteTask::QrAuth {
-                                            step: WorkerTasksWorkerCompleteTaskQrAuthStep::Authorized,
-                                            qrUrl: None,
-                                            qrExpires: None,
-                                            telegramUserId: Some(user_id),
-                                            phoneNumber: phone_number,
-                                            error: None,
-                                        }),
+                                    .qr_auth_worker_complete(QrAuthWorkerCompleteArgs {
+                                        authId: auth_id.to_string(),
+                                        step: QrAuthWorkerCompleteStep::Authorized,
+                                        telegramUserId: Some(tg_user_id),
+                                        phoneNumber: phone_number,
+                                        error: None,
                                     })
                                     .await
-                                    .check()
                                     .map_err(|e| HandlerError::from(anyhow::Error::msg(e.to_string())))?;
 
                                 return Ok(Json(QrAuthResult {
@@ -291,7 +272,7 @@ impl QrAuthWorkflowImpl {
                                 }));
                             }
                             QrLoginToken::MigrateTo { dc_id } => {
-                                info!(task_id = %req.task_id, dc_id, "DC migration in progress");
+                                info!(auth_id = %auth_id, dc_id, "DC migration in progress");
                                 // Migration is handled internally by grammers, continue polling
                             }
                         },

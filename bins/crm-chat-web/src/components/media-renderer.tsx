@@ -227,7 +227,7 @@ function SkippedMedia({
   media: MediaInfo;
   isOutgoing: boolean;
 }): React.ReactNode {
-  const requestDownload = useMutation(api.media.requestDownload);
+  const requestDownload = useMutation(api.model.media.requestDownload);
   return (
     <button
       className={cn(

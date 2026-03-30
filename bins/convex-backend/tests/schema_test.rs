@@ -43,8 +43,8 @@ fn test_crm_chat_schema() {
         "Missing NotificationsTable struct"
     );
     assert!(
-        output.contains("WorkerTasksTable"),
-        "Missing WorkerTasksTable struct"
+        output.contains("QrAuthsTable"),
+        "Missing QrAuthsTable struct"
     );
     assert!(output.contains("HumansTable"), "Missing HumansTable struct");
 }

@@ -4,7 +4,7 @@ import { Loader2, Search, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { api, type Doc } from "@/lib/convex";
 import { cn } from "@/lib/utils";
-import type { TextByKeywordsParameters } from "../../../convex-backend/convex/search";
+import type { TextByKeywordsParameters } from "../../../convex-backend/convex/model/messages";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
@@ -100,7 +100,7 @@ function SearchResults({
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
 }): React.ReactNode {
   const { results, status, loadMore } = usePaginatedQuery(
-    api.search.textByKeywords,
+    api.model.messages.textByKeywords,
     { keywords: query, scope },
     { initialNumItems: 32 }
   );
@@ -200,8 +200,8 @@ export function SearchDialog({
     useState<TextByKeywordsParameters["scope"]>(initialScope);
   const [semantic, setSemantic] = useState(false);
 
-  const chats = useQuery(api.chats.list);
-  const clients = useQuery(api.clients.list);
+  const chats = useQuery(api.model.chats.list);
+  const clients = useQuery(api.model.clients.list);
 
   const chatsMap = new Map<string, Doc<"chats">>();
   for (const chat of chats ?? []) {

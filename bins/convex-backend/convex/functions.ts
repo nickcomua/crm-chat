@@ -1,70 +1,141 @@
 /**
- * Custom mutation/internalMutation with database triggers.
+ * Custom function builders with auth wrappers.
  *
- * Import `mutation` and `internalMutation` from this file (instead of
- * `_generated/server`) in any file that writes to trigger-enabled tables.
+ * Exports:
  *
- * Currently registers a trigger on the `humans` table to cancel orphaned
- * QR auth tasks when a user goes offline (online: true → false).
+ * | Builder            | Auth      | `ctx.caller` |
+ * |--------------------|-----------|--------------|
+ * | `mutation`         | none      | —            |
+ * | `internalMutation` | none      | —            |
+ * | `humanMutation`    | human     | ✓            |
+ * | `workerMutation`   | worker    | ✓            |
+ * | `humanQuery`       | human     | ✓            |
+ * | `workerQuery`      | worker    | ✓            |
+ *
+ * Use the bare `mutation`/`internalMutation` only for unauthenticated or
+ * internal endpoints (e.g. `presence.disconnect`, scheduled mutations).
+ * For everything else, prefer the typed auth builders — they validate the
+ * caller and inject `ctx.caller: UserIdentity` automatically.
  */
 
+import type { UserIdentity } from "convex/server";
 import {
-  customCtx,
   customMutation,
+  customQuery,
 } from "convex-helpers/server/customFunctions";
-import { Triggers } from "convex-helpers/server/triggers";
-import type { DataModel } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   internalMutation as rawInternalMutation,
   mutation as rawMutation,
+  query as rawQuery,
 } from "./_generated/server";
 
-const triggers = new Triggers<DataModel>();
+// =============================================================================
+// Auth helpers
+// =============================================================================
 
-/**
- * When a human goes offline, cancel all their active QR auth tasks.
- *
- * This fires atomically inside the same mutation that sets `online: false`
- * (either our disconnect wrapper or the heartbeat timeout path).
- * No cron needed — the presence component's heartbeat timeout drives the
- * disconnect, which updates `humans.online`, which fires this trigger.
- */
-// TODO crop trigers and move this directly to @presence.ts
-triggers.register("humans", async (ctx, change) => {
-  if (change.operation === "delete") {
-    return;
+/** Extract and validate the caller's identity. Throws if not authenticated. */
+async function requireAuth(ctx: QueryCtx | MutationCtx): Promise<UserIdentity> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("Authentication required");
   }
-  if (change.operation === "insert") {
-    return;
+  return identity;
+}
+
+/** Check if a caller is a worker (Clerk M2M JWT with "mch_" subject prefix). */
+function isWorkerCaller(caller: UserIdentity): boolean {
+  // Convex tokenIdentifier = "{issuer}|{subject}"
+  // Clerk M2M tokens have subject "mch_*", human tokens have "user_*"
+  return caller.tokenIdentifier.includes("|mch_");
+}
+
+/** Require the caller to be a human (Clerk-authenticated). */
+async function requireHuman(
+  ctx: QueryCtx | MutationCtx
+): Promise<UserIdentity> {
+  const caller = await requireAuth(ctx);
+  if (isWorkerCaller(caller)) {
+    throw new Error("Unauthorized: this action is for human users only");
   }
+  return caller;
+}
 
-  const { oldDoc, newDoc } = change;
-  if (oldDoc.online && !newDoc.online) {
-    const { userId } = newDoc;
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
-
-    for (const task of tasks) {
-      if (task.task.type !== "QrAuth") {
-        continue;
-      }
-      if (
-        task.status !== "Pending" &&
-        task.status !== "Dispatched" &&
-        task.status !== "Running"
-      ) {
-        continue;
-      }
-
-      await ctx.db.patch(task._id, { status: "Cancelled" });
-    }
+/** Require the caller to be a worker (custom JWT). */
+async function requireWorker(
+  ctx: QueryCtx | MutationCtx
+): Promise<UserIdentity> {
+  const caller = await requireAuth(ctx);
+  if (!isWorkerCaller(caller)) {
+    throw new Error("Unauthorized: only workers can perform this action");
   }
+  return caller;
+}
+
+/** Insert an error notification for a user. */
+export async function sendError(
+  ctx: MutationCtx,
+  userId: string,
+  message: string
+): Promise<void> {
+  await ctx.db.insert("notifications", {
+    userId,
+    severity: "Error" as const,
+    message,
+    dismissed: false,
+  });
+}
+
+// =============================================================================
+// Base builders (no auth)
+// =============================================================================
+
+/** Mutation. Use for unauthenticated endpoints (e.g. presence.disconnect). */
+export const mutation = rawMutation;
+
+/** Internal mutation. Use for scheduled/internal functions. */
+export const internalMutation = rawInternalMutation;
+
+// =============================================================================
+// Auth-layered mutation builders (auth + ctx.caller)
+// =============================================================================
+
+/** Mutation requiring a human caller. Injects `ctx.caller`. */
+export const humanMutation = customMutation(mutation, {
+  args: {},
+  input: async (ctx) => {
+    const caller = await requireHuman(ctx);
+    return { ctx: { caller }, args: {} };
+  },
 });
 
-export const mutation = customMutation(rawMutation, customCtx(triggers.wrapDB));
-export const internalMutation = customMutation(
-  rawInternalMutation,
-  customCtx(triggers.wrapDB)
-);
+/** Mutation requiring a worker caller. Injects `ctx.caller`. */
+export const workerMutation = customMutation(mutation, {
+  args: {},
+  input: async (ctx) => {
+    const caller = await requireWorker(ctx);
+    return { ctx: { caller }, args: {} };
+  },
+});
+
+// =============================================================================
+// Auth-layered query builders (auth + ctx.caller)
+// =============================================================================
+
+/** Query requiring a human caller. Injects `ctx.caller`. */
+export const humanQuery = customQuery(rawQuery, {
+  args: {},
+  input: async (ctx) => {
+    const caller = await requireHuman(ctx);
+    return { ctx: { caller }, args: {} };
+  },
+});
+
+/** Query requiring a worker caller. Injects `ctx.caller`. */
+export const workerQuery = customQuery(rawQuery, {
+  args: {},
+  input: async (ctx) => {
+    const caller = await requireWorker(ctx);
+    return { ctx: { caller }, args: {} };
+  },
+});

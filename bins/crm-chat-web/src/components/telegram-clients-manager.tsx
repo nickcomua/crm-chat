@@ -71,8 +71,8 @@ function getStatusDisplay(client: ClientDoc): {
 }
 
 export function TelegramClientsManager(): React.ReactNode {
-  const clients = useQuery(api.clients.list) as ClientDoc[] | undefined;
-  const deleteClient = useMutation(api.clients.deleteClient);
+  const clients = useQuery(api.model.clients.list) as ClientDoc[] | undefined;
+  const deleteClient = useMutation(api.model.clients.deleteClient);
   const [showAddDialog, setShowAddDialog] = useState(false);
 
   if (clients === undefined) {

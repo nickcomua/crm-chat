@@ -6,20 +6,14 @@
  * NEVER import these in production code.
  */
 import { v } from "convex/values";
-import { query } from "./_generated/server";
-import { mutation } from "./functions";
-import { requireWorker } from "./helpers/auth";
-import {
-  chatType,
-  forwardedFromValidator,
-  mediaKind,
-  mediaStatus,
-  messageSeverity,
-  reactionValidator,
-} from "./schema";
+import { workerMutation, workerQuery } from "./functions";
+import { mediaKind, mediaStatus } from "./helpers/validators";
+import { chatType } from "./model/chats";
+import { forwardedFromValidator, reactionValidator } from "./model/messages";
+import { messageSeverity } from "./model/notifications";
 
 /** Insert a notification directly (no internal trigger needed). */
-export const seedNotification = mutation({
+export const seedNotification = workerMutation({
   args: {
     userId: v.string(),
     severity: messageSeverity,
@@ -27,7 +21,6 @@ export const seedNotification = mutation({
   },
   returns: v.id("notifications"),
   handler: async (ctx, args) => {
-    await requireWorker(ctx);
     return await ctx.db.insert("notifications", {
       ...args,
       dismissed: false,
@@ -36,7 +29,7 @@ export const seedNotification = mutation({
 });
 
 /** Upsert a chat. Robot-accessible version of chats.upsert for test seeding. */
-export const seedChat = mutation({
+export const seedChat = workerMutation({
   args: {
     chatId: v.string(),
     userId: v.string(),
@@ -48,7 +41,6 @@ export const seedChat = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWorker(ctx);
     const existing = await ctx.db
       .query("chats")
       .withIndex("by_chatId", (q) => q.eq("chatId", args.chatId))
@@ -72,7 +64,7 @@ export const seedChat = mutation({
 });
 
 /** Insert a media record at any status, bypassing task validation. */
-export const seedMediaRecord = mutation({
+export const seedMediaRecord = workerMutation({
   args: {
     telegramFileId: v.string(),
     userId: v.string(),
@@ -89,13 +81,12 @@ export const seedMediaRecord = mutation({
   },
   returns: v.id("media"),
   handler: async (ctx, args) => {
-    await requireWorker(ctx);
     return await ctx.db.insert("media", args);
   },
 });
 
 /** Insert a message with optional reply/forward/reaction fields. */
-export const seedMessage = mutation({
+export const seedMessage = workerMutation({
   args: {
     messageId: v.string(),
     externalId: v.string(),
@@ -116,8 +107,6 @@ export const seedMessage = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireWorker(ctx);
-
     const existing = await ctx.db
       .query("messages")
       .withIndex("by_messageId", (q) => q.eq("messageId", args.messageId))
@@ -133,11 +122,10 @@ export const seedMessage = mutation({
 });
 
 /** Delete a single client by ID. Robot-accessible version of clients.deleteClient. */
-export const deleteClient = mutation({
+export const deleteClient = workerMutation({
   args: { clientId: v.id("clients") },
   returns: v.null(),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
     const client = await ctx.db.get(clientId);
     if (!client) {
       return null;
@@ -152,15 +140,13 @@ export const deleteClient = mutation({
       await ctx.db.delete(auth._id);
     }
 
-    // Cancel worker tasks for this client
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_userId", (q) => q.eq("userId", client.userId))
+    // Cancel QR auth sessions for this client
+    const qrAuths = await ctx.db
+      .query("qrAuths")
+      .withIndex("by_clientId", (q) => q.eq("clientId", clientId))
       .collect();
-    for (const t of tasks) {
-      if ("clientId" in t.task && t.task.clientId === clientId) {
-        await ctx.db.delete(t._id);
-      }
+    for (const auth of qrAuths) {
+      await ctx.db.delete(auth._id);
     }
 
     // Delete chats for this client
@@ -182,10 +168,9 @@ export const deleteClient = mutation({
 // =============================================================================
 
 /** List messages by chatId (no pagination, up to 200). Robot-accessible. */
-export const queryMessages = query({
+export const queryMessages = workerQuery({
   args: { chatId: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { chatId, limit }) => {
-    await requireWorker(ctx);
     return await ctx.db
       .query("messages")
       .withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
@@ -195,10 +180,9 @@ export const queryMessages = query({
 });
 
 /** Get last message per chat. Robot-accessible version of messages.getLastPerChat. */
-export const queryLastPerChat = query({
+export const queryLastPerChat = workerQuery({
   args: { chatIds: v.array(v.string()) },
   handler: async (ctx, { chatIds }) => {
-    await requireWorker(ctx);
     const results: Array<{
       chatId: string;
       text?: string;
@@ -225,10 +209,9 @@ export const queryLastPerChat = query({
 });
 
 /** List chats for a user. Robot-accessible version of chats.list. */
-export const queryChats = query({
+export const queryChats = workerQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    await requireWorker(ctx);
     return await ctx.db
       .query("chats")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -237,10 +220,9 @@ export const queryChats = query({
 });
 
 /** Count media records by status for a user. Robot-accessible. */
-export const queryMediaCountByStatus = query({
+export const queryMediaCountByStatus = workerQuery({
   args: { userId: v.string(), statuses: v.array(mediaStatus) },
   handler: async (ctx, { userId, statuses }) => {
-    await requireWorker(ctx);
     const results: Record<string, number> = {};
     for (const status of statuses) {
       const records = await ctx.db
@@ -256,10 +238,9 @@ export const queryMediaCountByStatus = query({
 });
 
 /** List media by status for a user. Robot-accessible. */
-export const queryMediaByStatus = query({
+export const queryMediaByStatus = workerQuery({
   args: { userId: v.string(), statuses: v.array(mediaStatus) },
   handler: async (ctx, { userId, statuses }) => {
-    await requireWorker(ctx);
     const all = [];
     for (const status of statuses) {
       const records = await ctx.db
@@ -275,11 +256,10 @@ export const queryMediaByStatus = query({
 });
 
 /** Retry a failed media download. Robot-accessible (no task enqueue). */
-export const retryDownload = mutation({
+export const retryDownload = workerMutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
   handler: async (ctx, { telegramFileId }) => {
-    await requireWorker(ctx);
     const existing = await ctx.db
       .query("media")
       .withIndex("by_telegramFileId", (q) =>
@@ -299,11 +279,10 @@ export const retryDownload = mutation({
 });
 
 /** Cancel a pending media download. Robot-accessible. */
-export const cancelDownload = mutation({
+export const cancelDownload = workerMutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
   handler: async (ctx, { telegramFileId }) => {
-    await requireWorker(ctx);
     const existing = await ctx.db
       .query("media")
       .withIndex("by_telegramFileId", (q) =>
@@ -326,12 +305,10 @@ export const cancelDownload = mutation({
 });
 
 /** Delete all data for a user. For test cleanup / empty-state tests. */
-export const deleteAllForUser = mutation({
+export const deleteAllForUser = workerMutation({
   args: { userId: v.string() },
   returns: v.null(),
   handler: async (ctx, { userId }) => {
-    await requireWorker(ctx);
-
     // Delete notifications
     const notifications = await ctx.db
       .query("notifications")
@@ -359,13 +336,13 @@ export const deleteAllForUser = mutation({
       await ctx.db.delete(m._id);
     }
 
-    // Delete worker tasks
-    const tasks = await ctx.db
-      .query("workerTasks")
+    // Delete QR auth sessions
+    const qrAuths = await ctx.db
+      .query("qrAuths")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect();
-    for (const t of tasks) {
-      await ctx.db.delete(t._id);
+    for (const qa of qrAuths) {
+      await ctx.db.delete(qa._id);
     }
 
     // Delete chats
@@ -400,7 +377,7 @@ export const deleteAllForUser = mutation({
 });
 
 /** Full-text search messages via Convex search index. Robot-accessible for E2E tests. */
-export const searchMessages = query({
+export const searchMessages = workerQuery({
   args: {
     searchText: v.string(),
     userId: v.string(),
@@ -408,7 +385,6 @@ export const searchMessages = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, { searchText, userId, chatId, limit }) => {
-    await requireWorker(ctx);
     const take = Math.min(limit ?? 20, 100);
 
     const results = await ctx.db
@@ -428,28 +404,6 @@ export const searchMessages = query({
       text: msg.text,
       senderId: msg.senderId,
       timestamp: msg.timestamp,
-    }));
-  },
-});
-
-/** Query all worker tasks for a user (any status). For E2E assertions. */
-export const queryWorkerTasks = query({
-  args: { userId: v.string() },
-  returns: v.array(
-    v.object({
-      status: v.string(),
-      taskType: v.string(),
-    })
-  ),
-  handler: async (ctx, { userId }) => {
-    await requireWorker(ctx);
-    const tasks = await ctx.db
-      .query("workerTasks")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .collect();
-    return tasks.map((t) => ({
-      status: t.status,
-      taskType: t.task.type,
     }));
   },
 });

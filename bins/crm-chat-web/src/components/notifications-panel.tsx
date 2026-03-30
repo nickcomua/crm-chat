@@ -34,8 +34,8 @@ function getSeverityAccent(severity: Severity): string {
 }
 
 export function NotificationsPanel(): React.ReactNode {
-  const notifications = useQuery(api.notifications.list);
-  const dismiss = useMutation(api.notifications.dismiss);
+  const notifications = useQuery(api.model.notifications.list);
+  const dismiss = useMutation(api.model.notifications.dismiss);
 
   if (notifications === undefined) {
     return (

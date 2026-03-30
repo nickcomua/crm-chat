@@ -36,11 +36,14 @@ test.describe("Scroll to Message", () => {
     const robot = await getRobotClient(workerCfg);
 
     // Create test client.
-    clientId = (await robot.mutation(api.clients.workerRegisterConnected, {
-      userId,
-      telegramId: `telegram:scroll-test-${Date.now()}`,
-      kind: "Telegram",
-    })) as Id<"clients">;
+    clientId = (await robot.mutation(
+      api.model.clients.workerRegisterConnected,
+      {
+        userId,
+        telegramId: `telegram:scroll-test-${Date.now()}`,
+        kind: "Telegram",
+      }
+    )) as Id<"clients">;
 
     // Create test chat.
     chatId = `${clientId}:scroll-chat`;

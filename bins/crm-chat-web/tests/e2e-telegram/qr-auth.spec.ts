@@ -27,18 +27,18 @@ async function expectNoQrAuthTasks(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const tasks = (await robot.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{ task: { type: string }; status: string }>;
+    const items = (await robot.query(
+      api.model.qrAuth.pendingWork,
+      {}
+    )) as Array<{ service: string }>;
 
-    const qrTasks = tasks.filter((t) => t.task.type === "QrAuth");
-    if (qrTasks.length === 0) {
+    if (items.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  throw new Error(`QrAuth tasks still exist after ${timeoutMs}ms`);
+  throw new Error(`QrAuth work items still exist after ${timeoutMs}ms`);
 }
 
 // Run tests sequentially — they share a single Clerk test account
@@ -83,7 +83,7 @@ test.describe("QR Code Authentication", () => {
 
     // Verify backend cleanup: no QrAuth tasks should remain
     // The cancel mutation fires immediately on unmount, and the worker's
-    // cancel_watcher detects it and completes the task within seconds
+    // domain watcher detects the terminal step and the workflow exits
     await expectNoQrAuthTasks();
   });
 

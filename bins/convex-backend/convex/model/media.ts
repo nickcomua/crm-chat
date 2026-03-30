@@ -1,32 +1,67 @@
+import { defineTable } from "convex/server";
 import { v } from "convex/values";
-import { query } from "./_generated/server";
-import { mutation } from "./functions";
 import {
-  requireAuth,
-  requireHuman,
-  requireOwner,
-  requireWorker,
-} from "./helpers/auth";
-import { enqueueTask } from "./helpers/tasks";
-import { mediaKind, mediaStatus } from "./schema";
+  humanMutation,
+  humanQuery,
+  workerMutation,
+  workerQuery,
+} from "../functions";
+import { mediaKind, mediaStatus, workItem } from "../helpers/validators";
+
+// =============================================================================
+// Table-specific validators
+// =============================================================================
+
+const mediaFields = v.object({
+  telegramFileId: v.string(),
+  userId: v.string(),
+  clientId: v.id("clients"),
+  chatId: v.string(),
+  messageId: v.string(),
+  status: mediaStatus,
+  storageId: v.optional(v.id("_storage")),
+  kind: mediaKind,
+  mimeType: v.optional(v.string()),
+  fileName: v.optional(v.string()),
+  fileSize: v.optional(v.number()),
+  bytesDownloaded: v.optional(v.number()),
+  downloadedAt: v.optional(v.number()),
+  width: v.optional(v.number()),
+  height: v.optional(v.number()),
+  duration: v.optional(v.number()),
+  error: v.optional(v.string()),
+});
+
+export const mediaDoc = mediaFields.extend({
+  _id: v.id("media"),
+  _creationTime: v.number(),
+});
+
+export const mediaTable = defineTable(mediaFields)
+  .index("by_telegramFileId", ["telegramFileId"])
+  .index("by_messageId", ["messageId"])
+  .index("by_clientId_status", ["clientId", "status"])
+  .index("by_chatId", ["chatId"])
+  .index("by_userId_status", ["userId", "status"])
+  .index("by_userId_downloadedAt", ["userId", "downloadedAt"])
+  .index("by_userId_status_downloadedAt", ["userId", "status", "downloadedAt"]);
 
 /** Generate a short-lived upload URL for Convex file storage. */
-export const generateUploadUrl = mutation({
+export const generateUploadUrl = workerMutation({
   args: {},
   returns: v.string(),
   handler: async (ctx) => {
-    await requireAuth(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
 
-/** Reset a failed media record back to pending so the worker retries it. */
-export const retryDownload = mutation({
+/** Reset a failed media record back to pending so the worker retries it.
+ *  Domain-driven: setting status to "Pending" causes the reconciler to
+ *  dispatch a MediaDownloader automatically. */
+export const retryDownload = humanMutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
   handler: async (ctx, { telegramFileId }) => {
-    await requireHuman(ctx);
-
     const existing = await ctx.db
       .query("media")
       .withIndex("by_telegramFileId", (q) =>
@@ -44,32 +79,15 @@ export const retryDownload = mutation({
       bytesDownloaded: undefined,
     });
 
-    const client = await ctx.db.get(existing.clientId);
-    if (client) {
-      await enqueueTask(ctx, {
-        type: "MediaDownloader",
-        telegramFileId: existing.telegramFileId,
-        userId: existing.userId,
-        clientId: existing.clientId,
-        telegramId: client.telegramId,
-        chatId: existing.chatId,
-        kind: existing.kind,
-        mimeType: existing.mimeType,
-        fileSize: existing.fileSize,
-      });
-    }
-
     return null;
   },
 });
 
 /** Cancel a pending or downloading media record (human-callable). */
-export const cancelDownload = mutation({
+export const cancelDownload = humanMutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
   handler: async (ctx, { telegramFileId }) => {
-    const caller = await requireHuman(ctx);
-
     const existing = await ctx.db
       .query("media")
       .withIndex("by_telegramFileId", (q) =>
@@ -80,7 +98,9 @@ export const cancelDownload = mutation({
     if (!existing) {
       return null;
     }
-    requireOwner(caller.id, existing.userId);
+    if (existing.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
     if (existing.status !== "Pending" && existing.status !== "Downloading") {
       return null;
@@ -95,13 +115,13 @@ export const cancelDownload = mutation({
   },
 });
 
-/** Request download for a skipped media record (human-callable). */
-export const requestDownload = mutation({
+/** Request download for a skipped media record (human-callable).
+ *  Domain-driven: setting status to "Pending" causes the reconciler to
+ *  dispatch a MediaDownloader automatically. */
+export const requestDownload = humanMutation({
   args: { telegramFileId: v.string() },
   returns: v.null(),
   handler: async (ctx, { telegramFileId }) => {
-    const caller = await requireHuman(ctx);
-
     const existing = await ctx.db
       .query("media")
       .withIndex("by_telegramFileId", (q) =>
@@ -112,7 +132,9 @@ export const requestDownload = mutation({
     if (!existing) {
       return null;
     }
-    requireOwner(caller.id, existing.userId);
+    if (existing.userId !== ctx.caller.tokenIdentifier) {
+      throw new Error("Unauthorized: you do not own this resource");
+    }
 
     if (existing.status !== "Skipped") {
       return null;
@@ -122,27 +144,12 @@ export const requestDownload = mutation({
       status: "Pending" as const,
     });
 
-    const client = await ctx.db.get(existing.clientId);
-    if (client) {
-      await enqueueTask(ctx, {
-        type: "MediaDownloader",
-        telegramFileId: existing.telegramFileId,
-        userId: existing.userId,
-        clientId: existing.clientId,
-        telegramId: client.telegramId,
-        chatId: existing.chatId,
-        kind: existing.kind,
-        mimeType: existing.mimeType,
-        fileSize: existing.fileSize,
-      });
-    }
-
     return null;
   },
 });
 
 /** Get media records for a batch of message IDs, including storage URLs. */
-export const getForMessages = query({
+export const getForMessages = humanQuery({
   args: { messageIds: v.array(v.string()) },
   returns: v.array(
     v.object({
@@ -160,8 +167,6 @@ export const getForMessages = query({
     })
   ),
   handler: async (ctx, { messageIds }) => {
-    await requireHuman(ctx);
-
     const results = [];
     for (const messageId of messageIds) {
       const media = await ctx.db
@@ -199,7 +204,7 @@ export const getForMessages = query({
 });
 
 /** Get all media records for a chat in a single indexed scan. */
-export const getForChat = query({
+export const getForChat = humanQuery({
   args: { chatId: v.string() },
   returns: v.array(
     v.object({
@@ -218,8 +223,6 @@ export const getForChat = query({
     })
   ),
   handler: async (ctx, { chatId }) => {
-    await requireHuman(ctx);
-
     const allMedia = await ctx.db
       .query("media")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
@@ -254,7 +257,7 @@ export const getForChat = query({
 });
 
 /** List pending + downloading media records for a client. Worker-only. */
-export const listPendingForClient = query({
+export const listPendingForClient = workerQuery({
   args: { clientId: v.id("clients") },
   returns: v.array(
     v.object({
@@ -266,8 +269,6 @@ export const listPendingForClient = query({
     })
   ),
   handler: async (ctx, { clientId }) => {
-    await requireWorker(ctx);
-
     const downloading = await ctx.db
       .query("media")
       .withIndex("by_clientId_status", (q) =>
@@ -293,7 +294,7 @@ export const listPendingForClient = query({
 });
 
 /** List media records by status for the download manager UI. */
-export const listByStatus = query({
+export const listByStatus = humanQuery({
   args: { statuses: v.array(mediaStatus) },
   returns: v.array(
     v.object({
@@ -313,8 +314,6 @@ export const listByStatus = query({
     })
   ),
   handler: async (ctx, { statuses }) => {
-    const caller = await requireHuman(ctx);
-
     const chatNameCache = new Map<string, string | undefined>();
     async function getChatName(chatId: string): Promise<string | undefined> {
       if (chatNameCache.has(chatId)) {
@@ -345,14 +344,16 @@ export const listByStatus = query({
           ? await ctx.db
               .query("media")
               .withIndex("by_userId_status_downloadedAt", (q) =>
-                q.eq("userId", caller.id).eq("status", "Stored")
+                q
+                  .eq("userId", ctx.caller.tokenIdentifier)
+                  .eq("status", "Stored")
               )
               .order("desc")
               .take(limit)
           : await ctx.db
               .query("media")
               .withIndex("by_userId_status", (q) =>
-                q.eq("userId", caller.id).eq("status", status)
+                q.eq("userId", ctx.caller.tokenIdentifier).eq("status", status)
               )
               .order(
                 status === "Pending" || status === "Downloading"
@@ -390,7 +391,7 @@ export const listByStatus = query({
 });
 
 /** Return media counts per status for a specific chat (for progress UI). */
-export const countByStatusForChat = query({
+export const countByStatusForChat = humanQuery({
   args: { chatId: v.string() },
   returns: v.object({
     Pending: v.number(),
@@ -401,8 +402,6 @@ export const countByStatusForChat = query({
     total: v.number(),
   }),
   handler: async (ctx, { chatId }) => {
-    await requireHuman(ctx);
-
     const allMedia = await ctx.db
       .query("media")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
@@ -425,21 +424,249 @@ export const countByStatusForChat = query({
 });
 
 /** Return the count of media records for given statuses (for the UI badge). */
-export const countByStatus = query({
+export const countByStatus = humanQuery({
   args: { statuses: v.array(mediaStatus) },
   returns: v.array(v.object({ status: mediaStatus, count: v.number() })),
   handler: async (ctx, { statuses }) => {
-    const caller = await requireHuman(ctx);
     const results = [];
     for (const status of statuses) {
       const records = await ctx.db
         .query("media")
         .withIndex("by_userId_status", (q) =>
-          q.eq("userId", caller.id).eq("status", status)
+          q.eq("userId", ctx.caller.tokenIdentifier).eq("status", status)
         )
         .collect();
       results.push({ status, count: records.length });
     }
     return results;
+  },
+});
+
+// =============================================================================
+// Cancel-watcher query (for domain-driven dispatch)
+// =============================================================================
+
+/**
+ * Lightweight status query for domain cancel-watcher.
+ * Rust handler subscribes to this and cancels when status becomes "Skipped".
+ */
+export const getStatus = workerQuery({
+  args: { mediaId: v.id("media") },
+  returns: v.union(mediaStatus, v.null()),
+  handler: async (ctx, { mediaId }) => {
+    const media = await ctx.db.get(mediaId);
+    return media?.status ?? null;
+  },
+});
+
+/** Get a media record by _id for the download handler. Worker-only. */
+export const getForDownload = workerQuery({
+  args: { mediaId: v.id("media") },
+  returns: v.union(mediaDoc, v.null()),
+  handler: async (ctx, { mediaId }) => {
+    return await ctx.db.get(mediaId);
+  },
+});
+
+// =============================================================================
+// Worker domain operations (moved from domainOps.ts)
+// =============================================================================
+
+/** Create a pending media record. Worker-only.
+ *  Domain-driven: no task enqueue — the reconciler dispatches MediaDownloader
+ *  when it sees media records with status "Pending". */
+export const workerCreatePendingMedia = workerMutation({
+  args: {
+    telegramFileId: v.string(),
+    userId: v.string(),
+    clientId: v.id("clients"),
+    chatId: v.string(),
+    messageId: v.string(),
+    kind: mediaKind,
+    mimeType: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    fileSize: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    duration: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_telegramFileId", (q) =>
+        q.eq("telegramFileId", args.telegramFileId)
+      )
+      .unique();
+
+    if (existing) {
+      return null;
+    }
+
+    await ctx.db.insert("media", {
+      ...args,
+      status: "Pending" as const,
+    });
+
+    return null;
+  },
+});
+
+/** Transition a media record to "Downloading". Worker-only. */
+export const workerStartMediaDownload = workerMutation({
+  args: {
+    telegramFileId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { telegramFileId }) => {
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_telegramFileId", (q) =>
+        q.eq("telegramFileId", telegramFileId)
+      )
+      .unique();
+
+    if (!existing || existing.status !== "Pending") {
+      return null;
+    }
+
+    await ctx.db.patch(existing._id, {
+      status: "Downloading" as const,
+      bytesDownloaded: 0,
+    });
+    return null;
+  },
+});
+
+/** Update download progress. Worker-only. */
+export const workerUpdateMediaProgress = workerMutation({
+  args: {
+    telegramFileId: v.string(),
+    bytesDownloaded: v.number(),
+    fileSize: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { telegramFileId, bytesDownloaded, fileSize }) => {
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_telegramFileId", (q) =>
+        q.eq("telegramFileId", telegramFileId)
+      )
+      .unique();
+
+    if (!existing || existing.status !== "Downloading") {
+      return null;
+    }
+
+    const patch: Record<string, number> = { bytesDownloaded };
+    if (fileSize !== undefined && fileSize > 0) {
+      patch.fileSize = fileSize;
+    }
+    await ctx.db.patch(existing._id, patch);
+    return null;
+  },
+});
+
+/** Store media file after successful upload. Worker-only. */
+export const workerStoreMedia = workerMutation({
+  args: {
+    telegramFileId: v.string(),
+    storageId: v.id("_storage"),
+    mimeType: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    fileSize: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    duration: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_telegramFileId", (q) =>
+        q.eq("telegramFileId", args.telegramFileId)
+      )
+      .unique();
+
+    if (!existing) {
+      await ctx.storage.delete(args.storageId);
+      return null;
+    }
+
+    if (existing.status !== "Downloading" && existing.status !== "Pending") {
+      await ctx.storage.delete(args.storageId);
+      return null;
+    }
+
+    const { telegramFileId: _, ...updates } = args;
+    await ctx.db.patch(existing._id, {
+      ...updates,
+      status: "Stored" as const,
+      downloadedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** Mark a media record as failed. Worker-only. */
+export const workerMarkMediaFailed = workerMutation({
+  args: {
+    telegramFileId: v.string(),
+    error: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { telegramFileId, error: errorMsg }) => {
+    const existing = await ctx.db
+      .query("media")
+      .withIndex("by_telegramFileId", (q) =>
+        q.eq("telegramFileId", telegramFileId)
+      )
+      .unique();
+
+    if (!existing) {
+      return null;
+    }
+
+    await ctx.db.patch(existing._id, {
+      status: "Failed" as const,
+      error: errorMsg,
+    });
+    return null;
+  },
+});
+
+// =============================================================================
+// Pending work (for reconciler dispatch)
+// =============================================================================
+
+/** Media records needing download, with optional concurrency limit. */
+export const pendingWork = workerQuery({
+  args: { maxDownloads: v.optional(v.number()) },
+  returns: v.array(workItem),
+  handler: async (ctx, { maxDownloads }) => {
+    const allPending = await ctx.db
+      .query("media")
+      .filter((q) => q.eq(q.field("status"), "Pending"))
+      .collect();
+
+    const limit = maxDownloads ?? 0;
+    if (limit > 0) {
+      const allDownloading = await ctx.db
+        .query("media")
+        .filter((q) => q.eq(q.field("status"), "Downloading"))
+        .collect();
+      const slots = Math.max(0, limit - allDownloading.length);
+      return allPending.slice(0, slots).map((m) => ({
+        service: "MediaDownloader",
+        key: m._id,
+        handler: "download",
+      }));
+    }
+
+    return allPending.map((m) => ({
+      service: "MediaDownloader",
+      key: m._id,
+      handler: "download",
+    }));
   },
 });

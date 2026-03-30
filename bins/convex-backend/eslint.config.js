@@ -33,7 +33,14 @@ export default tseslint.config(
             {
               group: ["*/_generated/server"],
               importNames: ["mutation", "internalMutation"],
-              message: "Use functions.ts for mutation",
+              message:
+                "Use functions.ts: mutation, humanMutation, workerMutation",
+            },
+            {
+              group: ["*/_generated/server"],
+              importNames: ["query"],
+              message:
+                "Use functions.ts: humanQuery, workerQuery. Raw query only allowed in functions.ts and presence.ts",
             },
           ],
         },
@@ -41,7 +48,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["convex/functions.ts"],
+    files: ["convex/functions.ts", "convex/model/presence.ts"],
     rules: {
       "no-restricted-imports": "off",
     },

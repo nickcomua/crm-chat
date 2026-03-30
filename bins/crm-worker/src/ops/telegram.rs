@@ -1,36 +1,33 @@
 //! Telegram operation wrappers and media helpers.
 
-use convex_backend::{
-    WorkerOpsCreatePendingMediaKind, WorkerOpsUpsertMessageMediaKind,
-    WorkerTasksTaskMediaDownloaderKind as MediaDownloadKind,
-};
+use convex_backend::{MediaWorkerCreatePendingMediaKind, MessagesWorkerUpsertMessageMediaKind};
 use messanger_interface::media::MediaKind;
 
-/// Convert a `MediaKind` to the generated `WorkerOpsUpsertMessageMediaKind`.
-pub fn to_upsert_media_kind(kind: MediaKind) -> WorkerOpsUpsertMessageMediaKind {
+/// Convert a `MediaKind` to the generated `MessagesWorkerUpsertMessageMediaKind`.
+pub fn to_upsert_media_kind(kind: MediaKind) -> MessagesWorkerUpsertMessageMediaKind {
     match kind {
-        MediaKind::Photo => WorkerOpsUpsertMessageMediaKind::Photo,
-        MediaKind::Video => WorkerOpsUpsertMessageMediaKind::Video,
-        MediaKind::VideoNote => WorkerOpsUpsertMessageMediaKind::VideoNote,
-        MediaKind::Audio => WorkerOpsUpsertMessageMediaKind::Audio,
-        MediaKind::Voice => WorkerOpsUpsertMessageMediaKind::Voice,
-        MediaKind::Sticker => WorkerOpsUpsertMessageMediaKind::Sticker,
-        MediaKind::Animation => WorkerOpsUpsertMessageMediaKind::Animation,
-        MediaKind::Document => WorkerOpsUpsertMessageMediaKind::Document,
+        MediaKind::Photo => MessagesWorkerUpsertMessageMediaKind::Photo,
+        MediaKind::Video => MessagesWorkerUpsertMessageMediaKind::Video,
+        MediaKind::VideoNote => MessagesWorkerUpsertMessageMediaKind::VideoNote,
+        MediaKind::Audio => MessagesWorkerUpsertMessageMediaKind::Audio,
+        MediaKind::Voice => MessagesWorkerUpsertMessageMediaKind::Voice,
+        MediaKind::Sticker => MessagesWorkerUpsertMessageMediaKind::Sticker,
+        MediaKind::Animation => MessagesWorkerUpsertMessageMediaKind::Animation,
+        MediaKind::Document => MessagesWorkerUpsertMessageMediaKind::Document,
     }
 }
 
-/// Convert a `MediaKind` to the generated `WorkerOpsCreatePendingMediaKind`.
-pub fn to_create_pending_kind(kind: MediaKind) -> WorkerOpsCreatePendingMediaKind {
+/// Convert a `MediaKind` to the generated `MediaWorkerCreatePendingMediaKind`.
+pub fn to_create_pending_kind(kind: MediaKind) -> MediaWorkerCreatePendingMediaKind {
     match kind {
-        MediaKind::Photo => WorkerOpsCreatePendingMediaKind::Photo,
-        MediaKind::Video => WorkerOpsCreatePendingMediaKind::Video,
-        MediaKind::VideoNote => WorkerOpsCreatePendingMediaKind::VideoNote,
-        MediaKind::Audio => WorkerOpsCreatePendingMediaKind::Audio,
-        MediaKind::Voice => WorkerOpsCreatePendingMediaKind::Voice,
-        MediaKind::Sticker => WorkerOpsCreatePendingMediaKind::Sticker,
-        MediaKind::Animation => WorkerOpsCreatePendingMediaKind::Animation,
-        MediaKind::Document => WorkerOpsCreatePendingMediaKind::Document,
+        MediaKind::Photo => MediaWorkerCreatePendingMediaKind::Photo,
+        MediaKind::Video => MediaWorkerCreatePendingMediaKind::Video,
+        MediaKind::VideoNote => MediaWorkerCreatePendingMediaKind::VideoNote,
+        MediaKind::Audio => MediaWorkerCreatePendingMediaKind::Audio,
+        MediaKind::Voice => MediaWorkerCreatePendingMediaKind::Voice,
+        MediaKind::Sticker => MediaWorkerCreatePendingMediaKind::Sticker,
+        MediaKind::Animation => MediaWorkerCreatePendingMediaKind::Animation,
+        MediaKind::Document => MediaWorkerCreatePendingMediaKind::Document,
     }
 }
 
@@ -46,21 +43,7 @@ pub fn default_mime_for_kind(kind: MediaKind) -> &'static str {
     }
 }
 
-/// Convert a generated `MediaDownloadKind` to its string name (for logging & MIME lookup).
-pub fn media_kind_to_str(kind: &MediaDownloadKind) -> &'static str {
-    match kind {
-        MediaDownloadKind::Photo => "Photo",
-        MediaDownloadKind::Video => "Video",
-        MediaDownloadKind::VideoNote => "VideoNote",
-        MediaDownloadKind::Audio => "Audio",
-        MediaDownloadKind::Voice => "Voice",
-        MediaDownloadKind::Sticker => "Sticker",
-        MediaDownloadKind::Animation => "Animation",
-        MediaDownloadKind::Document => "Document",
-    }
-}
-
-/// Map a media kind string (from the typed workerTask union) to its default MIME type.
+/// Map a media kind string to its default MIME type.
 pub fn default_mime_for_kind_str(kind: &str) -> &'static str {
     match kind {
         "Photo" => "image/jpeg",

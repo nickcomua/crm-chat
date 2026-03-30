@@ -65,7 +65,7 @@ test.describe("Client Deletion", () => {
 
     // 1. Worker discovers a session file and registers the client
     const clientId = (await robot.mutation(
-      api.clients.workerRegisterConnected,
+      api.model.clients.workerRegisterConnected,
       { userId, telegramId, kind: "Telegram" }
     )) as Id<"clients">;
 
@@ -73,7 +73,7 @@ test.describe("Client Deletion", () => {
     await robot.mutation(api.testHelpers.deleteClient, { clientId });
 
     // 3. Verify deletion succeeded
-    const afterDelete = await robot.query(api.clients.getForWorker, {
+    const afterDelete = await robot.query(api.model.clients.getForWorker, {
       clientId,
     });
     expect(afterDelete).toBeNull();
@@ -81,13 +81,13 @@ test.describe("Client Deletion", () => {
     // 4. Worker restarts — rediscovers the same .session file on disk
     //    and calls workerRegisterConnected again with the same telegramId
     const recreatedId = (await robot.mutation(
-      api.clients.workerRegisterConnected,
+      api.model.clients.workerRegisterConnected,
       { userId, telegramId, kind: "Telegram" }
     )) as Id<"clients">;
 
     // 5. The client should NOT exist — it was deleted by the user.
     //    Currently fails: workerRegisterConnected has no deletion awareness.
-    const ghost = await robot.query(api.clients.getForWorker, {
+    const ghost = await robot.query(api.model.clients.getForWorker, {
       clientId: recreatedId,
     });
     expect(ghost).toBeNull();

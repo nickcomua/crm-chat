@@ -1,42 +1,22 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use convex_typegen::{Configuration, generate};
 
+const SKIP_FILES: &[&str] = &["schema.ts", "auth.config.ts", "convex.config.ts", "env.ts"];
+
 fn main() {
-    println!("cargo:rerun-if-changed=convex/schema.ts");
+    // Watch the entire convex/ directory so adding/renaming files triggers a rebuild
+    println!("cargo:rerun-if-changed=convex");
 
-    // Collect function files (all .ts files except schema, auth.config, and _generated)
-    let function_paths: Vec<std::path::PathBuf> = std::fs::read_dir("convex")
-        .expect("convex/ directory must exist")
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            if name.ends_with(".ts")
-                && name != "schema.ts"
-                && name != "auth.config.ts"
-                && name != "convex.config.ts"
-                && name != "env.ts"
-                && !name.starts_with('_')
-            {
-                println!("cargo:rerun-if-changed=convex/{}", name);
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut function_paths: Vec<PathBuf> = Vec::new();
+    collect_function_files(Path::new("convex"), &mut function_paths);
 
-    // No helper stubs needed for the current project — the Bun plugin already
-    // redirects _generated/* and convex/* imports, and helpers/auth.ts +
-    // helpers/result.ts work naturally since their runtime imports are all
-    // covered by the mock modules.
     let helper_stubs = HashMap::new();
 
     let config = Configuration {
-        schema_path: std::path::PathBuf::from("convex/schema.ts"),
-        out_file: std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap())
-            .join("convex_types.rs"),
+        schema_path: PathBuf::from("convex/schema.ts"),
+        out_file: PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("convex_types.rs"),
         function_paths,
         helper_stubs,
     };
@@ -44,5 +24,32 @@ fn main() {
     match generate(config) {
         Ok(_) => {}
         Err(e) => panic!("convex-typegen failed: {}", e),
+    }
+}
+
+/// Recursively collect .ts function files, skipping _generated/, config files,
+/// and helper utilities that don't export Convex functions.
+fn collect_function_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("failed to read directory {}: {}", dir.display(), e));
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if path.is_dir() {
+            // Skip _generated/ and helpers/ (no Convex function exports)
+            if !name.starts_with('_') && name != "helpers" {
+                collect_function_files(&path, out);
+            }
+            continue;
+        }
+
+        if name.ends_with(".ts") && !name.starts_with('_') && !SKIP_FILES.contains(&name.as_str()) {
+            out.push(path);
+        }
     }
 }

@@ -11,7 +11,8 @@ use std::sync::Arc;
 use grammers_client::Client;
 use grammers_session::storages::SqliteSession;
 use grammers_session::updates::UpdatesLike;
-use tokio::sync::{mpsc, Mutex};
+use messanger_interface::{MessengerError, Update};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task::JoinHandle;
 
 // Re-export public types
@@ -26,7 +27,12 @@ pub struct TelegramClient {
     pub session: Arc<SqliteSession>,
     pub api_id: i32,
     pub api_hash: String,
-    pub updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
+    /// Raw grammers updates receiver — consumed once to start the background forwarder.
+    updates_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<UpdatesLike>>>>,
+    /// Broadcast sender for processed updates. `None` until the first `iter_updates` call
+    /// starts the background forwarder. Subsequent calls subscribe to this sender.
+    #[allow(clippy::type_complexity)]
+    updates_broadcast: Arc<Mutex<Option<broadcast::Sender<Result<Update, MessengerError>>>>>,
     #[allow(dead_code)]
     pub pool_runner_handle: JoinHandle<()>,
 }
@@ -84,6 +90,7 @@ impl TelegramClient {
             api_id,
             api_hash,
             updates_rx,
+            updates_broadcast: Arc::new(Mutex::new(None)),
             pool_runner_handle,
         })
     }

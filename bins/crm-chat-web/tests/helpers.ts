@@ -101,11 +101,14 @@ export async function seedTestClient(
 ): Promise<Id<"clients">> {
   const client = robot;
 
-  const clientId = await client.mutation(api.clients.workerRegisterConnected, {
-    userId,
-    telegramId,
-    kind: "Telegram",
-  });
+  const clientId = await client.mutation(
+    api.model.clients.workerRegisterConnected,
+    {
+      userId,
+      telegramId,
+      kind: "Telegram",
+    }
+  );
 
   // Create some test chats
   await client.mutation(api.testHelpers.seedChat, {
@@ -329,7 +332,7 @@ export async function pollUntil(
 }
 
 /**
- * Wait for pending ChatScanner tasks to drain so the worker has capacity
+ * Wait for pending ChatScanner work items to drain so the worker has capacity
  * for QrAuth. tg-scan tests enqueue scanners that may still be pending
  * when tg-qr-auth starts — if the worker is busy dispatching those,
  * QrAuth token generation can exceed the timeout.
@@ -342,12 +345,12 @@ export async function waitForPendingScanners(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const tasks = (await client.query(api.workerTasks.pendingForWorker, {
-      maxMediaWorkflows: 0,
-    })) as Array<{ task: { type: string } }>;
+    const items = (await client.query(
+      api.model.chats.pendingWork,
+      {}
+    )) as Array<{ service: string }>;
 
-    const scanners = tasks.filter((t) => t.task.type === "ChatScanner");
-    if (scanners.length === 0) {
+    if (items.length === 0) {
       return;
     }
     await new Promise((r) => setTimeout(r, 1000));
