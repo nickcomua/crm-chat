@@ -185,7 +185,7 @@ sequenceDiagram
     UI->>C: phoneAuth.start(phone)
     Note over C: Create Client + PhoneAuth<br/>step=SendingCode
 
-    W->>C: Subscribe to phoneAuth.pendingWork
+    W->>C: Subscribe to phoneAuths.pendingWork
     C-->>W: PhoneAuth with step=SendingCode
 
     W->>TG: Send login code to phone
@@ -237,7 +237,7 @@ sequenceDiagram
     UI->>C: qrAuth.start()
     Note over C: Create Client + QrAuth<br/>step=Pending
 
-    W->>C: Subscribe to qrAuth.pendingWork
+    W->>C: Subscribe to qrAuths.pendingWork
     C-->>W: QrAuth with step=Pending
 
     W->>TG: Request QR login token

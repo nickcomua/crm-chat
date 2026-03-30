@@ -44,9 +44,9 @@ Docker Compose starts five services:
 |---------|-------|-------|---------|
 | **backend** | `ghcr.io/get-convex/convex-backend` | 3210 (API), 3211 (site proxy) | Self-hosted Convex database + functions |
 | **dashboard** | `ghcr.io/get-convex/convex-dashboard` | 6791 | Convex admin dashboard |
-| **restate** | `docker.restate.dev/restatedev/restate` | 8080 (ingress), 9070 (admin) | Durable workflow orchestration engine |
+| **restate** | `docker.restate.dev/restatedev/restate` | 8080 (ingress), 9070 (admin), 9071 (metrics) | Durable workflow orchestration engine |
 | **crm-worker** | `nick395/crm-worker` | — | Rust Telegram client + sync service |
-| **web** | `nick395/crm-chat-web` | — | React frontend |
+| **web** | `nick395/crm-chat-web` | 3000 (internal) | React frontend |
 
 ### Service Dependencies
 
@@ -135,7 +135,9 @@ Docker Compose mounts three persistent volumes under `./target/`:
 
 ## Reverse Proxy Setup
 
-For production, put a reverse proxy (nginx, Caddy, Traefik) in front of the services. Example nginx config:
+For production, put a reverse proxy (nginx, Caddy, Traefik) in front of the services. The `web` service listens on port 3000 internally but does not expose a host port by default — either add a `ports` mapping in your Compose override or place the reverse proxy on the same Docker network.
+
+Example nginx config (running on the Docker network):
 
 ```nginx
 # Frontend
@@ -144,7 +146,7 @@ server {
     server_name crm.example.com;
 
     location / {
-        proxy_pass http://localhost:3000;  # web service port
+        proxy_pass http://web:3000;  # Docker service name, internal port
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }

@@ -34,7 +34,10 @@ docker compose up -d
 docker compose exec backend ./generate_admin_key.sh
 # Copy the key into .env as CONVEX_SELF_HOSTED_ADMIN_KEY
 
-cd bins/convex-backend && bun install && bun x convex deploy
+cd bins/convex-backend && bun install
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210 \
+CONVEX_SELF_HOSTED_ADMIN_KEY=<key-from-above> \
+bun x convex deploy
 ```
 
 ## Documentation

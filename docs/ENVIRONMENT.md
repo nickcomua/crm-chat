@@ -60,7 +60,7 @@ All `VITE_` variables are compiled into the frontend bundle at build time. In pr
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `VITE_CONVEX_URL` | Yes | — | Convex backend URL (e.g., `http://localhost:3210`) |
+| `VITE_CONVEX_URL` | Yes | — | Convex backend URL (e.g., `http://localhost:3210`). Set in `.env` — do not duplicate across `.env` and `.env.local`. |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | — | Clerk publishable key |
 | `VITE_ES_PROXY_URL` | No | `http://localhost:3001` | Elasticsearch proxy URL for semantic search |
 | `VITE_SENTRY_DSN` | No | — | Sentry DSN for frontend error tracking |
@@ -103,8 +103,8 @@ Elasticsearch powers optional semantic search. Set `ES_ENABLED=true` to activate
 | Variable | Required | Default | Used By | Description |
 |----------|----------|---------|---------|-------------|
 | `SENTRY_URL` | No | — | crm-worker | Sentry DSN for backend error tracking |
-| `VITE_SENTRY_DSN` | No | — | web frontend | Sentry DSN for frontend error tracking |
-| `VITE_SENTRY_ENVIRONMENT` | No | — | web frontend | Environment tag (`production`, `staging`) |
+
+Frontend Sentry variables (`VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`) are listed in the [Frontend (Vite)](#frontend-vite) section above.
 
 ## CI/CD
 
