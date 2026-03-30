@@ -1,11 +1,9 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 import { asyncMap } from "convex-helpers";
-import { internal } from "../_generated/api";
 import {
   humanMutation,
   humanQuery,
-  internalMutation,
   workerMutation,
   workerQuery,
 } from "../functions";
@@ -213,66 +211,29 @@ export const updateScanEnabled = humanMutation({
         fullScanned: false,
         scanPhase: undefined,
       });
-      await ctx.scheduler.runAfter(0, internal.model.chats.purgeChatData, {
-        chatId,
-      });
+
+      // Purge all messages for this chat
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
+        .collect();
+      for (const msg of messages) {
+        await ctx.db.delete(msg._id);
+      }
+
+      // Purge all media for this chat (also clean up storage files)
+      const mediaRecords = await ctx.db
+        .query("media")
+        .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+        .collect();
+      for (const media of mediaRecords) {
+        if (media.storageId) {
+          await ctx.storage.delete(media.storageId);
+        }
+        await ctx.db.delete(media._id);
+      }
     }
     return ok(null);
-  },
-});
-
-const PURGE_BATCH_SIZE = 200;
-
-/** Delete all messages and media for a chat in batches. Self-scheduling.
- *  Stops early if the chat has been re-enabled (to avoid racing with a new scan). */
-// TODO buillshit
-export const purgeChatData = internalMutation({
-  args: { chatId: v.string() },
-  handler: async (ctx, { chatId }) => {
-    // Guard: stop purging if scan was re-enabled since the purge was scheduled
-    const chat = await ctx.db
-      .query("chats")
-      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
-      .unique();
-    if (!chat || chat.scanEnabled) {
-      return;
-    }
-
-    let hasMore = false;
-
-    // Delete messages in batch
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
-      .take(PURGE_BATCH_SIZE);
-    for (const msg of messages) {
-      await ctx.db.delete(msg._id);
-    }
-    if (messages.length === PURGE_BATCH_SIZE) {
-      hasMore = true;
-    }
-
-    // Delete media in batch (also clean up storage files)
-    const mediaRecords = await ctx.db
-      .query("media")
-      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
-      .take(PURGE_BATCH_SIZE);
-    for (const media of mediaRecords) {
-      if (media.storageId) {
-        await ctx.storage.delete(media.storageId);
-      }
-      await ctx.db.delete(media._id);
-    }
-    if (mediaRecords.length === PURGE_BATCH_SIZE) {
-      hasMore = true;
-    }
-
-    // Re-schedule if more records remain
-    if (hasMore) {
-      await ctx.scheduler.runAfter(0, internal.model.chats.purgeChatData, {
-        chatId,
-      });
-    }
   },
 });
 

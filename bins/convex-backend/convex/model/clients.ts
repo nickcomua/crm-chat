@@ -74,7 +74,7 @@ export const list = humanQuery({
 });
 
 /** Delete a client and cancel associated auth sessions.
- *  Sets phase to Disconnected so domain cancel-watchers fire. */
+ *  Domain cancel-watchers detect the deletion (null phase) and shut down workers. */
 export const deleteClient = humanMutation({
   args: { clientId: v.id("clients") },
   returns: result(v.null(), v.literal("Client not found")),

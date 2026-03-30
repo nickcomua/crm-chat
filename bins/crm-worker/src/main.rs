@@ -159,18 +159,18 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn the reconciler as a plain tokio task — subscribes to
     // per-table pendingWork queries and dispatches to Restate leaf services
-    let orch_convex = convex_client.clone();
-    let orch_config = config.clone();
-    let orch_sessions = sessions.clone();
-    let orch_ingress = ingress_url.clone();
-    let orch_cancel = CancellationToken::new();
-    let orchestrator_handle = tokio::spawn(async move {
+    let recon_convex = convex_client.clone();
+    let recon_config = config.clone();
+    let recon_sessions = sessions.clone();
+    let recon_ingress = ingress_url.clone();
+    let recon_cancel = CancellationToken::new();
+    let reconciler_handle = tokio::spawn(async move {
         if let Err(e) = run_reconciler(
-            &orch_convex,
-            &orch_config,
-            &orch_sessions,
-            &orch_ingress,
-            &orch_cancel,
+            &recon_convex,
+            &recon_config,
+            &recon_sessions,
+            &recon_ingress,
+            &recon_cancel,
         )
         .await
         {
@@ -188,10 +188,10 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => tracing::error!(error = %e, "Restate server task panicked"),
             }
         }
-        result = orchestrator_handle => {
+        result = reconciler_handle => {
             match result {
-                Ok(()) => info!("Orchestrator exited"),
-                Err(e) => tracing::error!(error = %e, "Orchestrator task panicked"),
+                Ok(()) => info!("Reconciler exited"),
+                Err(e) => tracing::error!(error = %e, "Reconciler task panicked"),
             }
         }
     }

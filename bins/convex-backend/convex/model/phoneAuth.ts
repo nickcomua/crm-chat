@@ -292,6 +292,10 @@ export const cancel = humanMutation({
 
     await ctx.db.patch(authId, {
       step: "Cancelled",
+      loginCode: undefined,
+      passwordToken: undefined,
+      password: undefined,
+      phoneCodeHash: undefined,
       updatedAt: Date.now(),
     });
 
@@ -340,6 +344,10 @@ export const workerCompleteSendCode = workerMutation({
       });
       await ctx.db.patch(authId, {
         step: "Connected",
+        loginCode: undefined,
+        passwordToken: undefined,
+        password: undefined,
+        phoneCodeHash: undefined,
         updatedAt: now,
       });
     } else {
@@ -353,6 +361,10 @@ export const workerCompleteSendCode = workerMutation({
       await ctx.db.patch(authId, {
         step: "Failed",
         error: sendCodeResult.error,
+        loginCode: undefined,
+        passwordToken: undefined,
+        password: undefined,
+        phoneCodeHash: undefined,
         updatedAt: now,
       });
     }
@@ -396,7 +408,14 @@ export const workerCompleteVerifyCode = workerMutation({
           phase: "NeedsSync" as const,
           externalId: verifyResult.userId.toString(),
         });
-        await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
+        await ctx.db.patch(authId, {
+          step: "Connected",
+          loginCode: undefined,
+          passwordToken: undefined,
+          password: undefined,
+          phoneCodeHash: undefined,
+          updatedAt: now,
+        });
         break;
       }
 
@@ -428,6 +447,10 @@ export const workerCompleteVerifyCode = workerMutation({
         await ctx.db.patch(authId, {
           step: "Failed",
           error: "Sign up required",
+          loginCode: undefined,
+          passwordToken: undefined,
+          password: undefined,
+          phoneCodeHash: undefined,
           updatedAt: now,
         });
         break;
@@ -442,6 +465,10 @@ export const workerCompleteVerifyCode = workerMutation({
         await ctx.db.patch(authId, {
           step: "Failed",
           error: verifyResult.error,
+          loginCode: undefined,
+          passwordToken: undefined,
+          password: undefined,
+          phoneCodeHash: undefined,
           updatedAt: now,
         });
         break;
@@ -485,7 +512,14 @@ export const workerCompleteVerifyPassword = workerMutation({
           phase: "NeedsSync" as const,
           externalId: pwResult.userId.toString(),
         });
-        await ctx.db.patch(authId, { step: "Connected", updatedAt: now });
+        await ctx.db.patch(authId, {
+          step: "Connected",
+          loginCode: undefined,
+          passwordToken: undefined,
+          password: undefined,
+          phoneCodeHash: undefined,
+          updatedAt: now,
+        });
         break;
       }
 
@@ -512,6 +546,10 @@ export const workerCompleteVerifyPassword = workerMutation({
         await ctx.db.patch(authId, {
           step: "Failed",
           error: pwResult.error,
+          loginCode: undefined,
+          passwordToken: undefined,
+          password: undefined,
+          phoneCodeHash: undefined,
           updatedAt: now,
         });
         break;

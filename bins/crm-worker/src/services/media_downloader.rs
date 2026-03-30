@@ -102,7 +102,13 @@ impl MediaDownloader for MediaDownloaderImpl {
             media.width,
             media.height,
             media.duration,
-            media.file_size.map(|s| s as usize),
+            media.file_size.and_then(|s| {
+                if s.is_finite() && s >= 0.0 && s <= usize::MAX as f64 {
+                    Some(s as usize)
+                } else {
+                    None
+                }
+            }),
         )
         .await
         {

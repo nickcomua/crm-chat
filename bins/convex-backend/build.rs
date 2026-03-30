@@ -1,15 +1,16 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use convex_typegen::{Configuration, generate};
 
 const SKIP_FILES: &[&str] = &["schema.ts", "auth.config.ts", "convex.config.ts", "env.ts"];
 
 fn main() {
-    println!("cargo:rerun-if-changed=convex/schema.ts");
+    // Watch the entire convex/ directory so adding/renaming files triggers a rebuild
+    println!("cargo:rerun-if-changed=convex");
 
     let mut function_paths: Vec<PathBuf> = Vec::new();
-    collect_function_files(&PathBuf::from("convex"), &mut function_paths);
+    collect_function_files(Path::new("convex"), &mut function_paths);
 
     let helper_stubs = HashMap::new();
 
@@ -28,11 +29,9 @@ fn main() {
 
 /// Recursively collect .ts function files, skipping _generated/, config files,
 /// and helper utilities that don't export Convex functions.
-fn collect_function_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+fn collect_function_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("failed to read directory {}: {}", dir.display(), e));
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -50,7 +49,6 @@ fn collect_function_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
         }
 
         if name.ends_with(".ts") && !name.starts_with('_') && !SKIP_FILES.contains(&name.as_str()) {
-            println!("cargo:rerun-if-changed={}", path.display());
             out.push(path);
         }
     }
