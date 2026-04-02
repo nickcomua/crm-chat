@@ -98,6 +98,7 @@ async function waitForWorkerReady(
     }
     try {
       const resp = await fetch(`http://localhost:${adminPort}/deployments`);
+      console.log(resp);
       if (resp.ok) {
         const body = (await resp.json()) as { deployments?: unknown[] };
         if (body.deployments && body.deployments.length > 0) {
@@ -287,6 +288,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           .withEnvironment({
             RESTATE_OBSERVABILITY__LOG__FORMAT: "json",
           })
+          .withExtraHosts([
+            { host: "host.docker.internal", ipAddress: "host-gateway" },
+          ])
           .withStartupTimeout(60_000)
           .start();
 
