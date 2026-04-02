@@ -291,20 +291,7 @@ export const markDeleted = humanMutation({
 
 /** Upsert a message. Worker-only. */
 export const workerUpsertMessage = workerMutation({
-  args: {
-    messageId: v.string(),
-    externalId: v.string(),
-    userId: v.string(),
-    clientId: v.id("clients"),
-    chatId: v.string(),
-    senderId: v.string(),
-    text: v.optional(v.string()),
-    outgoing: v.boolean(),
-    deleted: v.boolean(),
-    timestamp: v.number(),
-    mediaExternalId: v.optional(v.string()),
-    mediaKind: v.optional(mediaKind),
-  },
+  args: messageFields,
   returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db

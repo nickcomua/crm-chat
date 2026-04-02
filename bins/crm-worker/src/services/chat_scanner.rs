@@ -203,6 +203,8 @@ pub async fn scan_chat_messages(
                 replyToMessageId: msg
                     .reply_to_message_id
                     .map(|id| format!("{}:{}", req.chat_id, id)),
+                forwardedFrom: None,
+                reactions: None,
             })
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;

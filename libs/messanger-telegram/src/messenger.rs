@@ -474,7 +474,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                     .media()
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
-                reply_to_message_id: message.reply_to_message_id()
+                reply_to_message_id: message.reply_to_message_id(),
             })
         }
         TgUpdate::MessageEdited(message) => {
@@ -505,7 +505,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                     .media()
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
-                reply_to_message_id: message.reply_to_message_id()
+                reply_to_message_id: message.reply_to_message_id(),
             })
         }
         TgUpdate::MessageDeleted(deleted) => {
