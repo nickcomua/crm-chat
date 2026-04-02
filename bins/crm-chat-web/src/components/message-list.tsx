@@ -305,6 +305,7 @@ function MessageListItem({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function makeScrollRequest(messageId: string) {
   return /* scrollTo: */ { messageId, _aux: Date.now() };
 }
@@ -329,6 +330,7 @@ export function MessageList({
   const orderedMessages = [...results].reverse() as Doc<"messages">[];
 
   const msgContainerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: orderedMessages.length,
     getScrollElement: () => msgContainerRef.current,
