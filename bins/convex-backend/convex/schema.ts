@@ -1,6 +1,9 @@
 import { defineSchema } from "convex/server";
+import { chatContactLinksTable } from "./model/chatContactLinks";
 import { chatsTable } from "./model/chats";
 import { clientsTable, deletedClientsTable } from "./model/clients";
+import { contactPinsTable } from "./model/contactPins";
+import { contactsTable } from "./model/contacts";
 import { mediaTable } from "./model/media";
 import { messagesTable } from "./model/messages";
 import { notificationsTable } from "./model/notifications";
@@ -16,4 +19,7 @@ export default defineSchema({
   phoneAuths: phoneAuthsTable,
   notifications: notificationsTable,
   qrAuths: qrAuthsTable,
+  contacts: contactsTable,
+  contactPins: contactPinsTable,
+  chatContactLinks: chatContactLinksTable,
 });

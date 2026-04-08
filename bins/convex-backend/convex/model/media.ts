@@ -256,6 +256,73 @@ export const getForChat = humanQuery({
   },
 });
 
+/** Get media records for a batch of chats in one roundtrip. Verifies
+ *  ownership per chat so cross-user reads are impossible. Used by the
+ *  merged-timeline view to build a single mediaMap across N chats. */
+const MAX_MEDIA_CHAT_IDS = 100;
+export const getForChats = humanQuery({
+  args: { chatIds: v.array(v.string()) },
+  returns: v.array(
+    v.object({
+      telegramFileId: v.string(),
+      messageId: v.string(),
+      chatId: v.string(),
+      kind: mediaKind,
+      status: mediaStatus,
+      url: v.optional(v.string()),
+      mimeType: v.optional(v.string()),
+      fileName: v.optional(v.string()),
+      fileSize: v.optional(v.number()),
+      bytesDownloaded: v.optional(v.number()),
+      width: v.optional(v.number()),
+      height: v.optional(v.number()),
+      duration: v.optional(v.number()),
+    })
+  ),
+  handler: async (ctx, { chatIds }) => {
+    if (chatIds.length > MAX_MEDIA_CHAT_IDS) {
+      return [];
+    }
+    const results = [];
+    for (const chatId of chatIds) {
+      const chat = await ctx.db
+        .query("chats")
+        .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+        .unique();
+      if (!chat || chat.userId !== ctx.caller.tokenIdentifier) {
+        continue;
+      }
+      const allMedia = await ctx.db
+        .query("media")
+        .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+        .collect();
+      for (const media of allMedia) {
+        let url: string | undefined;
+        if (media.status === "Stored" && media.storageId) {
+          const storageUrl = await ctx.storage.getUrl(media.storageId);
+          url = storageUrl ?? undefined;
+        }
+        results.push({
+          telegramFileId: media.telegramFileId,
+          messageId: media.messageId,
+          chatId: media.chatId,
+          kind: media.kind,
+          status: media.status,
+          url,
+          mimeType: media.mimeType,
+          fileName: media.fileName,
+          fileSize: media.fileSize,
+          bytesDownloaded: media.bytesDownloaded,
+          width: media.width,
+          height: media.height,
+          duration: media.duration,
+        });
+      }
+    }
+    return results;
+  },
+});
+
 /** List pending + downloading media records for a client. Worker-only. */
 export const listPendingForClient = workerQuery({
   args: { clientId: v.id("clients") },

@@ -7,7 +7,12 @@
  */
 import { v } from "convex/values";
 import { workerMutation, workerQuery } from "./functions";
-import { mediaKind, mediaStatus } from "./helpers/validators";
+import {
+  contactPinSnapshotValidator,
+  customFieldValidator,
+  mediaKind,
+  mediaStatus,
+} from "./helpers/validators";
 import { chatType } from "./model/chats";
 import { forwardedFromValidator, reactionValidator } from "./model/messages";
 import { messageSeverity } from "./model/notifications";
@@ -411,5 +416,117 @@ export const searchMessages = workerQuery({
       senderId: msg.senderId,
       timestamp: msg.timestamp,
     }));
+  },
+});
+
+// =============================================================================
+// Contact domain seed helpers (Task 8)
+// =============================================================================
+
+function computeCustomFieldsBlob(
+  fields: Array<{ key: string; value: string }>
+): string {
+  return fields.map((f) => `${f.key}:${f.value}`).join(" ");
+}
+
+/** Insert a contact with defaults for custom fields and timestamps. */
+export const insertTestContact = workerMutation({
+  args: {
+    userId: v.string(),
+    displayName: v.string(),
+    notes: v.optional(v.string()),
+    customFields: v.optional(v.array(customFieldValidator)),
+  },
+  returns: v.id("contacts"),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const fields = args.customFields ?? [];
+    return await ctx.db.insert("contacts", {
+      userId: args.userId,
+      displayName: args.displayName,
+      notes: args.notes,
+      customFields: fields,
+      customFieldsBlob: computeCustomFieldsBlob(fields),
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+/** Insert a chatContactLinks row linking a contact to a (chatId, senderId). */
+export const insertTestChatContactLink = workerMutation({
+  args: {
+    userId: v.string(),
+    chatId: v.string(),
+    senderId: v.string(),
+    contactId: v.id("contacts"),
+  },
+  returns: v.id("chatContactLinks"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("chatContactLinks", {
+      userId: args.userId,
+      chatId: args.chatId,
+      senderId: args.senderId,
+      contactId: args.contactId,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/** Insert a contactPins row with an explicit snapshot. */
+export const insertTestContactPin = workerMutation({
+  args: {
+    userId: v.string(),
+    contactId: v.id("contacts"),
+    messageId: v.string(),
+    chatId: v.string(),
+    snapshot: contactPinSnapshotValidator,
+    note: v.optional(v.string()),
+  },
+  returns: v.id("contactPins"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("contactPins", {
+      userId: args.userId,
+      contactId: args.contactId,
+      messageId: args.messageId,
+      chatId: args.chatId,
+      snapshot: args.snapshot,
+      note: args.note,
+      pinnedAt: Date.now(),
+      pinnedByUserId: args.userId,
+    });
+  },
+});
+
+/** Query contacts for a user. Robot-accessible. */
+export const queryContacts = workerQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    return await ctx.db
+      .query("contacts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+  },
+});
+
+/** Query chatContactLinks for a contact. Robot-accessible. */
+export const queryChatContactLinks = workerQuery({
+  args: { contactId: v.id("contacts") },
+  handler: async (ctx, { contactId }) => {
+    return await ctx.db
+      .query("chatContactLinks")
+      .withIndex("by_contactId", (q) => q.eq("contactId", contactId))
+      .collect();
+  },
+});
+
+/** Query contactPins for a contact. Robot-accessible. */
+export const queryContactPins = workerQuery({
+  args: { contactId: v.id("contacts") },
+  handler: async (ctx, { contactId }) => {
+    return await ctx.db
+      .query("contactPins")
+      .withIndex("by_contactId_pinnedAt", (q) => q.eq("contactId", contactId))
+      .collect();
   },
 });

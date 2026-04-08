@@ -1,8 +1,13 @@
 import { useQuery } from "convex-helpers/react/cache";
-import { Filter, MessageSquare, Pin, Search, Users } from "lucide-react";
+import { Filter, MessageSquare, Pin, Search, User, Users } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/convex";
-import { cn } from "../lib/utils";
+import {
+  cn,
+  getAvatarGradient,
+  getChatDisplayName,
+  getInitials,
+} from "../lib/utils";
 import { type MediaKind, mediaKindLabel } from "./media-types";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -36,42 +41,11 @@ function formatTimestamp(ts: number): string {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function getChatDisplayName(chat: {
-  pinnedName?: string;
-  chatId: string;
-}): string {
-  if (chat.pinnedName) {
-    return chat.pinnedName;
-  }
-  return `Chat ${chat.chatId.slice(0, 8)}`;
-}
-
 function getClientDisplayName(client: {
   kind: string;
   telegramId: string;
 }): string {
   return `${client.kind} (${client.telegramId.slice(0, 8)}...)`;
-}
-
-const WHITESPACE_RE = /\s+/;
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(WHITESPACE_RE);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
-
-function getAvatarGradient(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    // biome-ignore lint/suspicious/noBitwiseOperators: intentional hash
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = Math.abs(hash) % 360;
-  const hue2 = (hue + 45) % 360;
-  return `linear-gradient(135deg, oklch(0.68 0.16 ${hue}), oklch(0.55 0.18 ${hue2}))`;
 }
 
 function getTelegramIdColorStyle(telegramId: string): {
@@ -96,6 +70,14 @@ export function ChatList({
 }: ChatListProps): React.ReactNode {
   const chats = useQuery(api.model.chats.list);
   const clients = useQuery(api.model.clients.list) as Client[] | undefined;
+  const contactLinks = useQuery(api.model.contacts.listAllLinksForUser) as
+    | Array<{
+        chatId: string;
+        contactId: string;
+        contactDisplayName: string;
+        senderId: string;
+      }>
+    | undefined;
   const chatIds = chats?.map((c: { chatId: string }) => c.chatId);
   const lastMessages = useQuery(
     api.model.messages.getLastPerChat,
@@ -158,6 +140,21 @@ export function ChatList({
   }
 
   const lastMessagesMap = new Map(lastMessages.map((m) => [m.chatId, m]));
+
+  // Group contact links by chatId so each row can render a pill without
+  // an O(N) scan. The reverse-index table makes this a single query.
+  const contactLinksByChatId = new Map<
+    string,
+    Array<{ contactId: string; displayName: string }>
+  >();
+  for (const link of contactLinks ?? []) {
+    const arr = contactLinksByChatId.get(link.chatId) ?? [];
+    arr.push({
+      contactId: link.contactId,
+      displayName: link.contactDisplayName,
+    });
+    contactLinksByChatId.set(link.chatId, arr);
+  }
 
   const getLastMessage = (chatId: string): string | null => {
     const entry = lastMessagesMap.get(chatId);
@@ -345,6 +342,34 @@ export function ChatList({
                         </p>
                       )}
                     </div>
+                    {(() => {
+                      const linkedContacts = contactLinksByChatId.get(
+                        chat.chatId
+                      );
+                      if (!linkedContacts || linkedContacts.length === 0) {
+                        return null;
+                      }
+                      // De-duplicate contacts (groups may have multiple
+                      // senders linked to the same contact).
+                      const uniqueByContactId = Array.from(
+                        new Map(
+                          linkedContacts.map((c) => [c.contactId, c])
+                        ).values()
+                      );
+                      return (
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {uniqueByContactId.map((c) => (
+                            <span
+                              className="inline-flex max-w-full items-center gap-1 rounded-full bg-primary/10 px-1.5 py-px font-medium text-[10px] text-primary"
+                              key={c.contactId}
+                            >
+                              <User className="h-2.5 w-2.5 shrink-0" />
+                              <span className="truncate">{c.displayName}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </button>
               );

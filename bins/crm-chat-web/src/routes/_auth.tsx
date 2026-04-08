@@ -16,6 +16,7 @@ import {
   Search,
   Settings,
   Sun,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { NotificationsBellPanel } from "@/components/right-sidebar";
@@ -110,6 +111,18 @@ function AuthLayout(): React.ReactNode {
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
                       <span className="hidden sm:inline">Chats</span>
+                    </Link>
+                    <Link
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-[13px] transition-all",
+                        currentPath.startsWith("/contacts")
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                      to="/contacts"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Contacts</span>
                     </Link>
                     <Link
                       className={cn(

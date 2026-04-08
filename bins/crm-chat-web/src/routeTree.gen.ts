@@ -14,7 +14,9 @@ import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthSettingsRouteImport } from './routes/_auth/settings'
 import { Route as AuthDownloadsRouteImport } from './routes/_auth/downloads'
+import { Route as AuthContactsRouteImport } from './routes/_auth/contacts'
 import { Route as AuthChatsRouteImport } from './routes/_auth/chats'
+import { Route as AuthContactsContactIdRouteImport } from './routes/_auth/contacts.$contactId'
 import { Route as AuthClientClientIdRouteImport } from './routes/_auth/client.$clientId'
 import { Route as AuthChatsChatIdRouteImport } from './routes/_auth/chats.$chatId'
 
@@ -42,10 +44,20 @@ const AuthDownloadsRoute = AuthDownloadsRouteImport.update({
   path: '/downloads',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthContactsRoute = AuthContactsRouteImport.update({
+  id: '/contacts',
+  path: '/contacts',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthChatsRoute = AuthChatsRouteImport.update({
   id: '/chats',
   path: '/chats',
   getParentRoute: () => AuthRoute,
+} as any)
+const AuthContactsContactIdRoute = AuthContactsContactIdRouteImport.update({
+  id: '/$contactId',
+  path: '/$contactId',
+  getParentRoute: () => AuthContactsRoute,
 } as any)
 const AuthClientClientIdRoute = AuthClientClientIdRouteImport.update({
   id: '/client/$clientId',
@@ -62,19 +74,23 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/chats': typeof AuthChatsRouteWithChildren
+  '/contacts': typeof AuthContactsRouteWithChildren
   '/downloads': typeof AuthDownloadsRoute
   '/settings': typeof AuthSettingsRoute
   '/chats/$chatId': typeof AuthChatsChatIdRoute
   '/client/$clientId': typeof AuthClientClientIdRoute
+  '/contacts/$contactId': typeof AuthContactsContactIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/chats': typeof AuthChatsRouteWithChildren
+  '/contacts': typeof AuthContactsRouteWithChildren
   '/downloads': typeof AuthDownloadsRoute
   '/settings': typeof AuthSettingsRoute
   '/chats/$chatId': typeof AuthChatsChatIdRoute
   '/client/$clientId': typeof AuthClientClientIdRoute
+  '/contacts/$contactId': typeof AuthContactsContactIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -82,10 +98,12 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/_auth/chats': typeof AuthChatsRouteWithChildren
+  '/_auth/contacts': typeof AuthContactsRouteWithChildren
   '/_auth/downloads': typeof AuthDownloadsRoute
   '/_auth/settings': typeof AuthSettingsRoute
   '/_auth/chats/$chatId': typeof AuthChatsChatIdRoute
   '/_auth/client/$clientId': typeof AuthClientClientIdRoute
+  '/_auth/contacts/$contactId': typeof AuthContactsContactIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -93,29 +111,35 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/chats'
+    | '/contacts'
     | '/downloads'
     | '/settings'
     | '/chats/$chatId'
     | '/client/$clientId'
+    | '/contacts/$contactId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/sign-in'
     | '/chats'
+    | '/contacts'
     | '/downloads'
     | '/settings'
     | '/chats/$chatId'
     | '/client/$clientId'
+    | '/contacts/$contactId'
   id:
     | '__root__'
     | '/'
     | '/_auth'
     | '/sign-in'
     | '/_auth/chats'
+    | '/_auth/contacts'
     | '/_auth/downloads'
     | '/_auth/settings'
     | '/_auth/chats/$chatId'
     | '/_auth/client/$clientId'
+    | '/_auth/contacts/$contactId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -161,12 +185,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthDownloadsRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/contacts': {
+      id: '/_auth/contacts'
+      path: '/contacts'
+      fullPath: '/contacts'
+      preLoaderRoute: typeof AuthContactsRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_auth/chats': {
       id: '/_auth/chats'
       path: '/chats'
       fullPath: '/chats'
       preLoaderRoute: typeof AuthChatsRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_auth/contacts/$contactId': {
+      id: '/_auth/contacts/$contactId'
+      path: '/$contactId'
+      fullPath: '/contacts/$contactId'
+      preLoaderRoute: typeof AuthContactsContactIdRouteImport
+      parentRoute: typeof AuthContactsRoute
     }
     '/_auth/client/$clientId': {
       id: '/_auth/client/$clientId'
@@ -197,8 +235,21 @@ const AuthChatsRouteWithChildren = AuthChatsRoute._addFileChildren(
   AuthChatsRouteChildren,
 )
 
+interface AuthContactsRouteChildren {
+  AuthContactsContactIdRoute: typeof AuthContactsContactIdRoute
+}
+
+const AuthContactsRouteChildren: AuthContactsRouteChildren = {
+  AuthContactsContactIdRoute: AuthContactsContactIdRoute,
+}
+
+const AuthContactsRouteWithChildren = AuthContactsRoute._addFileChildren(
+  AuthContactsRouteChildren,
+)
+
 interface AuthRouteChildren {
   AuthChatsRoute: typeof AuthChatsRouteWithChildren
+  AuthContactsRoute: typeof AuthContactsRouteWithChildren
   AuthDownloadsRoute: typeof AuthDownloadsRoute
   AuthSettingsRoute: typeof AuthSettingsRoute
   AuthClientClientIdRoute: typeof AuthClientClientIdRoute
@@ -206,6 +257,7 @@ interface AuthRouteChildren {
 
 const AuthRouteChildren: AuthRouteChildren = {
   AuthChatsRoute: AuthChatsRouteWithChildren,
+  AuthContactsRoute: AuthContactsRouteWithChildren,
   AuthDownloadsRoute: AuthDownloadsRoute,
   AuthSettingsRoute: AuthSettingsRoute,
   AuthClientClientIdRoute: AuthClientClientIdRoute,

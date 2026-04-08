@@ -1,9 +1,15 @@
+import { useNavigate } from "@tanstack/react-router";
 import { usePaginatedQuery } from "convex/react";
 import { useQuery } from "convex-helpers/react/cache";
-import { Loader2, Search, Sparkles, X } from "lucide-react";
-import { useState } from "react";
-import { api, type Doc } from "@/lib/convex";
-import { cn } from "@/lib/utils";
+import { Loader2, Search, Sparkles, User, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { api, type Doc, type Id } from "@/lib/convex";
+import {
+  cn,
+  getAvatarGradient,
+  getChatDisplayName,
+  getInitials,
+} from "@/lib/utils";
 import type { TextByKeywordsParameters } from "../../../convex-backend/convex/model/messages";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -14,6 +20,124 @@ interface SearchDialogProps {
   onOpenChange: (open: boolean) => void;
   onSelectResult?: (result: { chatId: string; messageId?: string }) => void;
   open: boolean;
+}
+
+interface ContactHit {
+  _id: Id<"contacts">;
+  displayName: string;
+  linkedChatCount?: number;
+}
+
+/**
+ * Searches contacts by `displayName` (client-side against the cached
+ * `api.model.contacts.list`) and by custom-field value (debounced
+ * `api.model.contacts.searchByCustomFields`), merging and de-duplicating.
+ *
+ * The `contacts.list` query is shared via `ConvexQueryCacheProvider` in
+ * `_auth.tsx`, so mounting this component does NOT trigger an extra network
+ * round-trip when the contacts page has already loaded.
+ */
+function ContactResults({
+  query,
+  onSelect,
+}: {
+  query: string;
+  onSelect: (contactId: Id<"contacts">) => void;
+}): React.ReactNode {
+  // Shared cached list — no extra round trip if contacts-page is mounted.
+  const contacts = useQuery(api.model.contacts.list) as
+    | ContactHit[]
+    | undefined;
+
+  // Debounce the custom-fields search so we don't fire a query on every keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 200);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const customFieldHits = useQuery(
+    api.model.contacts.searchByCustomFields,
+    debouncedQuery.trim().length > 0 ? { query: debouncedQuery } : "skip"
+  ) as ContactHit[] | undefined;
+
+  const trimmed = query.trim().toLowerCase();
+
+  const merged = useMemo(() => {
+    const byId = new Map<Id<"contacts">, ContactHit>();
+    if (trimmed.length > 0 && contacts) {
+      for (const c of contacts) {
+        if (c.displayName.toLowerCase().includes(trimmed)) {
+          byId.set(c._id, c);
+        }
+      }
+    }
+    if (customFieldHits) {
+      for (const c of customFieldHits) {
+        if (!byId.has(c._id)) {
+          byId.set(c._id, c);
+        }
+      }
+    }
+    return Array.from(byId.values());
+  }, [contacts, customFieldHits, trimmed]);
+
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (merged.length === 0) {
+    return (
+      <div className="space-y-1">
+        <div className="px-3 py-2 font-medium text-muted-foreground text-xs uppercase tracking-wider">
+          Contacts
+        </div>
+        <div className="px-3 pb-2 text-muted-foreground text-xs">
+          No contacts match “{query}”.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="px-3 py-2 font-medium text-muted-foreground text-xs uppercase tracking-wider">
+        Contacts ({merged.length})
+      </div>
+      <div className="space-y-1">
+        {merged.map((contact) => (
+          <button
+            className="flex w-full items-center gap-3 rounded-lg p-3 text-left transition-colors hover:bg-muted/50"
+            key={contact._id}
+            onClick={() => onSelect(contact._id)}
+            type="button"
+          >
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-medium text-white text-xs shadow-sm"
+              style={{ background: getAvatarGradient(contact.displayName) }}
+            >
+              {getInitials(contact.displayName)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <User className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="truncate font-medium text-sm">
+                  {contact.displayName}
+                </span>
+              </div>
+              {contact.linkedChatCount !== undefined &&
+                contact.linkedChatCount > 0 && (
+                  <p className="mt-0.5 text-muted-foreground/70 text-xs">
+                    {contact.linkedChatCount} linked chat
+                    {contact.linkedChatCount === 1 ? "" : "s"}
+                  </p>
+                )}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function formatTimestamp(ts: number): string {
@@ -44,8 +168,9 @@ function SearchResultItem({
   client: Doc<"clients"> | undefined;
   onClick: () => void;
 }): React.ReactNode {
-  const chatName =
-    chat?.pinnedName ?? `Chat ${hit.chatId?.slice(0, 8) ?? "unknown"}`;
+  const chatName = chat
+    ? getChatDisplayName(chat)
+    : `Chat ${hit.chatId?.slice(0, 8) ?? "unknown"}`;
   const isOutgoing = hit.outgoing ?? false;
 
   return (
@@ -199,6 +324,7 @@ export function SearchDialog({
   const [scope, setScope] =
     useState<TextByKeywordsParameters["scope"]>(initialScope);
   const [semantic, setSemantic] = useState(false);
+  const navigate = useNavigate();
 
   const chats = useQuery(api.model.chats.list);
   const clients = useQuery(api.model.clients.list);
@@ -308,6 +434,18 @@ export function SearchDialog({
             onSelectResult={handleSelectResult}
             query={query}
             scope={scope}
+          />
+
+          <ContactResults
+            onSelect={(contactId) => {
+              onOpenChange(false);
+              setQuery("");
+              navigate({
+                to: "/contacts/$contactId",
+                params: { contactId },
+              });
+            }}
+            query={query}
           />
         </div>
       </DialogContent>

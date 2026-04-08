@@ -36,3 +36,45 @@ export const workItem = v.object({
   key: v.string(),
   handler: v.string(),
 });
+
+// =============================================================================
+// Contact-domain validators (used by contacts, chatContactLinks, contactPins)
+// =============================================================================
+
+/** Custom field entry on a contact. Freeform key/value with an optional type
+ *  hint that the UI uses to pick the right input widget. */
+export const customFieldValidator = v.object({
+  key: v.string(),
+  value: v.string(),
+  type: v.optional(
+    v.union(
+      v.literal("text"),
+      v.literal("number"),
+      v.literal("date"),
+      v.literal("email"),
+      v.literal("phone"),
+      v.literal("url")
+    )
+  ),
+});
+
+/** Stable identity tuple for a contact ↔ conversation link.
+ *  chatId is the app-level string FK (matches messages.chatId / media.chatId),
+ *  senderId is the opaque sender identifier from messages.senderId. */
+export const senderLinkValidator = v.object({
+  chatId: v.string(),
+  senderId: v.string(),
+});
+
+/** Everything needed to render a pinned interaction WITHOUT reading the
+ *  messages table. Pins are snapshotted so they survive hard-delete cascades
+ *  (e.g. updateScanEnabled(false)). See model/contactPins.ts for context. */
+export const contactPinSnapshotValidator = v.object({
+  text: v.optional(v.string()),
+  timestamp: v.number(),
+  senderId: v.string(),
+  outgoing: v.boolean(),
+  mediaKind: v.optional(mediaKind),
+  mediaExternalId: v.optional(v.string()),
+  chatDisplayNameAtPinTime: v.optional(v.string()),
+});
