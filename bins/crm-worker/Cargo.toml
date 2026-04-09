@@ -42,3 +42,6 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hack = { version = "0.1", path = "../../libs/hack" }
 async-trait = "0.1.89"
+secretspec = { version = "0.8", default-features = false }
+secretspec-derive = "0.8"
+secrecy = "0.10"

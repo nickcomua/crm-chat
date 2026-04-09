@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 
+secretspec_derive::declare_secrets!("../../secretspec.toml");
+
 /// Default timeout for most tests (60 seconds)
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -37,12 +39,16 @@ impl TestConfig {
     /// - TG_API_HASH_2: API hash for second client
     /// - TG_SESSION_FILE_2: Session file for second client
     fn from_env() -> Option<(TestConfig, TestConfig)> {
-        let api_id_1 = std::env::var("TG_API_ID_1").ok()?.parse().ok()?;
-        let api_hash_1 = std::env::var("TG_API_HASH_1").ok()?;
-        let session_file_1 = std::env::var("TG_SESSION_FILE_1").ok()?;
-        let api_id_2 = std::env::var("TG_API_ID_2").ok()?.parse().ok()?;
-        let api_hash_2 = std::env::var("TG_API_HASH_2").ok()?;
-        let session_file_2 = std::env::var("TG_SESSION_FILE_2").ok()?;
+        let spec = SecretSpec::builder()
+            .with_profile("e2e_telegram")
+            .load()
+            .ok()?;
+        let api_id_1 = spec.secrets.tg_api_id_1.as_ref()?.parse().ok()?;
+        let api_hash_1 = spec.secrets.tg_api_hash_1.clone()?;
+        let session_file_1 = spec.secrets.tg_session_file_1.clone()?;
+        let api_id_2 = spec.secrets.tg_api_id_2.as_ref()?.parse().ok()?;
+        let api_hash_2 = spec.secrets.tg_api_hash_2.clone()?;
+        let session_file_2 = spec.secrets.tg_session_file_2.clone()?;
         Some((
             TestConfig {
                 api_id: api_id_1,

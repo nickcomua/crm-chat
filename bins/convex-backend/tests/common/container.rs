@@ -120,9 +120,13 @@ impl ConvexTestEnv {
             &admin_key[..admin_key.len().min(30)]
         );
 
-        // Read Clerk M2M secret key from environment
-        let m2m_secret_key = std::env::var("CLERK_M2M_SECRET_KEY")
-            .expect("CLERK_M2M_SECRET_KEY must be set for integration tests");
+        // Read Clerk M2M secret key from secretspec
+        let test_secrets = super::secrets::SecretSpec::builder()
+            .with_profile("convex_backend_test")
+            .load()
+            .expect("Failed to load convex-backend-test secrets (CLERK_M2M_SECRET_KEY must be set)");
+        let m2m_secret_key = test_secrets.secrets.clerk_m2m_secret_key
+            .expect("CLERK_M2M_SECRET_KEY must be set in convex_backend_test profile");
 
         // Deploy Convex functions
         eprintln!("[test] Deploying Convex functions...");

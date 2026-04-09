@@ -10,10 +10,10 @@ mod auth;
 mod config;
 mod error;
 mod ops;
+pub mod secrets;
 mod services;
 pub mod session_manager;
 
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,16 +37,22 @@ use crate::session_manager::TelegramSessionManager;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize Sentry (if SENTRY_URL is set)
-    let _guard = env::var("SENTRY_URL").ok().map(|dsn| {
-        sentry::init((
-            dsn,
-            sentry::ClientOptions {
-                release: sentry::release_name!(),
-                traces_sample_rate: 1.0,
-                ..Default::default()
-            },
-        ))
-    });
+    let sentry_spec = secrets::SecretSpec::builder()
+        .with_profile("crm_worker")
+        .load()
+        .ok();
+    let _guard = sentry_spec
+        .and_then(|s| s.secrets.sentry_url)
+        .map(|dsn| {
+            sentry::init((
+                dsn,
+                sentry::ClientOptions {
+                    release: sentry::release_name!(),
+                    traces_sample_rate: 1.0,
+                    ..Default::default()
+                },
+            ))
+        });
 
     // Initialize tracing
     let env_filter = EnvFilter::try_from_default_env()

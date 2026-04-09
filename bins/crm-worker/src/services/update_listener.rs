@@ -105,9 +105,12 @@ async fn run_listener(
         .map_err(|e| WorkerError::MutationFailed(format!("Failed to start updates: {e}")))?;
 
     let mut scan_enabled_chats = load_scan_enabled_chats(convex, req).await?;
-    let refresh_secs: u64 = std::env::var("SCAN_REFRESH_SECS")
+    let refresh_secs: u64 = crate::secrets::SecretSpec::builder()
+        .with_profile("crm_worker")
+        .load()
         .ok()
-        .and_then(|v| v.parse().ok())
+        .and_then(|s| s.secrets.scan_refresh_secs)
+        .and_then(|v: String| v.parse().ok())
         .unwrap_or(60);
     let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
     refresh_interval.tick().await; // consume first immediate tick

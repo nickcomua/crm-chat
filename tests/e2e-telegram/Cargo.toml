@@ -12,6 +12,10 @@ messanger-telegram = { path = "../../libs/messanger-telegram" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 serial_test = "3"
+secretspec = { version = "0.8", default-features = false }
+secretspec-derive = "0.8"
+secrecy = "0.10"
+serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 hack = { version = "0.1", path = "../../libs/hack" }

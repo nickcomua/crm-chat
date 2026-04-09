@@ -1,8 +1,30 @@
 {
   "permissions": {
     "allow": [
-      "Bash(sudo bash:*)",
-      "Bash(sudo systemctl:*)"
+      "Read(//etc/nix/**)",
+      "Read(//etc/security/**)",
+      "Bash(systemctl cat:*)",
+      "Bash(sudo -u tymuri sh -c 'cat /proc/self/cgroup; ulimit -a')",
+      "Bash(getent group:*)",
+      "Bash(systemctl status:*)",
+      "Bash(sudo usermod:*)",
+      "Bash(bun x:*)",
+      "Bash(sg docker:*)",
+      "Bash(sudo ufw:*)",
+      "Bash(ip -4 addr show docker0)",
+      "Bash(sudo iptables:*)",
+      "Bash(sudo dnf:*)",
+      "Bash(sudo bun:*)",
+      "Bash(sudo env:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(ldconfig -p)",
+      "Bash(ls /usr/lib/x86_64-linux-gnu/libglib-2.0* /usr/lib/x86_64-linux-gnu/libnss3* /usr/lib/x86_64-linux-gnu/libgbm*)",
+      "Bash(/nix/var/nix/profiles/default/bin/nix develop:*)",
+      "Bash(/nix/var/nix/profiles/default/bin/nix eval:*)",
+      "Read(//nix/store/ffdcfkl3kpdwagswlwlff6qazxkj4cag-bun-1.3.10/bin/**)",
+      "Bash(env)",
+      "Bash(sudo rm:*)",
+      "Bash(PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true sg docker -c 'bun x playwright test --project=tg-scan tests/e2e-telegram/scan-chats.spec.ts -g \"settings page shows connected client with settings button\"')"
     ]
   }
 }

@@ -8,8 +8,8 @@
     "./convex/*": "./convex/*"
   },
   "scripts": {
-    "dev": "convex dev",
-    "deploy": "convex deploy",
+    "dev": "secretspec run --profile convex_backend -- bun -b convex dev",
+    "deploy": "secretspec run --profile convex_backend -- convex deploy",
     "lint": "eslint convex/ && biome check && tsc -b",
     "check": "ultracite check",
     "fix": "ultracite fix",

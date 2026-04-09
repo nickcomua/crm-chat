@@ -48,7 +48,11 @@ fn collect_function_files(dir: &Path, out: &mut Vec<PathBuf>) {
             continue;
         }
 
-        if name.ends_with(".ts") && !name.starts_with('_') && !SKIP_FILES.contains(&name.as_str()) {
+        if name.ends_with(".ts")
+            && !name.ends_with(".test.ts")
+            && !name.starts_with('_')
+            && !SKIP_FILES.contains(&name.as_str())
+        {
             out.push(path);
         }
     }

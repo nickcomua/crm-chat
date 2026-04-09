@@ -1,8 +1,9 @@
 //! Configuration for crm-worker service.
 
 use anyhow::Result;
-use std::env;
 use std::path::PathBuf;
+
+use crate::secrets;
 
 /// Telegram API credentials and worker configuration.
 #[derive(Clone)]
@@ -26,29 +27,46 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
-    /// Load configuration from environment variables.
+    /// Load configuration from secretspec profile `crm-worker`.
     pub fn from_env() -> Result<Self> {
-        let api_id: i32 = env::var("TG_ID")
-            .expect("TG_ID environment variable not set")
+        let spec = secrets::SecretSpec::builder()
+            .with_profile("crm_worker")
+            .load()?;
+
+        let api_id: i32 = spec
+            .secrets
+            .tg_id
+            .expect("TG_ID is required")
             .parse()
             .expect("TG_ID must be a valid integer");
-        let api_hash = env::var("TG_HASH").expect("TG_HASH environment variable not set");
-        let convex_url = env::var("CONVEX_URL").expect("CONVEX_URL must be set");
-        let m2m_secret_key =
-            env::var("CLERK_M2M_SECRET_KEY").expect("CLERK_M2M_SECRET_KEY must be set");
-        let restate_port: u16 = env::var("RESTATE_SERVICE_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
+        let api_hash = spec.secrets.tg_hash.expect("TG_HASH is required");
+        let convex_url = spec.secrets.convex_url.expect("CONVEX_URL is required");
+        let m2m_secret_key = spec
+            .secrets
+            .clerk_m2m_secret_key
+            .expect("CLERK_M2M_SECRET_KEY is required");
+
+        let restate_port: u16 = spec
+            .secrets
+            .restate_service_port
+            .and_then(|v: String| v.parse().ok())
             .unwrap_or(9080);
-        let restate_admin_url =
-            env::var("RESTATE_ADMIN_URL").unwrap_or_else(|_| "http://localhost:9070".to_string());
-        let restate_ingress_url =
-            env::var("RESTATE_INGRESS_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
-        let restate_service_url = env::var("RESTATE_SERVICE_URL")
-            .unwrap_or_else(|_| format!("http://host.docker.internal:{restate_port}"));
-        let max_media_workflows: usize = env::var("MAX_MEDIA_WORKFLOWS")
-            .ok()
-            .and_then(|v| v.parse().ok())
+        let restate_admin_url = spec
+            .secrets
+            .restate_admin_url
+            .unwrap_or_else(|| "http://localhost:9070".to_string());
+        let restate_ingress_url = spec
+            .secrets
+            .restate_ingress_url
+            .unwrap_or_else(|| "http://localhost:8080".to_string());
+        let restate_service_url = spec
+            .secrets
+            .restate_service_url
+            .unwrap_or_else(|| format!("http://host.docker.internal:{restate_port}"));
+        let max_media_workflows: usize = spec
+            .secrets
+            .max_media_workflows
+            .and_then(|v: String| v.parse().ok())
             .unwrap_or(2);
 
         Ok(Self {
@@ -70,7 +88,14 @@ impl WorkerConfig {
 /// When `TG_SESSION_DIR` is set, uses that path directly.
 /// Otherwise uses the platform data directory (`~/Library/Application Support` on macOS).
 pub fn get_session_dir() -> PathBuf {
-    if let Ok(dir) = env::var("TG_SESSION_DIR") {
+    // Try to load from secretspec; fall back to env var for backward compat
+    let dir = secrets::SecretSpec::builder()
+        .with_profile("crm_worker")
+        .load()
+        .ok()
+        .and_then(|spec| spec.secrets.tg_session_dir);
+
+    if let Some(dir) = dir {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).ok();
         return path;

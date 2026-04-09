@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,47 +8,10 @@ const ROOT = path.resolve(WEB_DIR, "../..");
 const CONVEX_DIR = path.join(ROOT, "bins/convex-backend");
 const WORKER_BIN = path.join(ROOT, "target/debug/crm-worker");
 
-/** Load .env from repo root (only sets vars not already in process.env). */
-function loadEnvFile(): void {
-  const envFile = path.join(ROOT, ".env");
-  if (!existsSync(envFile)) {
-    return;
-  }
-  const contents = readFileSync(envFile, "utf-8");
-  for (const line of contents.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) {
-      continue;
-    }
-    const key = trimmed.slice(0, eqIndex);
-    const value = trimmed.slice(eqIndex + 1).replace(/^["']|["']$/g, "");
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
-  }
-}
-
 export default function globalSetup(): void {
-  loadEnvFile();
-
-  // Validate required env vars
-  for (const v of [
-    "TEST_CLERK_USERNAME",
-    "TEST_CLERK_PASSWORD",
-    "VITE_CLERK_PUBLISHABLE_KEY",
-    "TG_ID",
-    "TG_HASH",
-    "TG_SESSION_FILE_1",
-    "TG_USER_ID_1",
-  ]) {
-    if (!process.env[v]) {
-      throw new Error(`[e2e] Required env var ${v} is not set`);
-    }
-  }
+  // Environment variables are injected by `secretspec run --profile e2e_web`
+  // via the package.json test scripts. Secretspec validates required vars
+  // before the process starts, so no manual validation is needed here.
 
   // Install Convex dependencies (needed for bun x convex deploy in workers)
   console.log("[e2e] Installing Convex dependencies...");
