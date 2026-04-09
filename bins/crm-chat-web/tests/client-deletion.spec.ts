@@ -121,6 +121,11 @@ test.describe("Client Deletion", () => {
     const deleteBtn = targetCard.locator('button[aria-label="Delete client"]');
     await deleteBtn.click();
 
+    // After adding confirmation dialog additional steps are required
+    const confirmBtn = page.locator('button[aria-label="Confirm deletion"]');
+    await expect(confirmBtn).toBeVisible({ timeout: 3_000 });
+    await confirmBtn.click();
+
     await expect(targetCard).toBeHidden({ timeout: 10_000 });
 
     const finalCards = await page.locator(cardSelector).count();

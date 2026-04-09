@@ -98,7 +98,6 @@ async function waitForWorkerReady(
     }
     try {
       const resp = await fetch(`http://localhost:${adminPort}/deployments`);
-      console.log(resp);
       if (resp.ok) {
         const body = (await resp.json()) as { deployments?: unknown[] };
         if (body.deployments && body.deployments.length > 0) {
