@@ -101,14 +101,14 @@ export async function seedTestClient(
 ): Promise<Id<"clients">> {
   const client = robot;
 
-  const clientId = await client.mutation(
+  const clientId = (await client.mutation(
     api.model.clients.workerRegisterConnected,
     {
       userId,
       telegramId,
       kind: "Telegram",
     }
-  );
+  )) as Id<"clients">;
 
   // Create some test chats
   await client.mutation(api.testHelpers.seedChat, {

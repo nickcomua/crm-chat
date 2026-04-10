@@ -157,6 +157,13 @@ export const deleteClient = workerMutation({
       await ctx.db.delete(c._id);
     }
 
+    // Write tombstone so workerRegisterConnected won't resurrect this client
+    await ctx.db.insert("deletedClients", {
+      userId: client.userId,
+      telegramId: client.telegramId,
+      deletedAt: Date.now(),
+    });
+
     await ctx.db.delete(clientId);
     return null;
   },

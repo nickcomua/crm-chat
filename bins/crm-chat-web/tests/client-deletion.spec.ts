@@ -42,24 +42,13 @@ test.beforeAll(async ({ browser, workerBackend }) => {
 
 test.describe("Client Deletion", () => {
   /**
-   * BUG: workerRegisterConnected blindly recreates deleted clients.
+   * workerRegisterConnected must refuse to recreate a deleted client.
    *
    * Scenario: User deletes a client → worker restarts → worker calls
    * workerRegisterConnected with the same telegramId (orphaned .session
-   * file still on disk) → client reappears as a "ghost".
-   *
-   * This test asserts the CORRECT behavior (ghost should be null).
-   * test.fail() marks it as expected-to-fail while the bug exists:
-   *   - While buggy: assertion fails → test.fail() makes it pass (green)
-   *   - When fixed:  assertion passes → test.fail() makes it fail (red),
-   *     signaling that test.fail() should be removed
-   *
-   * FIX NEEDED: workerRegisterConnected should check a "deleted" flag
-   * or soft-delete tombstone before recreating a client.
+   * file still on disk) → tombstone blocks re-creation, returns null.
    */
   test("deleted client must not be recreated by worker re-registration", async () => {
-    test.fail();
-
     const telegramId = `telegram:deletion-bug-${Date.now()}`;
     const robot = await getRobotClient(workerCfg);
 
@@ -69,7 +58,7 @@ test.describe("Client Deletion", () => {
       { userId, telegramId, kind: "Telegram" }
     )) as Id<"clients">;
 
-    // 2. User deletes the client
+    // 2. User deletes the client (writes a tombstone)
     await robot.mutation(api.testHelpers.deleteClient, { clientId });
 
     // 3. Verify deletion succeeded
@@ -79,18 +68,13 @@ test.describe("Client Deletion", () => {
     expect(afterDelete).toBeNull();
 
     // 4. Worker restarts — rediscovers the same .session file on disk
-    //    and calls workerRegisterConnected again with the same telegramId
-    const recreatedId = (await robot.mutation(
+    //    and calls workerRegisterConnected again with the same telegramId.
+    //    Tombstone blocks re-creation — returns null.
+    const result = await robot.mutation(
       api.model.clients.workerRegisterConnected,
       { userId, telegramId, kind: "Telegram" }
-    )) as Id<"clients">;
-
-    // 5. The client should NOT exist — it was deleted by the user.
-    //    Currently fails: workerRegisterConnected has no deletion awareness.
-    const ghost = await robot.query(api.model.clients.getForWorker, {
-      clientId: recreatedId,
-    });
-    expect(ghost).toBeNull();
+    );
+    expect(result).toBeNull();
   });
 
   test("deleting client via UI removes it from settings list", async ({
@@ -123,7 +107,7 @@ test.describe("Client Deletion", () => {
 
     // After adding confirmation dialog additional steps are required
     const confirmBtn = page.locator('button[aria-label="Confirm deletion"]');
-    await expect(confirmBtn).toBeVisible({ timeout: 3_000 });
+    await expect(confirmBtn).toBeVisible({ timeout: 3000 });
     await confirmBtn.click();
 
     await expect(targetCard).toBeHidden({ timeout: 10_000 });
