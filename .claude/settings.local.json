@@ -24,7 +24,23 @@
       "Read(//nix/store/ffdcfkl3kpdwagswlwlff6qazxkj4cag-bun-1.3.10/bin/**)",
       "Bash(env)",
       "Bash(sudo rm:*)",
-      "Bash(PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true sg docker -c 'bun x playwright test --project=tg-scan tests/e2e-telegram/scan-chats.spec.ts -g \"settings page shows connected client with settings button\"')"
+      "Bash(PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true sg docker -c 'bun x playwright test --project=tg-scan tests/e2e-telegram/scan-chats.spec.ts -g \"settings page shows connected client with settings button\"')",
+      "Bash(cargo build *)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}\\\\n' -H 'Authorization: Convex convex-self-hosted|01a397b3fd02b58c48c313f6440853419ad865a13ee3cdfa5e1c6ae212ba5b7d72c813916e' -H 'Content-Type: application/json' -d '{}' http://localhost:3210/api/get_tables)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -H \"Authorization: Convex BADKEY\" -H \"Content-Type: application/json\" -d '{}' http://localhost:3210/api/get_tables)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}\\\\n' -H 'Authorization: Convex convex-self-hosted|01a397b3fd02b58c48c313f6440853419ad865a13ee3cdfa5e1c6ae212ba5b7d72c813916e' http://localhost:3210/api/shapes2)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -H \"Authorization: Convex BADKEY\" http://localhost:3210/api/shapes2)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3210/api/shapes2)",
+      "Bash(ls -la .env* bins/*/.env*)",
+      "Bash(nix flake *)",
+      "Bash(nix-instantiate --parse flake.nix)",
+      "Bash(bash *)",
+      "Read(//home/ubuntu/**)",
+      "Bash(awk 'NR==43 || NR==42 || NR==44 {print NR\": \"$0}' ~/.zshrc)"
     ]
   }
 }

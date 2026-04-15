@@ -408,6 +408,45 @@
                   sudo iptables -I INPUT -s "$_docker_subnet" -j ACCEPT \
                     && echo "Firewall: allowed Docker subnet $_docker_subnet -> host"
                 fi
+
+                # Sync devenv-allocated ports/URLs into .env so tools that only read
+                # the dotenv file (convex CLI, scripts, editors) see the same values
+                # as the shell. CONVEX_SELF_HOSTED_ADMIN_KEY is handled separately
+                # by processes.backend once the backend is running.
+                _upsert_env() {
+                  local file="$1" key="$2" value="$3"
+                  if [ ! -f "$file" ]; then
+                    printf '%s=%s\n' "$key" "$value" > "$file"
+                    return
+                  fi
+                  if grep -Eq "^[[:space:]]*''${key}=" "$file"; then
+                    awk -v k="$key" -v v="$value" '
+                      BEGIN { FS = OFS = "="; replaced = 0 }
+                      !replaced && $0 !~ /^[[:space:]]*#/ && $1 == k { print k "=" v; replaced = 1; next }
+                      { print }
+                    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+                  else
+                    # Make sure the file ends with a newline before appending,
+                    # otherwise the new line glues onto the last existing line.
+                    [ -s "$file" ] && [ "$(tail -c 1 "$file" | od -An -c | tr -d ' ')" != "\n" ] && printf '\n' >> "$file"
+                    printf '%s=%s\n' "$key" "$value" >> "$file"
+                  fi
+                }
+                _ENV_FILE="${config.devenv.root}/.env"
+                _upsert_env "$_ENV_FILE" PORT "${toString backendPorts.api.value}"
+                _upsert_env "$_ENV_FILE" SITE_PROXY_PORT "${toString backendPorts.site.value}"
+                _upsert_env "$_ENV_FILE" DASHBOARD_PORT "${toString dashboardPorts.http.value}"
+                _upsert_env "$_ENV_FILE" CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
+                _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL "http://127.0.0.1:${toString backendPorts.api.value}"
+                _upsert_env "$_ENV_FILE" VITE_CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_INGRESS_PORT "${toString restatePorts.ingress.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_ADMIN_PORT "${toString restatePorts.admin.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_ADMIN_URL "http://localhost:${toString restatePorts.admin.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_INGRESS_URL "http://localhost:${toString restatePorts.ingress.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_SERVICE_PORT "${toString workerPorts.service.value}"
+                _upsert_env "$_ENV_FILE" RESTATE_SERVICE_URL "http://host.docker.internal:${toString workerPorts.service.value}"
+                unset -f _upsert_env
+                unset _ENV_FILE
               '';
 
               # --- Docker Compose services (each container is a separate devenv process) ---
@@ -415,6 +454,7 @@
 
               processes.restate = {
                 exec = ''
+                  trap 'docker compose stop restate' EXIT INT TERM
                   fuser -k "${toString restatePorts.ingress.value}/tcp" 2>/dev/null || true
                   fuser -k "${toString restatePorts.admin.value}/tcp" 2>/dev/null || true
                   docker compose up -d restate
@@ -423,7 +463,7 @@
                     sleep 2
                   done
                   echo "Restate is healthy."
-                  exec docker compose logs -f restate
+                  docker compose logs -f restate
                 '';
                 ports = {
                   ingress.allocate = 8080;
@@ -442,6 +482,7 @@
 
               processes.backend = {
                 exec = ''
+                  trap 'docker compose stop backend' EXIT INT TERM
                   fuser -k "${toString backendPorts.api.value}/tcp" 2>/dev/null || true
                   fuser -k "${toString backendPorts.site.value}/tcp" 2>/dev/null || true
                   docker compose up -d backend
@@ -452,13 +493,74 @@
                   done
                   echo "Convex backend is healthy."
 
-                  # Generate admin key and persist it
-                  ADMIN_KEY=$(docker compose exec -T backend ./generate_admin_key.sh 2>/dev/null | tail -1)
                   mkdir -p "$DEVENV_STATE"
-                  echo "$ADMIN_KEY" > "$DEVENV_STATE/admin_key"
-                  echo "Admin key generated and saved to $DEVENV_STATE/admin_key"
+                  STATE_KEY_FILE="$DEVENV_STATE/admin_key"
+                  ENV_FILE="${config.devenv.root}/.env"
 
-                  exec docker compose logs -f backend
+                  # Read an uncommented KEY=VALUE from a dotenv-style file (strips surrounding quotes).
+                  read_env_var() {
+                    local file="$1" key="$2"
+                    [ -f "$file" ] || return 1
+                    awk -v k="$key" '
+                      BEGIN { FS = "=" }
+                      /^[[:space:]]*#/ { next }
+                      $1 == k {
+                        sub(/^[^=]*=/, "")
+                        gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+                        if ($0 ~ /^".*"$/ || $0 ~ /^'"'"'.*'"'"'$/) $0 = substr($0, 2, length($0) - 2)
+                        print; exit
+                      }' "$file"
+                  }
+
+                  # Check that an admin key authenticates against the running backend.
+                  key_valid() {
+                    [ -z "$1" ] && return 1
+                    local code
+                    code=$(curl -s -o /dev/null -w "%{http_code}" \
+                      -H "Authorization: Convex $1" \
+                      "http://localhost:${toString backendPorts.api.value}/api/shapes2" 2>/dev/null)
+                    [ "$code" = "200" ]
+                  }
+
+                  # Replace or append KEY=VALUE in an env file (preserves other lines).
+                  upsert_env_var() {
+                    local file="$1" key="$2" value="$3"
+                    mkdir -p "$(dirname "$file")"
+                    if [ ! -f "$file" ]; then
+                      printf '%s=%s\n' "$key" "$value" > "$file"
+                      return
+                    fi
+                    if grep -Eq "^[[:space:]]*''${key}=" "$file"; then
+                      awk -v k="$key" -v v="$value" '
+                        BEGIN { FS = OFS = "="; replaced = 0 }
+                        !replaced && $0 !~ /^[[:space:]]*#/ && $1 == k { print k "=" v; replaced = 1; next }
+                        { print }
+                      ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+                    else
+                      printf '%s=%s\n' "$key" "$value" >> "$file"
+                    fi
+                  }
+
+                  # Reuse the previous key if it still authenticates; otherwise mint a new one.
+                  CURRENT_KEY=""
+                  [ -s "$STATE_KEY_FILE" ] && CURRENT_KEY=$(cat "$STATE_KEY_FILE")
+                  if ! key_valid "$CURRENT_KEY"; then
+                    CURRENT_KEY=$(read_env_var "$ENV_FILE" CONVEX_SELF_HOSTED_ADMIN_KEY || true)
+                  fi
+
+                  if key_valid "$CURRENT_KEY"; then
+                    echo "Reusing existing CONVEX_SELF_HOSTED_ADMIN_KEY."
+                    ADMIN_KEY="$CURRENT_KEY"
+                  else
+                    echo "Generating new CONVEX_SELF_HOSTED_ADMIN_KEY."
+                    ADMIN_KEY=$(docker compose exec -T backend ./generate_admin_key.sh 2>/dev/null | tail -1)
+                  fi
+
+                  echo "$ADMIN_KEY" > "$STATE_KEY_FILE"
+                  upsert_env_var "$ENV_FILE" CONVEX_SELF_HOSTED_ADMIN_KEY "$ADMIN_KEY"
+                  echo "Admin key ready (state: $STATE_KEY_FILE, env: $ENV_FILE)."
+
+                  docker compose logs -f backend
                 '';
                 ports = {
                   api.allocate = 3210;
@@ -473,10 +575,11 @@
 
               processes.dashboard = {
                 exec = ''
+                  trap 'docker compose stop dashboard' EXIT INT TERM
                   fuser -k "${toString dashboardPorts.http.value}/tcp" 2>/dev/null || true
                   export CONVEX_SELF_HOSTED_ADMIN_KEY=$(cat "$DEVENV_STATE/admin_key")
                   docker compose up -d dashboard
-                  exec docker compose logs -f dashboard
+                  docker compose logs -f dashboard
                 '';
                 ports.http.allocate = 6791;
                 after = ["devenv:processes:backend"];
@@ -505,7 +608,6 @@
               processes.crm-worker = {
                 exec = ''
                   fuser -k "${toString workerPorts.service.value}/tcp" 2>/dev/null || true
-                  export CONVEX_SELF_HOSTED_ADMIN_KEY=$(cat "$DEVENV_STATE/admin_key")
                   exec secretspec run --profile crm_worker -- cargo watch -x 'run -p crm-worker'
                 '';
                 ports.service.allocate = 9080;
@@ -517,7 +619,7 @@
                 exec = ''
                   fuser -k "${toString (config.processes.crm-chat-web.ports.http.value)}/tcp" 2>/dev/null || true
                   bun install
-                  exec secretspec run --profile crm_chat_web -- bun -b vite --host 0.0.0.0
+                  exec bun dev
                 '';
                 cwd = "${config.devenv.root}/bins/crm-chat-web";
                 ports.http.allocate = 5173;
