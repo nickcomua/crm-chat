@@ -1,97 +1,68 @@
 /* eslint-disable no-empty-pattern */
 import { type ChildProcess, spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  openSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
 import { $ } from "zx";
-import { env } from "./env.ts";
 
-// Use /bin/sh instead of bash to avoid sourcing ~/.bashrc, which can fail
-// in nix environments (e.g. `fnm: command not found`) and mangle PATH.
 $.shell = "/bin/sh";
 $.prefix = "";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(TESTS_DIR, "..");
 const ROOT = path.resolve(WEB_DIR, "../..");
-const CONVEX_DIR = path.join(ROOT, "bins/convex-backend");
 
 // ---------------------------------------------------------------------------
-// Helper: auto-detect Docker socket for OrbStack / Docker Desktop / standard
+// Shared mutex — serializes the "enter shell + start devenv up + wait for
+// backend to bind" phase across parallel Playwright workers so two workspaces
+// never probe the same unbound port at the same time. Once the backend on
+// port X is listening, subsequent probes correctly skip X.
 // ---------------------------------------------------------------------------
-function ensureDockerHost(): void {
-  if (process.env.DOCKER_HOST) {
-    return;
-  }
-  const home = os.homedir();
-  const candidates = [
-    path.join(home, ".orbstack/run/docker.sock"),
-    "/var/run/docker.sock",
-    path.join(home, ".docker/run/docker.sock"),
-  ];
-  for (const sock of candidates) {
-    if (existsSync(sock)) {
-      process.env.DOCKER_HOST = `unix://${sock}`;
-      console.log(`[fixture] Auto-detected Docker socket: ${sock}`);
-      return;
+let bootQueue: Promise<void> = Promise.resolve();
+function serializeBoot<T>(fn: () => Promise<T>): Promise<T> {
+  const next = bootQueue.then(fn, fn);
+  bootQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Parse `KEY=value` dotenv lines, stripping surrounding quotes.
+// ---------------------------------------------------------------------------
+function parseDotenv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Wait for a ChildProcess to exit
-// ---------------------------------------------------------------------------
-function onExit(proc: ChildProcess): Promise<number | null> {
-  return new Promise((resolve) => {
-    if (proc.exitCode === null) {
-      proc.on("exit", (code) => resolve(code));
-    } else {
-      resolve(proc.exitCode);
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) {
+      continue;
     }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Gracefully kill a process (SIGTERM → SIGKILL after timeout)
-// ---------------------------------------------------------------------------
-async function killProcess(
-  proc: ChildProcess,
-  timeoutMs = 5000
-): Promise<void> {
-  if (proc.exitCode !== null) {
-    return;
+    const key = trimmed.slice(0, eq);
+    const value = trimmed.slice(eq + 1).replace(/^["']|["']$/g, "");
+    out[key] = value;
   }
-  proc.kill(); // SIGTERM
-  await Promise.race([
-    onExit(proc),
-    new Promise<void>((resolve) =>
-      setTimeout(() => {
-        proc.kill("SIGKILL");
-        resolve();
-      }, timeoutMs)
-    ),
-  ]);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Poll a URL until it responds with 2xx
+// Poll a URL until it responds with 2xx or the deadline passes.
 // ---------------------------------------------------------------------------
 async function pollUntilReady(
   url: string,
   label: string,
-  maxAttempts: number,
+  timeoutMs: number,
   intervalMs: number
 ): Promise<void> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     try {
       const res = await fetch(url);
       if (res.ok) {
@@ -100,49 +71,38 @@ async function pollUntilReady(
     } catch {
       // not ready yet
     }
-    if (attempt === maxAttempts - 1) {
-      throw new Error(`${label} not ready after ${maxAttempts} attempts`);
-    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
+  throw new Error(`${label} not ready after ${timeoutMs}ms (url=${url})`);
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Tear down all resources created during setup
+// Poll for a file to appear.
 // ---------------------------------------------------------------------------
-async function teardownResources(
-  wid: string,
-  resources: {
-    vitePreview?: ChildProcess;
-    worker?: ChildProcess;
-    container?: StartedTestContainer;
-    outDir?: string;
-  }
-): Promise<void> {
-  console.log(`[${wid}] Tearing down...`);
-
-  if (resources.vitePreview) {
-    resources.vitePreview.kill();
-  }
-
-  if (resources.worker) {
-    await killProcess(resources.worker);
-  }
-
-  if (resources.container) {
-    console.log(`[${wid}] Stopping Convex container...`);
-    await resources.container.stop();
-  }
-
-  if (resources.outDir) {
-    try {
-      rmSync(resources.outDir, { recursive: true, force: true });
-    } catch {
-      // best-effort cleanup
+async function pollUntilFile(
+  filePath: string,
+  label: string,
+  timeoutMs: number,
+  intervalMs: number
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath)) {
+      return readFileSync(filePath, "utf-8");
     }
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
+  throw new Error(`${label} (${filePath}) not present after ${timeoutMs}ms`);
+}
 
-  console.log(`[${wid}] Cleanup complete`);
+function onExit(proc: ChildProcess): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (proc.exitCode !== null) {
+      resolve(proc.exitCode);
+    } else {
+      proc.on("exit", (code) => resolve(code));
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -162,237 +122,221 @@ interface WorkerFixtures {
 }
 
 // ---------------------------------------------------------------------------
-// Worker-scoped fixture: per-worker Convex + crm-worker
+// Worker-scoped fixture — one independent devenv-up per Playwright worker.
+//
+// Per-worker isolation is provided by a fresh jj workspace at
+// /tmp/crm-e2e-<wid>-<ts>:
+//   * unique CWD → unique $DEVENV_ROOT → unique $DEVENV_STATE
+//                → unique process-compose socket (/tmp/devenv-<hash>/pc.sock)
+//   * workspace basename → unique COMPOSE_PROJECT_NAME → namespaced
+//     container names + volumes
+//   * Nix flake's enterShell probes free ports in `ss` and writes them to
+//     <workspace>/.env + <workspace>/.devenv/state/admin_key, so the whole
+//     stack self-discovers per-workspace without externally pre-allocating.
+//
+// The "enter shell + devenv up + wait for backend bind" phase is serialized
+// via the module-level `bootQueue` mutex so two workspaces never try to grab
+// the same unbound port at the same time. Tests themselves still run fully
+// in parallel.
 // ---------------------------------------------------------------------------
 export const test = base.extend<TestFixtures, WorkerFixtures>({
-  // Override baseURL so page.goto("/") uses the fixture's Vite preview URL
   baseURL: async ({ workerBackend }, use) => {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(workerBackend.baseURL);
   },
   workerBackend: [
-    // biome-ignore lint/correctness/noEmptyPattern: playwright whant this
+    // biome-ignore lint/correctness/noEmptyPattern: playwright fixture pattern
     async ({}, use) => {
-      ensureDockerHost();
+      const wid = `${process.pid}-${Date.now()}`;
+      const workspacePath = path.join(os.tmpdir(), `crm-e2e-${wid}`);
+      const workspaceName = path.basename(workspacePath);
 
-      const wid = `worker-${process.pid}`;
-
-      // ── 0. Allocate ports ─────────────────────────────────────────
-      const ports: number[] = JSON.parse(
-        (
-          await $({
-            quiet: true,
-          })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 3`
-        ).stdout.trim()
-      );
-      const [convexPort, sitePort, vitePort] = ports;
-      console.log(
-        `[${wid}] Ports — convex:${convexPort} site:${sitePort} vite:${vitePort}`
-      );
-
-      let container: StartedTestContainer | undefined;
-      let worker: ChildProcess | undefined;
-      let vitePreview: ChildProcess | undefined;
-      let outDir: string | undefined;
+      let resources: {
+        workspacePath: string;
+        workspaceName: string;
+        devenv?: ChildProcess;
+      } = { workspacePath, workspaceName };
 
       try {
-        // ── 1. Start Convex backend container ─────────────────────────
-        console.log(`[${wid}] Starting Convex backend container...`);
-        container = await new GenericContainer(
-          "ghcr.io/get-convex/convex-backend:latest"
-        )
-          .withExposedPorts(
-            { container: 3210, host: convexPort },
-            { container: 3211, host: sitePort }
-          )
-          .withEnvironment({
-            INSTANCE_NAME: `test-${wid}`,
-            INSTANCE_SECRET:
-              "4361726e697461732c206c69746572616c6c79206d65616e696e6720226c6974",
-            CONVEX_CLOUD_ORIGIN: `http://localhost:${convexPort}`,
-            CONVEX_SITE_ORIGIN: `http://localhost:${sitePort}`,
-            RUST_LOG: "error",
-          })
-          .withStartupTimeout(120_000)
-          .start();
+        // ── 1. Create a jj workspace ──────────────────────────────────
+        console.log(`[${wid}] Creating jj workspace at ${workspacePath}...`);
+        await $`jj -R ${ROOT} workspace add --name ${workspaceName} ${workspacePath}`;
 
-        const convexUrl = `http://localhost:${convexPort}`;
-        console.log(
-          `[${wid}] Container started at ${convexUrl}, waiting for backend...`
+        // ── 2. Seed the workspace .env from the main repo ────────────
+        // The main .env carries every secret the devenv processes need
+        // (Clerk, Telegram, etc.). enterShell will overwrite the port-
+        // related keys once the devenv shell is entered. The previous
+        // CONVEX_SELF_HOSTED_ADMIN_KEY is invalid against the new backend,
+        // so the backend process's admin-key logic will regenerate it.
+        const mainEnvPath = path.join(ROOT, ".env");
+        const wsEnvPath = path.join(workspacePath, ".env");
+        await fs.copyFile(mainEnvPath, wsEnvPath);
+        // Append test-only overrides so devenv processes pick them up.
+        const sessionDir = path.join(workspacePath, "target/crm-worker-data");
+        await fs.mkdir(sessionDir, { recursive: true });
+        await fs.appendFile(
+          wsEnvPath,
+          `\nTG_SESSION_DIR=${sessionDir}\nSCAN_REFRESH_SECS=5\n`
         );
 
-        await pollUntilReady(
-          `${convexUrl}/version`,
-          "Convex backend",
-          60,
-          1000
-        );
-        console.log(`[${wid}] Backend ready`);
+        // ── 3-5. Serialized boot: enter devenv shell, start devenv up,
+        //         wait for backend to bind. ────────────────────────────
+        const { webPort, convexUrl, devenv } = await serializeBoot(async () => {
+          // Strip inherited port vars so the workspace's enterShell actually
+          // probes instead of reusing the parent's PORT.
+          const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
+          for (const k of [
+            "PORT",
+            "SITE_PROXY_PORT",
+            "DASHBOARD_PORT",
+            "WEB_PORT",
+            "CONVEX_URL",
+            "CONVEX_SELF_HOSTED_URL",
+            "VITE_CONVEX_URL",
+          ]) {
+            delete cleanEnv[k];
+          }
 
-        // ── 2. Generate admin key ─────────────────────────────────────
-        console.log(`[${wid}] Generating admin key...`);
-        const execResult = await container.exec(["./generate_admin_key.sh"]);
-        if (execResult.exitCode !== 0) {
-          throw new Error(
-            `generate_admin_key.sh failed (exit ${execResult.exitCode}): ${execResult.output}`
+          // Prepare devenv-root marker (what .envrc does in dev).
+          await fs.mkdir(path.join(workspacePath, ".devenv"), {
+            recursive: true,
+          });
+          await fs.writeFile(
+            path.join(workspacePath, ".devenv/root"),
+            workspacePath
           );
-        }
-        const adminKey = execResult.output
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .pop()
-          ?.trim();
-        if (!adminKey) {
-          throw new Error("No admin key in generate_admin_key.sh output");
-        }
-        console.log(`[${wid}] Admin key: ${adminKey.slice(0, 30)}...`);
 
-        // ── 3. Read Clerk M2M secret key ──────────────────────────────
+          // Trigger enterShell side effects (port probe + .env upsert).
+          console.log(`[${wid}] Entering workspace devenv shell...`);
+          await $({
+            cwd: workspacePath,
+            env: cleanEnv,
+            quiet: true,
+          })`nix develop ${ROOT} --override-input devenv-root "file+file://${workspacePath}/.devenv/root" --command true`;
+
+          // Read allocated ports from the now-populated workspace .env.
+          const wsEnv = parseDotenv(await fs.readFile(wsEnvPath, "utf-8"));
+          const backendPort = Number(wsEnv.PORT);
+          const webPort = Number(wsEnv.WEB_PORT);
+          const convexUrl =
+            wsEnv.CONVEX_URL ?? `http://127.0.0.1:${backendPort}`;
+          if (!(Number.isFinite(backendPort) && Number.isFinite(webPort))) {
+            throw new Error(
+              `[${wid}] devenv shell did not allocate ports (PORT=${wsEnv.PORT}, WEB_PORT=${wsEnv.WEB_PORT})`
+            );
+          }
+          console.log(
+            `[${wid}] Allocated: backend=${backendPort} web=${webPort}`
+          );
+
+          // Spawn `devenv up` in the workspace, detached (own process group
+          // → one SIGTERM to the group cascades through process-compose).
+          const devenvLogPath = path.join(
+            os.tmpdir(),
+            `crm-e2e-${wid}-devenv.log`
+          );
+          const devenvLogFd = (await fs.open(devenvLogPath, "w")).fd;
+          console.log(`[${wid}] devenv supervisor log: ${devenvLogPath}`);
+          const devenv = spawn("devenv", ["up"], {
+            cwd: workspacePath,
+            env: cleanEnv,
+            detached: true,
+            stdio: ["ignore", devenvLogFd, devenvLogFd],
+          });
+
+          // Wait for the backend to actually answer on its port — this is
+          // the point where it's safe to release the boot mutex (next
+          // worker's probe will now see this port as bound and skip it).
+          await pollUntilReady(
+            `${convexUrl}/version`,
+            `Convex backend on ${convexUrl}`,
+            180_000,
+            500
+          );
+          console.log(`[${wid}] Backend bound on ${backendPort}`);
+
+          return { webPort, convexUrl, devenv };
+        });
+
+        resources = { workspacePath, workspaceName, devenv };
+
+        // ── 6. Wait for the rest of the stack ─────────────────────────
+        // Admin key is written by the backend process once it has the key.
+        await pollUntilFile(
+          path.join(workspacePath, ".devenv/state/admin_key"),
+          "admin_key",
+          60_000,
+          500
+        );
+        // Vite serving.
+        await pollUntilReady(
+          `http://localhost:${webPort}/`,
+          `Vite on ${webPort}`,
+          120_000,
+          500
+        );
+        console.log(`[${wid}] Web ready on http://localhost:${webPort}`);
+
         const m2mSecretKey = process.env.CLERK_M2M_SECRET_KEY;
         if (!m2mSecretKey) {
           throw new Error("CLERK_M2M_SECRET_KEY must be set for E2E tests");
         }
-        console.log(`[${wid}] Clerk M2M key available`);
 
-        // ── 4. Set Convex env vars and deploy ─────────────────────────
-        // Write a temp env file so `bun x convex` uses our test backend
-        // instead of .env.local (which has CONVEX_DEPLOYMENT for dev).
-        const convexEnvFile = path.join(
-          os.tmpdir(),
-          `crm-e2e-convex-env-${wid}-${Date.now()}`
-        );
-        writeFileSync(
-          convexEnvFile,
-          `CONVEX_SELF_HOSTED_URL=${convexUrl}\nCONVEX_SELF_HOSTED_ADMIN_KEY=${adminKey}\n`
-        );
-        const convexEnv = {
-          PATH: process.env.PATH,
-          HOME: process.env.HOME,
-        };
-        const convex$ = $({ cwd: CONVEX_DIR, env: convexEnv });
-
-        console.log(`[${wid}] Setting Convex env vars...`);
-        await convex$`bun x convex env set --env-file ${convexEnvFile} CLERK_JWT_ISSUER_DOMAIN https://noted-rabbit-14.clerk.accounts.dev`;
-
-        console.log(`[${wid}] Deploying Convex functions...`);
-        await convex$`bun x convex deploy --env-file ${convexEnvFile}`;
-        console.log(`[${wid}] Deploy complete`);
-
-        // ── 5. Create session directory ───────────────────────────────
-        const sessionDir = path.join(
-          os.tmpdir(),
-          `crm-e2e-sessions-${wid}-${Date.now()}`
-        );
-        mkdirSync(sessionDir, { recursive: true });
-
-        // ── 6. Spawn crm-worker ───────────────────────────────────────
-        const workerBin = process.env.E2E_WORKER_BIN;
-        if (!workerBin) {
-          throw new Error(
-            "E2E_WORKER_BIN not set — globalSetup should build and set it"
-          );
-        }
-
-        const workerLogPath = path.join(
-          os.tmpdir(),
-          `crm-e2e-${wid}-${Date.now()}.log`
-        );
-        console.log(`[${wid}] Worker logs: ${workerLogPath}`);
-        const workerLogFd = openSync(workerLogPath, "w");
-        worker = spawn(workerBin, [], {
-          env: {
-            PATH: process.env.PATH ?? "",
-            // Worker uses secretspec, which defaults to the dotenv provider.
-            // In tests we inject secrets directly as env vars — tell
-            // secretspec to read from the environment instead.
-            SECRETSPEC_PROVIDER: "env",
-            CONVEX_URL: convexUrl,
-            CLERK_M2M_SECRET_KEY: m2mSecretKey,
-            TG_ID: env.TG_ID,
-            TG_HASH: env.TG_HASH,
-            TG_SESSION_DIR: sessionDir,
-            SCAN_REFRESH_SECS: "5",
-            RUST_LOG: "debug,crm_worker=debug",
-          },
-          stdio: ["ignore", workerLogFd, workerLogFd],
-        });
-
-        // The worker now subscribes to Convex directly and has no readiness
-        // endpoint — wait a couple of seconds for its startup log, then
-        // assume ready. If it exited early, bail.
-        await new Promise((r) => setTimeout(r, 2000));
-        if (worker.exitCode !== null) {
-          throw new Error(
-            `crm-worker exited prematurely (code ${worker.exitCode})`
-          );
-        }
-        console.log(`[${wid}] crm-worker running (PID ${worker.pid})`);
-
-        // ── 7. Build and start Vite preview ───────────────────────────
-        // Each worker builds to its own temp directory so parallel workers
-        // don't overwrite each other's VITE_CONVEX_URL baked into the bundle.
-        outDir = path.join(os.tmpdir(), `crm-e2e-dist-${wid}-${Date.now()}`);
-        console.log(`[${wid}] Building frontend to ${outDir}...`);
-        await $({
-          cwd: WEB_DIR,
-          env: {
-            PATH: process.env.PATH ?? "",
-            HOME: process.env.HOME ?? "",
-            VITE_CONVEX_URL: convexUrl,
-            VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
-            VITE_TEST_USERNAME: env.TEST_CLERK_USERNAME,
-            VITE_TEST_PASSWORD: env.TEST_CLERK_PASSWORD,
-          },
-        })`bun x vite build --outDir ${outDir}`;
-
-        console.log(`[${wid}] Starting Vite preview on port ${vitePort}...`);
-        vitePreview = spawn(
-          "bun",
-          [
-            "x",
-            "vite",
-            "preview",
-            "--port",
-            String(vitePort),
-            "--outDir",
-            outDir,
-          ],
-          {
-            cwd: WEB_DIR,
-            env: {
-              PATH: process.env.PATH ?? "",
-              HOME: process.env.HOME ?? "",
-              VITE_CONVEX_URL: convexUrl,
-            },
-            stdio: ["ignore", "pipe", "pipe"],
-          }
-        );
-
-        const baseURL = `http://localhost:${vitePort}`;
-        await pollUntilReady(baseURL, `Vite preview on ${baseURL}`, 50, 300);
-        console.log(`[${wid}] Vite preview ready at ${baseURL}`);
-
-        // ── Yield to tests ────────────────────────────────────────────
         // eslint-disable-next-line react-hooks/rules-of-hooks
         await use({
           convexUrl,
           m2mSecretKey,
           sessionDir,
-          baseURL,
+          baseURL: `http://localhost:${webPort}`,
         });
       } finally {
-        // Runs after tests complete (normal path) AND if any setup step
-        // throws, ensuring containers and processes are never leaked.
-        await teardownResources(wid, {
-          vitePreview,
-          worker,
-          container,
-          outDir,
-        });
+        console.log(`[${wid}] Tearing down...`);
+
+        // Group-kill the devenv supervisor — process-compose shuts all its
+        // children (convex backend/dashboard/worker/web) and their docker
+        // containers via the traps inside each process's exec block.
+        if (
+          resources.devenv?.pid != null &&
+          resources.devenv.exitCode === null
+        ) {
+          try {
+            process.kill(-resources.devenv.pid, "SIGTERM");
+          } catch {
+            // already gone
+          }
+          await Promise.race([
+            onExit(resources.devenv),
+            new Promise((resolve) => setTimeout(resolve, 30_000)),
+          ]);
+          if (resources.devenv.exitCode === null) {
+            try {
+              process.kill(-resources.devenv.pid, "SIGKILL");
+            } catch {
+              // already gone
+            }
+          }
+        }
+
+        // Belt-and-suspenders: stop any lingering containers from this
+        // workspace's compose project (if devenv didn't get to them).
+        await $({
+          cwd: resources.workspacePath,
+          nothrow: true,
+          quiet: true,
+        })`docker compose -p ${resources.workspaceName} down -v --remove-orphans`;
+
+        // Release the jj workspace, then rm -rf the directory.
+        await $({
+          cwd: ROOT,
+          nothrow: true,
+          quiet: true,
+        })`jj workspace forget ${resources.workspaceName}`;
+        await fs.rm(resources.workspacePath, { recursive: true, force: true });
+
+        console.log(`[${wid}] Cleanup complete`);
       }
     },
-    { scope: "worker", timeout: 180_000 },
+    { scope: "worker", timeout: 300_000 },
   ],
 });
 

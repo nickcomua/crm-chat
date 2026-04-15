@@ -353,16 +353,24 @@
               config,
               ...
             }: let
-              # Shorthand for allocated port values
+              # Shorthand for devenv-allocated port values.
               backendPorts = config.processes.backend.ports;
               dashboardPorts = config.processes.dashboard.ports;
+              webPorts = config.processes.crm-chat-web.ports;
+
+              # Helper: every process's exec begins with this so its stdout
+              # and stderr are tee'd to a per-service file under
+              # `<devenv-root>/.devenv/state/logs/<name>.log`.
+              logTo = name: ''
+                mkdir -p "$DEVENV_STATE/logs"
+                exec > >(tee -a "$DEVENV_STATE/logs/${name}.log") 2>&1
+              '';
             in {
               devenv.root = let
                 devenvRoot = builtins.readFile devenv-root.outPath;
               in
                 pkgs.lib.mkIf (devenvRoot != "") devenvRoot;
 
-              # Rust toolchain (replaces fenix in dev shell)
               languages.rust = {
                 enable = true;
                 channel = "stable";
@@ -370,33 +378,44 @@
                 targets = ["wasm32-unknown-unknown"];
               };
 
-              # Secrets are loaded at runtime via secretspec (not baked into Nix store)
               dotenv.disableHint = true;
 
-              # Environment variables
+              # ── Process env ──────────────────────────────────────────
               env.LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
-              # Convex backend (ports resolved at runtime by devenv)
+              # Port 8080 (process-compose HTTP API) would clash across
+              # parallel devenv sessions — we only need the per-session
+              # unix socket.
+              env.PC_NO_SERVER = "1";
+
+              # Anchor secretspec to the repo-root .env so `secretspec run`
+              # finds secrets regardless of CWD (without this the default
+              # dotenv provider resolves `.env` against the subprocess'
+              # CWD and misses the root file from `bins/<sub>/`).
+              env.SECRETSPEC_PROVIDER = "dotenv:${config.devenv.root}/.env";
+
+              # Ports + derived URLs exposed to every process.
               env.PORT = toString backendPorts.api.value;
               env.SITE_PROXY_PORT = toString backendPorts.site.value;
               env.DASHBOARD_PORT = toString dashboardPorts.http.value;
-              env.CONVEX_SELF_HOSTED_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
+              env.WEB_PORT = toString webPorts.http.value;
               env.CONVEX_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
+              env.CONVEX_SITE_URL = "http://127.0.0.1:${toString backendPorts.site.value}";
+              env.CONVEX_SELF_HOSTED_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
               env.VITE_CONVEX_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
 
               enterShell = ''
                 export PATH="$HOME/.local/bin:$PATH"
                 export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:${pkgs.dbus.lib}/lib:''${LD_LIBRARY_PATH:-}"
 
-                # Sync devenv-allocated ports/URLs into .env so tools that only read
-                # the dotenv file (convex CLI, scripts, editors) see the same values
-                # as the shell. CONVEX_SELF_HOSTED_ADMIN_KEY is handled separately
-                # by processes.backend once the backend is running.
+                # Mirror devenv-allocated values into .env so dotenv-only
+                # tools (convex CLI, docker compose, editors) see the same
+                # ports / URLs as the shell. CONVEX_SELF_HOSTED_ADMIN_KEY is
+                # managed separately by processes.backend at runtime.
                 _upsert_env() {
                   local file="$1" key="$2" value="$3"
                   if [ ! -f "$file" ]; then
-                    printf '%s=%s\n' "$key" "$value" > "$file"
-                    return
+                    printf '%s=%s\n' "$key" "$value" > "$file"; return
                   fi
                   if grep -Eq "^[[:space:]]*''${key}=" "$file"; then
                     awk -v k="$key" -v v="$value" '
@@ -405,94 +424,52 @@
                       { print }
                     ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
                   else
-                    # Make sure the file ends with a newline before appending,
-                    # otherwise the new line glues onto the last existing line.
                     [ -s "$file" ] && [ "$(tail -c 1 "$file" | od -An -c | tr -d ' ')" != "\n" ] && printf '\n' >> "$file"
                     printf '%s=%s\n' "$key" "$value" >> "$file"
                   fi
                 }
                 _ENV_FILE="${config.devenv.root}/.env"
-                _upsert_env "$_ENV_FILE" PORT "${toString backendPorts.api.value}"
-                _upsert_env "$_ENV_FILE" SITE_PROXY_PORT "${toString backendPorts.site.value}"
-                _upsert_env "$_ENV_FILE" DASHBOARD_PORT "${toString dashboardPorts.http.value}"
-                _upsert_env "$_ENV_FILE" CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
-                _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL "http://127.0.0.1:${toString backendPorts.api.value}"
-                _upsert_env "$_ENV_FILE" VITE_CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
+                _upsert_env "$_ENV_FILE" PORT                     "$PORT"
+                _upsert_env "$_ENV_FILE" SITE_PROXY_PORT          "$SITE_PROXY_PORT"
+                _upsert_env "$_ENV_FILE" DASHBOARD_PORT           "$DASHBOARD_PORT"
+                _upsert_env "$_ENV_FILE" WEB_PORT                 "$WEB_PORT"
+                _upsert_env "$_ENV_FILE" CONVEX_URL               "$CONVEX_URL"
+                _upsert_env "$_ENV_FILE" CONVEX_SITE_URL          "$CONVEX_SITE_URL"
+                _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL   "$CONVEX_SELF_HOSTED_URL"
+                _upsert_env "$_ENV_FILE" VITE_CONVEX_URL          "$VITE_CONVEX_URL"
                 unset -f _upsert_env
                 unset _ENV_FILE
               '';
 
-              # --- Docker Compose services (each container is a separate devenv process) ---
-              # Ports are auto-allocated so multiple devs/agents can run on the same machine.
+              # ── Processes ─────────────────────────────────────────────
 
               processes.backend = {
                 exec = ''
+                  ${logTo "backend"}
                   trap 'docker compose stop backend' EXIT INT TERM
-                  fuser -k "${toString backendPorts.api.value}/tcp" 2>/dev/null || true
-                  fuser -k "${toString backendPorts.site.value}/tcp" 2>/dev/null || true
                   docker compose up -d backend
 
-                  echo "Waiting for Convex backend to become healthy..."
-                  until curl -sf http://localhost:${toString backendPorts.api.value}/version > /dev/null 2>&1; do
-                    sleep 2
-                  done
+                  echo "Waiting for Convex backend to become healthy on port $PORT..."
+                  until curl -sf "http://localhost:$PORT/version" >/dev/null 2>&1; do sleep 2; done
                   echo "Convex backend is healthy."
 
-                  mkdir -p "$DEVENV_STATE"
+                  # Reuse existing admin key if still valid; otherwise mint a new one.
                   STATE_KEY_FILE="$DEVENV_STATE/admin_key"
                   ENV_FILE="${config.devenv.root}/.env"
+                  mkdir -p "$DEVENV_STATE"
 
-                  # Read an uncommented KEY=VALUE from a dotenv-style file (strips surrounding quotes).
-                  read_env_var() {
-                    local file="$1" key="$2"
-                    [ -f "$file" ] || return 1
-                    awk -v k="$key" '
-                      BEGIN { FS = "=" }
-                      /^[[:space:]]*#/ { next }
-                      $1 == k {
-                        sub(/^[^=]*=/, "")
-                        gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-                        if ($0 ~ /^".*"$/ || $0 ~ /^'"'"'.*'"'"'$/) $0 = substr($0, 2, length($0) - 2)
-                        print; exit
-                      }' "$file"
-                  }
-
-                  # Check that an admin key authenticates against the running backend.
                   key_valid() {
                     [ -z "$1" ] && return 1
-                    local code
-                    code=$(curl -s -o /dev/null -w "%{http_code}" \
-                      -H "Authorization: Convex $1" \
-                      "http://localhost:${toString backendPorts.api.value}/api/shapes2" 2>/dev/null)
-                    [ "$code" = "200" ]
+                    [ "$(curl -s -o /dev/null -w '%{http_code}' \
+                           -H "Authorization: Convex $1" \
+                           "http://localhost:$PORT/api/shapes2" 2>/dev/null)" = "200" ]
                   }
 
-                  # Replace or append KEY=VALUE in an env file (preserves other lines).
-                  upsert_env_var() {
-                    local file="$1" key="$2" value="$3"
-                    mkdir -p "$(dirname "$file")"
-                    if [ ! -f "$file" ]; then
-                      printf '%s=%s\n' "$key" "$value" > "$file"
-                      return
-                    fi
-                    if grep -Eq "^[[:space:]]*''${key}=" "$file"; then
-                      awk -v k="$key" -v v="$value" '
-                        BEGIN { FS = OFS = "="; replaced = 0 }
-                        !replaced && $0 !~ /^[[:space:]]*#/ && $1 == k { print k "=" v; replaced = 1; next }
-                        { print }
-                      ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-                    else
-                      printf '%s=%s\n' "$key" "$value" >> "$file"
-                    fi
-                  }
-
-                  # Reuse the previous key if it still authenticates; otherwise mint a new one.
                   CURRENT_KEY=""
                   [ -s "$STATE_KEY_FILE" ] && CURRENT_KEY=$(cat "$STATE_KEY_FILE")
                   if ! key_valid "$CURRENT_KEY"; then
-                    CURRENT_KEY=$(read_env_var "$ENV_FILE" CONVEX_SELF_HOSTED_ADMIN_KEY || true)
+                    CURRENT_KEY=$(awk -F= '/^CONVEX_SELF_HOSTED_ADMIN_KEY=/{sub(/^[^=]*=/,""); print; exit}' "$ENV_FILE" 2>/dev/null)
                   fi
-
                   if key_valid "$CURRENT_KEY"; then
                     echo "Reusing existing CONVEX_SELF_HOSTED_ADMIN_KEY."
                     ADMIN_KEY="$CURRENT_KEY"
@@ -502,7 +479,14 @@
                   fi
 
                   echo "$ADMIN_KEY" > "$STATE_KEY_FILE"
-                  upsert_env_var "$ENV_FILE" CONVEX_SELF_HOSTED_ADMIN_KEY "$ADMIN_KEY"
+                  # Upsert admin key into .env.
+                  if grep -Eq '^CONVEX_SELF_HOSTED_ADMIN_KEY=' "$ENV_FILE" 2>/dev/null; then
+                    awk -v v="$ADMIN_KEY" '
+                      /^CONVEX_SELF_HOSTED_ADMIN_KEY=/{print "CONVEX_SELF_HOSTED_ADMIN_KEY="v; next} {print}
+                    ' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+                  else
+                    printf 'CONVEX_SELF_HOSTED_ADMIN_KEY=%s\n' "$ADMIN_KEY" >> "$ENV_FILE"
+                  fi
                   echo "Admin key ready (state: $STATE_KEY_FILE, env: $ENV_FILE)."
 
                   docker compose logs -f backend
@@ -520,8 +504,8 @@
 
               processes.dashboard = {
                 exec = ''
+                  ${logTo "dashboard"}
                   trap 'docker compose stop dashboard' EXIT INT TERM
-                  fuser -k "${toString dashboardPorts.http.value}/tcp" 2>/dev/null || true
                   export CONVEX_SELF_HOSTED_ADMIN_KEY=$(cat "$DEVENV_STATE/admin_key")
                   docker compose up -d dashboard
                   docker compose logs -f dashboard
@@ -530,14 +514,16 @@
                 after = ["devenv:processes:backend"];
               };
 
-              # Convex backend dev mode (hot-reload for convex functions)
+              # Convex functions hot-reload. All env comes from the
+              # convex_backend secretspec profile (CONVEX_SELF_HOSTED_URL,
+              # CLERK_JWT_ISSUER_DOMAIN etc. — declared in secretspec.toml,
+              # sourced from the single root .env via the provider set by
+              # env.SECRETSPEC_PROVIDER above).
               processes.convex-backend = {
                 exec = ''
+                  ${logTo "convex-backend"}
                   export CONVEX_SELF_HOSTED_ADMIN_KEY=$(cat "$DEVENV_STATE/admin_key")
                   bun install
-
-                  # Run inside secretspec so CLERK_JWT_ISSUER_DOMAIN is available
-                  # for both the env-set command and the convex dev subprocess
                   exec secretspec run --profile convex_backend -- sh -c '
                     if [ -n "$CLERK_JWT_ISSUER_DOMAIN" ]; then
                       bun -b convex env set CLERK_JWT_ISSUER_DOMAIN "$CLERK_JWT_ISSUER_DOMAIN" 2>/dev/null || true
@@ -549,20 +535,21 @@
                 after = ["devenv:processes:backend"];
               };
 
-              # CRM Worker (Rust service that connects to Telegram/Convex)
+              # Rust worker: subscribes to Convex, drives Telegram.
               processes.crm-worker = {
                 exec = ''
+                  ${logTo "crm-worker"}
                   exec secretspec run --profile crm_worker -- cargo watch -x 'run -p crm-worker'
                 '';
                 after = ["devenv:processes:backend"];
               };
 
-              # Frontend dev server (React + Vite)
+              # Vite dev server.
               processes.crm-chat-web = {
                 exec = ''
-                  fuser -k "${toString (config.processes.crm-chat-web.ports.http.value)}/tcp" 2>/dev/null || true
+                  ${logTo "crm-chat-web"}
                   bun install
-                  exec bun dev
+                  exec bun dev --port "$WEB_PORT"
                 '';
                 cwd = "${config.devenv.root}/bins/crm-chat-web";
                 ports.http.allocate = 5173;
