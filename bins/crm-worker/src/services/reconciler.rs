@@ -280,7 +280,7 @@ async fn discover_and_register_sessions(
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))
         {
-            Ok(client_id) => {
+            Ok(Some(client_id)) => {
                 registered += 1;
                 info!(
                     client_id,
@@ -288,6 +288,16 @@ async fn discover_and_register_sessions(
                     owner = %owner_id,
                     "Registered session from disk"
                 );
+            }
+            Ok(None) => {
+                info!(
+                    external_id = %external_id,
+                    owner = %owner_id,
+                    path = ?session_path,
+                    "Session blocked by deletion tombstone, removing orphan"
+                );
+                std::fs::remove_file(session_path).ok();
+                skipped += 1;
             }
             Err(e) => {
                 warn!(

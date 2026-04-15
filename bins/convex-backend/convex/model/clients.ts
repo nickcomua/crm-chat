@@ -53,6 +53,12 @@ export const clientsTable = defineTable(clientFields)
   .index("by_userId_externalId", ["userId", "externalId"])
   .index("by_phase", ["phase"]);
 
+export const deletedClientsTable = defineTable({
+  userId: v.string(),
+  telegramId: v.string(),
+  deletedAt: v.number(),
+}).index("by_userId_telegramId", ["userId", "telegramId"]);
+
 const PHONE_AUTH_TERMINAL = new Set(["Connected", "Failed", "Cancelled"]);
 const QR_AUTH_TERMINAL = new Set([
   "Authorized",
@@ -118,6 +124,13 @@ export const deleteClient = humanMutation({
       }
     }
 
+    // Write tombstone so workerRegisterConnected won't resurrect this client
+    await ctx.db.insert("deletedClients", {
+      userId: client.userId,
+      telegramId: client.telegramId,
+      deletedAt: Date.now(),
+    });
+
     await ctx.db.delete(clientId);
     return ok(null);
   },
@@ -142,8 +155,19 @@ export const workerRegisterConnected = workerMutation({
     phoneNumber: v.optional(v.string()),
     externalId: v.optional(v.string()),
   },
-  returns: v.id("clients"),
+  returns: v.union(v.id("clients"), v.null()),
   handler: async (ctx, args) => {
+    // Check if this client was previously deleted by the user
+    const tombstone = await ctx.db
+      .query("deletedClients")
+      .withIndex("by_userId_telegramId", (q) =>
+        q.eq("userId", args.userId).eq("telegramId", args.telegramId)
+      )
+      .unique();
+    if (tombstone) {
+      return null;
+    }
+
     const { phoneNumber, externalId, ...lookupArgs } = args;
     const existing = await ctx.db
       .query("clients")

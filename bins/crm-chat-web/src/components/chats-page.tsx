@@ -1,17 +1,26 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery } from "convex-helpers/react/cache";
 import { MessageSquare } from "lucide-react";
+import { useRef } from "react";
 import { api } from "@/lib/convex";
 import { cn } from "@/lib/utils";
 import { ChatList } from "./chat-list";
-import { MessageList } from "./message-list";
+import { MessageList, makeScrollRequest } from "./message-list";
 
 export function ChatsPage(): React.ReactNode {
   const params = useParams({ strict: false });
   const search = useSearch({ strict: false }) as { messageId?: string };
   const navigate = useNavigate();
   const selectedChatId = params.chatId ?? null;
-  const targetMessageId = search?.messageId;
+
+  // Convert URL search param into a scroll request only when it changes.
+  const prevMessageIdRef = useRef(search?.messageId);
+  if (prevMessageIdRef.current !== search?.messageId) {
+    prevMessageIdRef.current = search?.messageId;
+  }
+  const scrollTo = search?.messageId
+    ? makeScrollRequest(search.messageId)
+    : undefined;
 
   const clients = useQuery(api.model.clients.list);
   const chats = useQuery(api.model.chats.list);
@@ -57,7 +66,7 @@ export function ChatsPage(): React.ReactNode {
           <MessageList
             chatId={selectedChatId}
             onBack={handleBack}
-            targetMessageId={targetMessageId}
+            scrollTo={scrollTo}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center">

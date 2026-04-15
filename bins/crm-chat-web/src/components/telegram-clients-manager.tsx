@@ -218,6 +218,7 @@ function ClientCard({
               Cancel
             </Button>
             <Button
+              aria-label="Confirm deletion"
               onClick={() => {
                 setShowDeleteConfirm(false);
                 onDelete();

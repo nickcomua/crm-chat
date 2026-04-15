@@ -24,4 +24,6 @@ pub struct MessageSummary {
     pub media_external_id: Option<ExternalId>,
     /// Classified media summary with metadata (if media is present).
     pub media_summary: Option<MediaSummary>,
+    /// Platform-specific ID of the message this is replying to (if any).
+    pub reply_to_message_id: Option<i32>,
 }

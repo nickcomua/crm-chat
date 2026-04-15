@@ -75,7 +75,6 @@ test.describe("Replies — Backend", () => {
       robot,
       {
         replyToMessageId: originalMsgId,
-        replyToText: "Original message",
         timestamp: Date.now(),
       }
     );
@@ -86,13 +85,11 @@ test.describe("Replies — Backend", () => {
     })) as Array<{
       messageId: string;
       replyToMessageId?: string;
-      replyToText?: string;
     }>;
 
     const reply = msgs.find((m) => m.messageId === replyMsgId);
     expect(reply).toBeTruthy();
     expect(reply?.replyToMessageId).toBe(originalMsgId);
-    expect(reply?.replyToText).toBe("Original message");
   });
 
   test("message without reply has no reply fields", async () => {
@@ -162,7 +159,6 @@ test.describe("Replies — UI", () => {
       robot,
       {
         replyToMessageId: originalId,
-        replyToText: "I said something important",
         timestamp: Date.now(),
       }
     );
@@ -201,7 +197,6 @@ test.describe("Replies — UI", () => {
       robot,
       {
         replyToMessageId: longMsgId,
-        replyToText: longText,
         timestamp: Date.now(),
       }
     );

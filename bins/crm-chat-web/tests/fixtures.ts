@@ -287,6 +287,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           .withEnvironment({
             RESTATE_OBSERVABILITY__LOG__FORMAT: "json",
           })
+          .withExtraHosts([
+            { host: "host.docker.internal", ipAddress: "host-gateway" },
+          ])
           .withStartupTimeout(60_000)
           .start();
 

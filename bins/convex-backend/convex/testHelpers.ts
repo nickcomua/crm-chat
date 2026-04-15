@@ -101,7 +101,6 @@ export const seedMessage = workerMutation({
     mediaExternalId: v.optional(v.string()),
     mediaKind: v.optional(mediaKind),
     replyToMessageId: v.optional(v.string()),
-    replyToText: v.optional(v.string()),
     forwardedFrom: v.optional(forwardedFromValidator),
     reactions: v.optional(v.array(reactionValidator)),
   },
@@ -157,6 +156,13 @@ export const deleteClient = workerMutation({
     for (const c of chats) {
       await ctx.db.delete(c._id);
     }
+
+    // Write tombstone so workerRegisterConnected won't resurrect this client
+    await ctx.db.insert("deletedClients", {
+      userId: client.userId,
+      telegramId: client.telegramId,
+      deletedAt: Date.now(),
+    });
 
     await ctx.db.delete(clientId);
     return null;

@@ -320,6 +320,7 @@
           packages = [
             pkgs.bun
             pkgs.bun2nix
+            pkgs.nodejs_24
             biomeFor.${system}
           ];
         };
