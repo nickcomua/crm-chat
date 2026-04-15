@@ -567,29 +567,24 @@ export const workerCompleteVerifyPassword = workerMutation({
 // Pending work (for reconciler dispatch)
 // =============================================================================
 
-/** Phone auth sessions that need a worker. */
+/** Phone auth sessions that need a worker.
+ *
+ *  Returns every row in a non-terminal step so the worker job stays alive
+ *  across the internal SendingCode → WaitingCode → VerifyingCode →
+ *  WaitingPassword → VerifyingPassword progression. The job only exits when
+ *  the row transitions to a terminal step (Connected/Failed/Cancelled) or
+ *  is deleted, at which point the runner aborts its task. */
 export const pendingWork = workerQuery({
   args: {},
   returns: v.array(workItem),
   handler: async (ctx) => {
-    const work: { service: string; key: string; handler: string }[] = [];
-    for (const step of [
-      "SendingCode",
-      "VerifyingCode",
-      "VerifyingPassword",
-    ] as const) {
-      const auths = await ctx.db
-        .query("phoneAuths")
-        .withIndex("by_step", (q) => q.eq("step", step))
-        .collect();
-      for (const a of auths) {
-        work.push({
-          service: "PhoneAuthWorkflow",
-          key: a._id,
-          handler: "run",
-        });
-      }
-    }
-    return work;
+    const all = await ctx.db.query("phoneAuths").collect();
+    return all
+      .filter((a) => !PHONE_AUTH_TERMINAL.has(a.step))
+      .map((a) => ({
+        service: "PhoneAuthWorkflow",
+        key: a._id,
+        handler: "run",
+      }));
   },
 });

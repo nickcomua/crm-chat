@@ -374,19 +374,25 @@ export const getStep = workerQuery({
 // Pending work (for reconciler dispatch)
 // =============================================================================
 
-/** QR auth sessions that need a worker. */
+/** QR auth sessions that need a worker.
+ *
+ *  Returns every row in a non-terminal step so that a worker picked up at
+ *  step=Pending continues to be tracked as the step progresses through
+ *  Generating/Token. The worker job only exits when the row transitions
+ *  to a terminal step (Authorized/AlreadyAuthorized/Failed/Cancelled) or
+ *  is deleted — at which point it drops out of this set and its task is
+ *  aborted by the runner. */
 export const pendingWork = workerQuery({
   args: {},
   returns: v.array(workItem),
   handler: async (ctx) => {
-    const pending = await ctx.db
-      .query("qrAuths")
-      .withIndex("by_step", (q) => q.eq("step", "Pending"))
-      .collect();
-    return pending.map((a) => ({
-      service: "QrAuthWorkflow",
-      key: a._id,
-      handler: "run",
-    }));
+    const all = await ctx.db.query("qrAuths").collect();
+    return all
+      .filter((a) => !QR_AUTH_TERMINAL.has(a.step))
+      .map((a) => ({
+        service: "QrAuthWorkflow",
+        key: a._id,
+        handler: "run",
+      }));
   },
 });

@@ -1,22 +1,4 @@
 services:
-  restate:
-    image: docker.restate.dev/restatedev/restate:latest
-    # image: docker.io/restatedev/restate:1.6
-    ports:
-      - "${RESTATE_INGRESS_PORT:-8080}:8080"
-      - "${RESTATE_ADMIN_PORT:-9070}:9070"
-      - "${RESTATE_ADMIN_PORT_2:-9071}:9071"
-    extra_hosts:
-      - host.docker.internal:host-gateway
-    volumes:
-      - ./target/restate-data:/restate-data
-    environment:
-      - RESTATE_NODE_NAME=crm-restate
-    healthcheck:
-      test: curl -f http://localhost:8080/restate/health
-      interval: 5s
-      start_period: 10s
-
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
     stop_grace_period: 10s
@@ -65,17 +47,11 @@ services:
       - TG_HASH=${TG_HASH}
       - CONVEX_URL=${CONVEX_URL:-http://localhost:3210}
       - CLERK_M2M_SECRET_KEY=${CLERK_M2M_SECRET_KEY}
-      - RESTATE_ADMIN_URL=http://restate:9070
-      - RESTATE_INGRESS_URL=http://restate:8080
-      # crm-worker's port 9080 is now on the backend's network interface
-      - RESTATE_SERVICE_URL=http://backend:9080
       - MAX_MEDIA_WORKFLOWS=${MAX_MEDIA_WORKFLOWS:-2}
       - SENTRY_URL=${SENTRY_URL:-}
       - RUST_LOG=${RUST_LOG:-info}
       - TG_SESSION_DIR=/crm-worker-data
     depends_on:
-      restate:
-        condition: service_healthy
       backend:
         condition: service_healthy
 

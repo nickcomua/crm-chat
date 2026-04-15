@@ -12,15 +12,11 @@ An AI-powered application that aggregates conversations from Telegram (with pote
 
 ```
 Browser (React) ◄──WebSocket──► Convex (Database) ◄──Rust SDK──► Worker ◄──► Telegram
-                                                                   │
-                                                                Restate
-                                                              (Workflows)
 ```
 
 - **Frontend**: React + Vite with real-time Convex subscriptions, Clerk auth, shadcn/ui
-- **Backend**: Self-hosted Convex for database, functions, and file storage
-- **Worker**: Rust service using grammers for Telegram integration
-- **Restate**: Durable workflow engine for reliable multi-step operations
+- **Backend**: Self-hosted Convex for database, functions, and file storage — also the job queue (each `pendingWork` query yields the entity set a worker job still needs to act on)
+- **Worker**: Rust service using grammers for Telegram integration; subscribes to each `pendingWork` stream and spawns per-entity tokio tasks, aborting them when the entity leaves the set
 
 See [Architecture](docs/ARCHITECTURE.md) for detailed diagrams and data flow.
 

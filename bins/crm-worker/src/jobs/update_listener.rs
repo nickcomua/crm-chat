@@ -1,108 +1,110 @@
-//! UpdateListener — Restate virtual object for real-time Telegram update processing.
+//! UpdateListener — long-running job that processes the Telegram update
+//! stream for a connected client.
 //!
-//! Keyed by `client_id`. Subscribes to Telegram's update stream and processes
-//! new messages, edits, and deletions in real-time. Periodically refreshes
-//! the set of scan-enabled chats.
-//!
-//! Domain-driven: reads client state from Convex. Cancellation is handled via
-//! a domain watcher that subscribes to the client's phase — when it becomes
-//! "Disconnected" (or the client is deleted), the listener exits.
+//! Trigger: `clients.pendingWork` entry with `service = "UpdateListener"`
+//! (produced when `phase = Listening`). The runner aborts this job when
+//! the client leaves the set (phase changes away from Listening or record
+//! is deleted), so no in-task cancellation plumbing is needed.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use convex_backend::{
     ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MessagesWorkerMarkMessageDeletedArgs,
     MessagesWorkerUpsertMessageArgs,
 };
-use futures::StreamExt;
+use futures::{StreamExt, stream::BoxStream};
 use messanger_interface::{MessengerClient, Update};
 use messanger_telegram::TelegramClient;
-use restate_sdk::prelude::*;
-use restate_sdk::serde::Json;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _, EntityRequest};
-use crate::ops::domain_watcher::spawn_client_phase_watcher;
+use crate::job::{Job, JobCtx};
+use crate::ops::convex::{self as cx, ConvexWarnExt as _};
 use crate::ops::media::download_and_upload_media;
 use crate::ops::telegram::to_upsert_media_kind;
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
+use crate::session_manager::SessionManager as _;
 
-use super::dialog_sync::ClientFields;
+const SERVICE: &str = "UpdateListener";
 
-#[restate_sdk::object]
-pub trait UpdateListener {
-    async fn listen(req: Json<EntityRequest>) -> Result<(), HandlerError>;
+struct ClientFields {
+    client_id: String,
+    user_id: String,
 }
 
-pub struct UpdateListenerImpl {
-    pub convex: ConvexApiClient,
-    pub sessions: Arc<TelegramSessionManager>,
-}
+pub struct UpdateListenerJob;
 
-impl UpdateListener for UpdateListenerImpl {
-    async fn listen(
-        &self,
-        _ctx: ObjectContext<'_>,
-        req: Json<EntityRequest>,
-    ) -> Result<(), HandlerError> {
-        let client_id = req.into_inner().entity_id;
+#[async_trait]
+impl Job for UpdateListenerJob {
+    fn name(&self) -> &'static str {
+        SERVICE
+    }
 
-        // Query fresh domain state
-        let client = self
+    async fn subscribe(&self, ctx: &JobCtx) -> anyhow::Result<BoxStream<'static, Vec<String>>> {
+        let sub = ctx.convex.subscribe_clients_pending_work().await?;
+        Ok(sub
+            .filter_map(|res| async move {
+                match res {
+                    Ok(items) => Some(
+                        items
+                            .into_iter()
+                            .filter(|i| i.service == SERVICE)
+                            .map(|i| i.key)
+                            .collect(),
+                    ),
+                    Err(e) => {
+                        warn!(error = %e, "clients.pendingWork subscription error");
+                        None
+                    }
+                }
+            })
+            .boxed())
+    }
+
+    async fn run_one(&self, ctx: Arc<JobCtx>, client_id: String) -> anyhow::Result<()> {
+        let client = ctx
             .convex
             .query_clients_get_for_worker(ClientsGetForWorkerArgs {
                 clientId: client_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Client {} not found", client_id))?;
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("client {client_id} not found"))?;
 
-        // Idempotency guard: only listen for Listening clients
         let phase = client.phase.as_ref().map(|p| p.to_string());
         if phase.as_deref() != Some("Listening") {
-            info!(client_id, ?phase, "UpdateListener: not Listening, skipping");
+            info!(?phase, "not Listening — skipping");
             return Ok(());
         }
-
-        let cancel_token = CancellationToken::new();
-        let _watcher = spawn_client_phase_watcher(&self.convex, &client_id, cancel_token.clone());
 
         let fields = ClientFields {
             client_id: client_id.clone(),
             user_id: client.user_id,
-            telegram_id: client.telegram_id,
         };
 
-        info!(client_id = %fields.client_id, "UpdateListener: starting");
+        info!("starting");
 
-        let tg_client = self
+        let tg = ctx
             .sessions
-            .get_for_telegram_id(&fields.user_id, &fields.telegram_id)
-            .await
-            .map_err(anyhow::Error::from)?;
+            .get_for_telegram_id(&fields.user_id, &client.telegram_id)
+            .await?;
 
-        run_listener(&self.convex, &tg_client, &fields, &cancel_token)
-            .await
-            .map_err(anyhow::Error::from)?;
+        run_listener(&ctx.convex, &tg, &fields).await?;
         Ok(())
     }
 }
 
 async fn run_listener(
     convex: &ConvexApiClient,
-    tg_client: &Arc<TelegramClient>,
+    tg: &Arc<TelegramClient>,
     req: &ClientFields,
-    token: &CancellationToken,
 ) -> Result<(), WorkerError> {
-    info!(client_id = %req.client_id, "Starting real-time update listener");
+    info!(client_id = %req.client_id, "real-time update listener running");
 
-    let mut update_stream = tg_client
+    let mut update_stream = tg
         .iter_updates()
         .await
-        .map_err(|e| WorkerError::MutationFailed(format!("Failed to start updates: {e}")))?;
+        .map_err(|e| WorkerError::MutationFailed(format!("iter_updates: {e}")))?;
 
     let mut scan_enabled_chats = load_scan_enabled_chats(convex, req).await?;
     let refresh_secs: u64 = crate::secrets::SecretSpec::builder()
@@ -112,46 +114,35 @@ async fn run_listener(
         .and_then(|s| s.secrets.scan_refresh_secs)
         .and_then(|v: String| v.parse().ok())
         .unwrap_or(60);
-    let mut refresh_interval = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
-    refresh_interval.tick().await; // consume first immediate tick
+    let mut refresh = tokio::time::interval(std::time::Duration::from_secs(refresh_secs));
+    refresh.tick().await;
 
     loop {
         tokio::select! {
             biased;
 
-            // Cancellation via domain watcher (client disconnected/deleted)
-            _ = token.cancelled() => {
-                info!("UpdateListener: cancelled (client phase changed)");
-                return Ok(());
-            }
-
-            // Periodically refresh scan-enabled chats
-            _ = refresh_interval.tick() => {
+            _ = refresh.tick() => {
                 match load_scan_enabled_chats(convex, req).await {
                     Ok(new_set) => {
                         if new_set != scan_enabled_chats {
-                            info!(count = new_set.len(), "Refreshed scan-enabled chats");
+                            info!(count = new_set.len(), "refreshed scan-enabled chats");
                             scan_enabled_chats = new_set;
                         }
                     }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to refresh scan-enabled chats");
-                    }
+                    Err(e) => warn!(error = %e, "failed to refresh scan-enabled chats"),
                 }
             }
 
             update = update_stream.next() => {
                 match update {
-                    Some(Ok(update)) => {
-                        if let Err(e) = process_update(convex, tg_client, req, &update, &scan_enabled_chats).await {
-                            warn!(error = %e, "Failed to process update");
+                    Some(Ok(u)) => {
+                        if let Err(e) = process_update(convex, tg, req, &u, &scan_enabled_chats).await {
+                            warn!(error = %e, "failed to process update");
                         }
                     }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "Error in update stream");
-                    }
+                    Some(Err(e)) => warn!(error = %e, "error in update stream"),
                     None => {
-                        info!("Update stream ended");
+                        info!("update stream ended");
                         return Ok(());
                     }
                 }
@@ -160,7 +151,6 @@ async fn run_listener(
     }
 }
 
-/// Load the set of scan-enabled chat external IDs for filtering real-time updates.
 async fn load_scan_enabled_chats(
     convex: &ConvexApiClient,
     req: &ClientFields,
@@ -178,7 +168,7 @@ async fn load_scan_enabled_chats(
 
 async fn process_update(
     convex: &ConvexApiClient,
-    tg_client: &Arc<TelegramClient>,
+    tg: &Arc<TelegramClient>,
     req: &ClientFields,
     update: &Update,
     scan_enabled_chats: &HashSet<String>,
@@ -192,7 +182,6 @@ async fn process_update(
             let chat_id = format!("{}:{}", req.client_id, msg.chat_external_id);
             let message_id = format!("{}:{}", chat_id, msg.external_id);
             let ts = msg.timestamp_ms.map(|t| t as f64).unwrap_or(0.0);
-
             let reply_to_message_id = msg
                 .reply_to_message_id
                 .map(|id| format!("{}:{}", chat_id, id));
@@ -221,13 +210,12 @@ async fn process_update(
                 .await
                 .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
-            // Real-time media download in background
             if matches!(update, Update::NewMessage(_))
                 && let Some(ref summary) = msg.media_summary
                 && let Some(ref media_ext_id) = msg.media_external_id
             {
                 let convex = convex.clone();
-                let dl_tg = tg_client.clone();
+                let dl_tg = tg.clone();
                 let dl_chat_ext = msg.chat_external_id.clone();
                 let dl_msg_ext = msg.external_id.clone();
                 let dl_media_ext = media_ext_id.clone();
@@ -246,7 +234,7 @@ async fn process_update(
                         warn!(
                             media_id = %dl_media_ext,
                             error = %e,
-                            "Failed to download media for real-time message"
+                            "failed to download real-time media"
                         );
                     }
                 });
@@ -262,21 +250,19 @@ async fn process_update(
             {
                 return Ok(());
             }
-
             for ext_id in message_external_ids {
                 convex
                     .messages_worker_mark_message_deleted(MessagesWorkerMarkMessageDeletedArgs {
                         externalId: ext_id.clone(),
                     })
                     .await
-                    .warn_on_err("Failed to mark message deleted");
+                    .warn_on_err("failed to mark message deleted");
             }
         }
 
         Update::Other { update_type, .. } => {
-            debug!(update_type, "Ignoring non-message update");
+            debug!(update_type, "ignoring non-message update");
         }
     }
-
     Ok(())
 }

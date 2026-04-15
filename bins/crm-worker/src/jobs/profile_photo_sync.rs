@@ -1,98 +1,97 @@
-//! ProfilePhotoSync — Restate virtual object for syncing chat profile photos.
+//! ProfilePhotoSync — download and upload chat profile photos.
 //!
-//! Keyed by `client_id`. Downloads profile photos from Telegram and uploads
-//! them to Convex storage. Domain-driven: reads chat list from Convex, marks
-//! photosSynced when done.
+//! Trigger: `clients.pendingWork` entry with `service = "ProfilePhotoSync"`
+//! (produced when `phase = Listening` and `photosSynced = false`).
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use convex_backend::{
     ChatsListChatsForWorkerArgs, ChatsTable, ChatsWorkerUpdateChatPhotoArgs,
     ClientsGetForWorkerArgs, ClientsWorkerMarkPhotosSyncedArgs, ConvexApi, ConvexApiClient,
 };
+use futures::{StreamExt, stream::BoxStream};
 use messanger_telegram::TelegramClient;
-use restate_sdk::prelude::*;
-use restate_sdk::serde::Json;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
-use crate::ops::convex::{ConvexResultExt as _, EntityRequest};
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
+use crate::job::{Job, JobCtx};
+use crate::ops::convex::ConvexResultExt as _;
+use crate::session_manager::SessionManager as _;
 
-#[restate_sdk::object]
-pub trait ProfilePhotoSync {
-    async fn sync(req: Json<EntityRequest>) -> Result<(), HandlerError>;
-}
+const SERVICE: &str = "ProfilePhotoSync";
 
-pub struct ProfilePhotoSyncImpl {
-    pub convex: ConvexApiClient,
-    pub sessions: Arc<TelegramSessionManager>,
-}
+pub struct ProfilePhotoSyncJob;
 
-impl ProfilePhotoSync for ProfilePhotoSyncImpl {
-    async fn sync(
-        &self,
-        _ctx: ObjectContext<'_>,
-        req: Json<EntityRequest>,
-    ) -> Result<(), HandlerError> {
-        let client_id = req.into_inner().entity_id;
+#[async_trait]
+impl Job for ProfilePhotoSyncJob {
+    fn name(&self) -> &'static str {
+        SERVICE
+    }
 
-        // Query fresh client state
-        let client = self
+    async fn subscribe(&self, ctx: &JobCtx) -> anyhow::Result<BoxStream<'static, Vec<String>>> {
+        let sub = ctx.convex.subscribe_clients_pending_work().await?;
+        Ok(sub
+            .filter_map(|res| async move {
+                match res {
+                    Ok(items) => Some(
+                        items
+                            .into_iter()
+                            .filter(|i| i.service == SERVICE)
+                            .map(|i| i.key)
+                            .collect(),
+                    ),
+                    Err(e) => {
+                        warn!(error = %e, "clients.pendingWork subscription error");
+                        None
+                    }
+                }
+            })
+            .boxed())
+    }
+
+    async fn run_one(&self, ctx: Arc<JobCtx>, client_id: String) -> anyhow::Result<()> {
+        let client = ctx
             .convex
             .query_clients_get_for_worker(ClientsGetForWorkerArgs {
                 clientId: client_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Client {} not found", client_id))?;
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("client {client_id} not found"))?;
 
-        // Idempotency guard: only process if photosSynced == false
         if client.photos_synced != Some(false) {
-            info!(
-                client_id,
-                "ProfilePhotoSync: photos already synced or not needed, skipping"
-            );
+            info!("photos already synced — skipping");
             return Ok(());
         }
 
-        info!(client_id = %client_id, "ProfilePhotoSync: starting");
+        info!("starting");
 
-        let tg_client = self
+        let tg = ctx
             .sessions
             .get_for_telegram_id(&client.user_id, &client.telegram_id)
-            .await
-            .map_err(anyhow::Error::from)?;
+            .await?;
 
-        // Query all chats for this client
-        let chats = self
+        let chats = ctx
             .convex
             .query_chats_list_chats_for_worker(ChatsListChatsForWorkerArgs {
                 clientId: client_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list chats: {e}"))?;
+            .await?;
 
-        sync_profile_photos(&self.convex, &tg_client, &client_id, &chats)
-            .await
-            .map_err(anyhow::Error::from)?;
+        sync_profile_photos(&ctx.convex, &tg, &client_id, &chats).await?;
 
-        // Mark photos as synced
-        self.convex
+        ctx.convex
             .clients_worker_mark_photos_synced(ClientsWorkerMarkPhotosSyncedArgs {
                 clientId: client_id,
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to mark photos synced: {e}"))?;
-
+            .await?;
         Ok(())
     }
 }
 
-/// Sync profile photos for all chats of a client.
 async fn sync_profile_photos(
     convex: &ConvexApiClient,
-    tg_client: &TelegramClient,
+    tg: &TelegramClient,
     client_id: &str,
     chats: &[ChatsTable],
 ) -> Result<(), WorkerError> {
@@ -100,7 +99,7 @@ async fn sync_profile_photos(
         return Ok(());
     }
 
-    info!(total = chats.len(), "Checking profile photos");
+    info!(total = chats.len(), "checking profile photos");
     let mut synced = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
@@ -111,14 +110,14 @@ async fn sync_profile_photos(
             .strip_prefix(&format!("{client_id}:"))
             .unwrap_or(&chat.chat_id);
 
-        let tg_photo_id = match tg_client.get_chat_photo_id(chat_external_id).await {
+        let tg_photo_id = match tg.get_chat_photo_id(chat_external_id).await {
             Ok(Some(id)) => id,
             Ok(None) => {
                 skipped += 1;
                 continue;
             }
             Err(e) => {
-                debug!(chat_id = %chat.chat_id, error = %e, "Failed to get photo ID");
+                debug!(chat_id = %chat.chat_id, error = %e, "failed to get photo ID");
                 failed += 1;
                 continue;
             }
@@ -133,14 +132,14 @@ async fn sync_profile_photos(
             continue;
         }
 
-        let photo_bytes = match tg_client.download_chat_photo(chat_external_id).await {
+        let photo_bytes = match tg.download_chat_photo(chat_external_id).await {
             Ok(Some(bytes)) => bytes,
             Ok(None) => {
                 skipped += 1;
                 continue;
             }
             Err(e) => {
-                warn!(chat_id = %chat.chat_id, error = %e, "Failed to download profile photo");
+                warn!(chat_id = %chat.chat_id, error = %e, "failed to download profile photo");
                 failed += 1;
                 continue;
             }
@@ -149,17 +148,17 @@ async fn sync_profile_photos(
         match upload_photo_to_convex(convex, &chat.chat_id, &tg_photo_id, &photo_bytes).await {
             Ok(()) => {
                 synced += 1;
-                debug!(chat_id = %chat.chat_id, "Profile photo synced");
+                debug!(chat_id = %chat.chat_id, "profile photo synced");
             }
             Err(e) => {
-                warn!(chat_id = %chat.chat_id, error = %e, "Failed to upload profile photo");
+                warn!(chat_id = %chat.chat_id, error = %e, "failed to upload profile photo");
                 failed += 1;
             }
         }
     }
 
     if synced > 0 || failed > 0 {
-        info!(synced, skipped, failed, "Profile photo sync complete");
+        info!(synced, skipped, failed, "profile photo sync complete");
     }
     Ok(())
 }
@@ -171,7 +170,6 @@ async fn upload_photo_to_convex(
     photo_bytes: &[u8],
 ) -> Result<(), WorkerError> {
     let upload_url = convex.media_generate_upload_url().await?;
-
     let http_client = reqwest::Client::new();
     let response = http_client
         .post(&upload_url)
@@ -179,24 +177,24 @@ async fn upload_photo_to_convex(
         .body(photo_bytes.to_vec())
         .send()
         .await
-        .map_err(|e| WorkerError::MutationFailed(format!("Failed to upload photo: {e}")))?;
+        .map_err(|e| WorkerError::MutationFailed(format!("upload photo: {e}")))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(WorkerError::MutationFailed(format!(
-            "Photo upload failed (HTTP {status}): {body}"
+            "photo upload HTTP {status}: {body}"
         )));
     }
 
     let upload_result: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| WorkerError::MutationFailed(format!("Failed to parse upload: {e}")))?;
+        .map_err(|e| WorkerError::MutationFailed(format!("parse upload: {e}")))?;
 
-    let storage_id = upload_result["storageId"].as_str().ok_or_else(|| {
-        WorkerError::MutationFailed("Missing storageId in upload response".to_string())
-    })?;
+    let storage_id = upload_result["storageId"]
+        .as_str()
+        .ok_or_else(|| WorkerError::MutationFailed("missing storageId".into()))?;
 
     convex
         .chats_worker_update_chat_photo(ChatsWorkerUpdateChatPhotoArgs {
@@ -206,6 +204,5 @@ async fn upload_photo_to_convex(
         })
         .await
         .check()?;
-
     Ok(())
 }

@@ -4,7 +4,7 @@
  * plans/2026-04-08-contacts-feature-v2.md).
  *
  * Environment assumptions:
- *   - The `workerBackend` fixture spins up a fresh Convex + Restate + crm-worker
+ *   - The `workerBackend` fixture spins up a fresh Convex + crm-worker
  *     per worker process (see fixtures.ts). No external state needed.
  *   - Each test seeds two Dialog chats with a handful of incoming messages via
  *     the robot client and then drives the UI to create / attach a contact.

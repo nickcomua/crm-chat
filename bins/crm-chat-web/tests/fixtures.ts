@@ -48,9 +48,6 @@ function ensureDockerHost(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Poll Restate admin API until the worker deployment is registered
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Helper: Wait for a ChildProcess to exit
 // ---------------------------------------------------------------------------
 function onExit(proc: ChildProcess): Promise<number | null> {
@@ -83,35 +80,6 @@ async function killProcess(
       }, timeoutMs)
     ),
   ]);
-}
-
-async function waitForWorkerReady(
-  worker: ChildProcess,
-  adminPort: number
-): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (worker.exitCode !== null) {
-      throw new Error(
-        `crm-worker exited prematurely (code ${worker.exitCode})`
-      );
-    }
-    try {
-      const resp = await fetch(`http://localhost:${adminPort}/deployments`);
-      if (resp.ok) {
-        const body = (await resp.json()) as { deployments?: unknown[] };
-        if (body.deployments && body.deployments.length > 0) {
-          // Extra wait for the TaskOrchestrator to start its subscription loop
-          await new Promise((r) => setTimeout(r, 2000));
-          return;
-        }
-      }
-    } catch {
-      // Restate admin not ready yet — keep polling
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error("crm-worker did not register with Restate within 30s");
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +115,6 @@ async function teardownResources(
   resources: {
     vitePreview?: ChildProcess;
     worker?: ChildProcess;
-    restateContainer?: StartedTestContainer;
     container?: StartedTestContainer;
     outDir?: string;
   }
@@ -160,11 +127,6 @@ async function teardownResources(
 
   if (resources.worker) {
     await killProcess(resources.worker);
-  }
-
-  if (resources.restateContainer) {
-    console.log(`[${wid}] Stopping Restate container...`);
-    await resources.restateContainer.stop();
   }
 
   if (resources.container) {
@@ -200,7 +162,7 @@ interface WorkerFixtures {
 }
 
 // ---------------------------------------------------------------------------
-// Worker-scoped fixture: per-worker Convex + Restate + crm-worker
+// Worker-scoped fixture: per-worker Convex + crm-worker
 // ---------------------------------------------------------------------------
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   // Override baseURL so page.goto("/") uses the fixture's Vite preview URL
@@ -220,23 +182,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         (
           await $({
             quiet: true,
-          })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 6`
+          })`node ${path.join(TESTS_DIR, "find-ports.mjs")} 3`
         ).stdout.trim()
       );
-      const [
-        convexPort,
-        sitePort,
-        restateIngressPort,
-        restateAdminPort,
-        workerServicePort,
-        vitePort,
-      ] = ports;
+      const [convexPort, sitePort, vitePort] = ports;
       console.log(
-        `[${wid}] Ports — convex:${convexPort} site:${sitePort} restate-ingress:${restateIngressPort} restate-admin:${restateAdminPort} worker:${workerServicePort} vite:${vitePort}`
+        `[${wid}] Ports — convex:${convexPort} site:${sitePort} vite:${vitePort}`
       );
 
       let container: StartedTestContainer | undefined;
-      let restateContainer: StartedTestContainer | undefined;
       let worker: ChildProcess | undefined;
       let vitePreview: ChildProcess | undefined;
       let outDir: string | undefined;
@@ -274,28 +228,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           1000
         );
         console.log(`[${wid}] Backend ready`);
-
-        // ── 1b. Start Restate container ─────────────────────────────
-        console.log(`[${wid}] Starting Restate container...`);
-        restateContainer = await new GenericContainer(
-          "docker.io/restatedev/restate:1.3"
-        )
-          .withExposedPorts(
-            { container: 8080, host: restateIngressPort },
-            { container: 9070, host: restateAdminPort }
-          )
-          .withEnvironment({
-            RESTATE_OBSERVABILITY__LOG__FORMAT: "json",
-          })
-          .withExtraHosts([
-            { host: "host.docker.internal", ipAddress: "host-gateway" },
-          ])
-          .withStartupTimeout(60_000)
-          .start();
-
-        console.log(
-          `[${wid}] Restate started (ingress:${restateIngressPort}, admin:${restateAdminPort})`
-        );
 
         // ── 2. Generate admin key ─────────────────────────────────────
         console.log(`[${wid}] Generating admin key...`);
@@ -371,21 +303,30 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         worker = spawn(workerBin, [], {
           env: {
             PATH: process.env.PATH ?? "",
+            // Worker uses secretspec, which defaults to the dotenv provider.
+            // In tests we inject secrets directly as env vars — tell
+            // secretspec to read from the environment instead.
+            SECRETSPEC_PROVIDER: "env",
             CONVEX_URL: convexUrl,
             CLERK_M2M_SECRET_KEY: m2mSecretKey,
             TG_ID: env.TG_ID,
             TG_HASH: env.TG_HASH,
             TG_SESSION_DIR: sessionDir,
-            RESTATE_SERVICE_PORT: String(workerServicePort),
-            RESTATE_ADMIN_URL: `http://localhost:${restateAdminPort}`,
-            RESTATE_INGRESS_URL: `http://localhost:${restateIngressPort}`,
             SCAN_REFRESH_SECS: "5",
             RUST_LOG: "debug,crm_worker=debug",
           },
           stdio: ["ignore", workerLogFd, workerLogFd],
         });
 
-        await waitForWorkerReady(worker, restateAdminPort);
+        // The worker now subscribes to Convex directly and has no readiness
+        // endpoint — wait a couple of seconds for its startup log, then
+        // assume ready. If it exited early, bail.
+        await new Promise((r) => setTimeout(r, 2000));
+        if (worker.exitCode !== null) {
+          throw new Error(
+            `crm-worker exited prematurely (code ${worker.exitCode})`
+          );
+        }
         console.log(`[${wid}] crm-worker running (PID ${worker.pid})`);
 
         // ── 7. Build and start Vite preview ───────────────────────────
@@ -446,7 +387,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         await teardownResources(wid, {
           vitePreview,
           worker,
-          restateContainer,
           container,
           outDir,
         });

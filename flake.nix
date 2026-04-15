@@ -354,10 +354,8 @@
               ...
             }: let
               # Shorthand for allocated port values
-              restatePorts = config.processes.restate.ports;
               backendPorts = config.processes.backend.ports;
               dashboardPorts = config.processes.dashboard.ports;
-              workerPorts = config.processes.crm-worker.ports;
             in {
               devenv.root = let
                 devenvRoot = builtins.readFile devenv-root.outPath;
@@ -386,28 +384,9 @@
               env.CONVEX_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
               env.VITE_CONVEX_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
 
-              # Restate (ports resolved at runtime by devenv)
-              env.RESTATE_INGRESS_PORT = toString restatePorts.ingress.value;
-              env.RESTATE_ADMIN_PORT = toString restatePorts.admin.value;
-              env.RESTATE_ADMIN_URL = "http://localhost:${toString restatePorts.admin.value}";
-              env.RESTATE_INGRESS_URL = "http://localhost:${toString restatePorts.ingress.value}";
-
-              # CRM Worker (Restate callback port)
-              env.RESTATE_SERVICE_PORT = toString workerPorts.service.value;
-              env.RESTATE_SERVICE_URL = "http://host.docker.internal:${toString workerPorts.service.value}";
-
               enterShell = ''
                 export PATH="$HOME/.local/bin:$PATH"
                 export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:${pkgs.dbus.lib}/lib:''${LD_LIBRARY_PATH:-}"
-
-                # Allow Docker containers to reach host ports (needed for Restate -> crm-worker callback).
-                # The default iptables INPUT chain rejects non-whitelisted traffic, which blocks
-                # host.docker.internal from Docker bridge networks.
-                _docker_subnet=$(docker network inspect crm-chat_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || echo "172.18.0.0/16")
-                if ! sudo iptables -C INPUT -s "$_docker_subnet" -j ACCEPT 2>/dev/null; then
-                  sudo iptables -I INPUT -s "$_docker_subnet" -j ACCEPT \
-                    && echo "Firewall: allowed Docker subnet $_docker_subnet -> host"
-                fi
 
                 # Sync devenv-allocated ports/URLs into .env so tools that only read
                 # the dotenv file (convex CLI, scripts, editors) see the same values
@@ -439,46 +418,12 @@
                 _upsert_env "$_ENV_FILE" CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
                 _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL "http://127.0.0.1:${toString backendPorts.api.value}"
                 _upsert_env "$_ENV_FILE" VITE_CONVEX_URL "http://127.0.0.1:${toString backendPorts.api.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_INGRESS_PORT "${toString restatePorts.ingress.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_ADMIN_PORT "${toString restatePorts.admin.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_ADMIN_URL "http://localhost:${toString restatePorts.admin.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_INGRESS_URL "http://localhost:${toString restatePorts.ingress.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_SERVICE_PORT "${toString workerPorts.service.value}"
-                _upsert_env "$_ENV_FILE" RESTATE_SERVICE_URL "http://host.docker.internal:${toString workerPorts.service.value}"
                 unset -f _upsert_env
                 unset _ENV_FILE
               '';
 
               # --- Docker Compose services (each container is a separate devenv process) ---
               # Ports are auto-allocated so multiple devs/agents can run on the same machine.
-
-              processes.restate = {
-                exec = ''
-                  trap 'docker compose stop restate' EXIT INT TERM
-                  fuser -k "${toString restatePorts.ingress.value}/tcp" 2>/dev/null || true
-                  fuser -k "${toString restatePorts.admin.value}/tcp" 2>/dev/null || true
-                  docker compose up -d restate
-                  echo "Waiting for Restate to become healthy..."
-                  until curl -sf http://localhost:${toString restatePorts.ingress.value}/restate/health > /dev/null 2>&1; do
-                    sleep 2
-                  done
-                  echo "Restate is healthy."
-                  docker compose logs -f restate
-                '';
-                ports = {
-                  ingress.allocate = 8080;
-                  admin.allocate = 9070;
-                };
-                ready = {
-                  http.get = {
-                    host = "localhost";
-                    port = restatePorts.ingress.value;
-                    path = "/restate/health";
-                  };
-                  initial_delay = 5;
-                  period = 3;
-                };
-              };
 
               processes.backend = {
                 exec = ''
@@ -604,14 +549,12 @@
                 after = ["devenv:processes:backend"];
               };
 
-              # CRM Worker (Rust service that connects to Telegram/Convex/Restate)
+              # CRM Worker (Rust service that connects to Telegram/Convex)
               processes.crm-worker = {
                 exec = ''
-                  fuser -k "${toString workerPorts.service.value}/tcp" 2>/dev/null || true
                   exec secretspec run --profile crm_worker -- cargo watch -x 'run -p crm-worker'
                 '';
-                ports.service.allocate = 9080;
-                after = ["devenv:processes:backend" "devenv:processes:restate"];
+                after = ["devenv:processes:backend"];
               };
 
               # Frontend dev server (React + Vite)

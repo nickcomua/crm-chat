@@ -38,29 +38,25 @@ bun x convex deploy
 
 ## Services Overview
 
-Docker Compose starts five services:
+Docker Compose starts four services:
 
 | Service | Image | Ports | Purpose |
 |---------|-------|-------|---------|
 | **backend** | `ghcr.io/get-convex/convex-backend` | 3210 (API), 3211 (site proxy) | Self-hosted Convex database + functions |
 | **dashboard** | `ghcr.io/get-convex/convex-dashboard` | 6791 | Convex admin dashboard |
-| **restate** | `docker.restate.dev/restatedev/restate` | 8080 (ingress), 9070 (admin), 9071 (metrics) | Durable workflow orchestration engine |
-| **crm-worker** | `nick395/crm-worker` | — | Rust Telegram client + sync service |
+| **crm-worker** | `nick395/crm-worker` | — | Rust Telegram client + sync jobs |
 | **web** | `nick395/crm-chat-web` | 3000 (internal) | React frontend |
 
 ### Service Dependencies
 
 ```
-restate ─┐
-         ├──► crm-worker
-backend ─┤
-         ├──► dashboard
-         └──► web
+backend ──┬──► crm-worker
+          ├──► dashboard
+          └──► web
 ```
 
 - `crm-worker` shares the backend's network namespace (`network_mode: "service:backend"`) so it can reach Convex at `localhost:3210/3211` — this is required for presigned media upload URLs.
-- `dashboard` and `web` depend on `backend` being healthy.
-- `crm-worker` depends on both `restate` and `backend` being healthy.
+- `dashboard`, `web`, and `crm-worker` all depend on `backend` being healthy.
 
 ## Environment Variables
 
@@ -83,7 +79,7 @@ backend ─┤
 | `DASHBOARD_PORT` | `6791` | Dashboard port |
 | `VITE_CONVEX_URL` | `http://localhost:3210` | Convex URL for the frontend |
 | `CONVEX_URL` | `http://localhost:3210` | Convex URL for the worker |
-| `MAX_MEDIA_WORKFLOWS` | `2` | Max concurrent media download workflows |
+| `MAX_MEDIA_WORKFLOWS` | `2` | Max concurrent media downloads |
 | `RUST_LOG` | `info` | Log level for Rust services (`debug`, `info`, `warn`, `error`) |
 | `DOCUMENT_RETENTION_DELAY` | `172800` | Convex document retention (seconds, default 48h) |
 | `SENTRY_URL` | — | Sentry DSN for error tracking |
@@ -94,12 +90,11 @@ See [ENVIRONMENT.md](ENVIRONMENT.md) for a complete reference of all environment
 
 ## Data Volumes
 
-Docker Compose mounts three persistent volumes under `./target/`:
+Docker Compose mounts two persistent volumes under `./target/`:
 
 | Path | Service | Contents |
 |------|---------|----------|
 | `./target/crm-chat-data` | backend | Convex database files |
-| `./target/restate-data` | restate | Workflow state + journal |
 | `./target/crm-worker-data` | crm-worker | Telegram session files |
 
 **Back up `./target/crm-chat-data`** regularly — it contains all your Convex data (messages, chats, media references, auth state).
@@ -120,7 +115,6 @@ Docker Compose mounts three persistent volumes under `./target/`:
 
 - [ ] All containers are healthy: `docker compose ps`
 - [ ] Convex backend responds: `curl http://localhost:3210/version`
-- [ ] Restate is healthy: `curl http://localhost:8080/restate/health`
 - [ ] Dashboard is accessible at `http://localhost:6791`
 - [ ] Frontend loads and Clerk login works
 - [ ] Worker connects to Convex (check logs: `docker compose logs crm-worker`)
@@ -130,7 +124,6 @@ Docker Compose mounts three persistent volumes under `./target/`:
 - [ ] `.env` file has restricted permissions (`chmod 600 .env`)
 - [ ] Convex admin key is not exposed publicly
 - [ ] Dashboard port (6791) is not exposed to the internet
-- [ ] Restate admin port (9070) is not exposed to the internet
 - [ ] HTTPS is enforced for all public-facing endpoints
 
 ## Reverse Proxy Setup
@@ -178,9 +171,6 @@ All core services have built-in health checks:
 # Convex backend
 curl -f http://localhost:3210/version
 
-# Restate
-curl -f http://localhost:8080/restate/health
-
 # Check all container health
 docker compose ps
 ```
@@ -200,7 +190,7 @@ RUST_LOG=debug docker compose up -d crm-worker
 
 The worker uses the `RUST_LOG` env var (standard `tracing` / `env_logger` format):
 - `info` — normal operation, connection events
-- `debug` — detailed sync progress, Restate interactions
+- `debug` — detailed sync progress, per-job task lifecycle
 - `warn` — recoverable errors, retries
 - `error` — failures requiring attention
 
@@ -216,7 +206,7 @@ Set `SENTRY_URL` (worker) and `VITE_SENTRY_DSN` (frontend) to enable Sentry erro
 | Disk usage | `du -sh ./target/` | Media storage growth |
 | Convex backend memory | `docker stats backend` | Memory pressure |
 | Worker connection state | `docker compose logs crm-worker` | Telegram disconnects |
-| Restate invocation backlog | Restate admin API (port 9070) | Stuck workflows |
+| Stuck entities | Query `pendingWork` in the Convex dashboard | Rows sitting in non-terminal state for too long |
 
 ## Updating
 
@@ -240,5 +230,5 @@ bun x convex deploy
 | Worker can't reach Convex | Worker uses `network_mode: "service:backend"` — ensure backend is healthy first |
 | Media uploads fail | Worker needs `localhost:3211` (site proxy) — verify `SITE_PROXY_PORT` |
 | Dashboard shows no data | Verify `CONVEX_SELF_HOSTED_ADMIN_KEY` matches the generated key |
-| Restate workflows stuck | Check `curl http://localhost:9070/` admin API, restart restate if needed |
+| Worker task stuck | Inspect the entity row in the Convex dashboard; forcing it to a terminal state will cause the runner to abort the task on the next tick |
 | OrbStack DNS issues | Add `127.0.0.1 backend.crm-chat.orb.local` to `/etc/hosts` or use standard Docker |

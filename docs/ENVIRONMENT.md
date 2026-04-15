@@ -45,15 +45,6 @@ These are used for end-to-end tests with multiple Telegram accounts:
 | `TG_API_HASH_2` | No | e2e tests | API hash for test account 2 |
 | `TG_SESSION_FILE_2` | No | e2e tests | Session file path for test account 2 |
 
-## Restate (Workflow Engine)
-
-| Variable | Required | Default | Used By | Description |
-|----------|----------|---------|---------|-------------|
-| `RESTATE_ADMIN_URL` | No | `http://localhost:9070` | crm-worker | Restate admin API for service registration |
-| `RESTATE_INGRESS_URL` | No | `http://localhost:8080` | crm-worker | Restate ingress for workflow invocations |
-| `RESTATE_SERVICE_URL` | Yes (prod) | — | crm-worker | URL where Restate can reach the worker's HTTP service |
-| `RESTATE_SERVICE_PORT` | No | — | crm-worker | Port the worker listens on for Restate callbacks |
-
 ## Frontend (Vite)
 
 All `VITE_` variables are compiled into the frontend bundle at build time. In production Docker containers, they are injected at runtime via `env-config.js`.

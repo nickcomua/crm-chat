@@ -1,104 +1,93 @@
-//! ChatScanner — Restate virtual object for scanning messages in a single chat.
+//! ChatScanner — scan all messages in a single chat.
 //!
-//! Keyed by chat `_id`. Each chat scans independently, allowing parallel
-//! message scanning across chats.
-//! Domain-driven: reads chat state from Convex, transitions Queued → ScanningMessages → Listening.
+//! Trigger: `chats.pendingWork` entry (produced when `scanPhase = Queued`).
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use convex_backend::{
     ChatsGetForWorkerArgs, ChatsWorkerCompleteScanArgs, ChatsWorkerStartScanArgs,
     ChatsWorkerUpdateSyncProgressArgs, ChatsWorkerUpdateSyncProgressScanPhase,
     ChatsWorkerUpsertChatArgs, ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient,
     MediaWorkerCreatePendingMediaArgs, MessagesWorkerUpsertMessageArgs,
 };
-use futures::StreamExt;
+use futures::{StreamExt, stream::BoxStream};
 use messanger_interface::MessengerClient;
 use messanger_telegram::TelegramClient;
-use restate_sdk::prelude::*;
-use restate_sdk::serde::Json;
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::error::WorkerError;
-use crate::ops::convex::{self as cx, ConvexResultExt as _, EntityRequest};
+use crate::job::{Job, JobCtx};
+use crate::ops::convex::{self as cx, ConvexResultExt as _};
 use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
-use crate::session_manager::{SessionManager as _, TelegramSessionManager};
+use crate::session_manager::SessionManager as _;
 
-/// Internal request used for direct `scan_chat_messages()` calls (e.g. from
-/// UpdateListener backfill). Contains the derived fields that the Restate
-/// handler resolves from `ChatsTable` + a Convex lookup.
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ChatScanRequest {
-    pub client_id: String,
-    pub user_id: String,
-    pub external_id: String,
-    pub chat_id: String,
-    pub chat_external_id: String,
-    pub is_pinned: bool,
-    pub pinned_name: Option<String>,
+struct ChatScanRequest {
+    client_id: String,
+    user_id: String,
+    chat_id: String,
+    chat_external_id: String,
+    is_pinned: bool,
+    pinned_name: Option<String>,
 }
 
-#[restate_sdk::object]
-pub trait ChatScanner {
-    async fn scan(req: Json<EntityRequest>) -> Result<(), HandlerError>;
-}
+pub struct ChatScannerJob;
 
-pub struct ChatScannerImpl {
-    pub convex: ConvexApiClient,
-    pub sessions: Arc<TelegramSessionManager>,
-}
+#[async_trait]
+impl Job for ChatScannerJob {
+    fn name(&self) -> &'static str {
+        "ChatScanner"
+    }
 
-impl ChatScanner for ChatScannerImpl {
-    async fn scan(
-        &self,
-        _ctx: ObjectContext<'_>,
-        req: Json<EntityRequest>,
-    ) -> Result<(), HandlerError> {
-        let chat_doc_id = req.into_inner().entity_id;
+    async fn subscribe(&self, ctx: &JobCtx) -> anyhow::Result<BoxStream<'static, Vec<String>>> {
+        let sub = ctx.convex.subscribe_chats_pending_work().await?;
+        Ok(sub
+            .filter_map(|res| async move {
+                match res {
+                    Ok(items) => Some(items.into_iter().map(|i| i.key).collect()),
+                    Err(e) => {
+                        warn!(error = %e, "chats.pendingWork subscription error");
+                        None
+                    }
+                }
+            })
+            .boxed())
+    }
 
-        // Query fresh domain state
-        let chat = self
+    async fn run_one(&self, ctx: Arc<JobCtx>, chat_doc_id: String) -> anyhow::Result<()> {
+        let chat = ctx
             .convex
             .query_chats_get_for_worker(ChatsGetForWorkerArgs {
                 chatId: chat_doc_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get chat: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Chat {} not found", chat_doc_id))?;
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("chat {chat_doc_id} not found"))?;
 
-        // Idempotency guard: only process Queued chats
         let scan_phase = chat.scan_phase.as_ref().map(|p| p.to_string());
         if scan_phase.as_deref() != Some("Queued") {
-            info!(chat_id = %chat.chat_id, ?scan_phase, "ChatScanner: not Queued, skipping");
+            info!(?scan_phase, "not Queued — skipping");
             return Ok(());
         }
 
-        // Transition: Queued → ScanningMessages
-        self.convex
+        ctx.convex
             .chats_worker_start_scan(ChatsWorkerStartScanArgs {
                 chatId: chat_doc_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to start scan: {e}"))?;
+            .await?;
+        info!(chat_id = %chat.chat_id, "starting scan");
 
-        info!(chat_id = %chat.chat_id, "ChatScanner: starting scan");
-
-        // Resolve telegram_id from the client record
-        let client = self
+        let client = ctx
             .convex
             .query_clients_get_for_worker(ClientsGetForWorkerArgs {
                 clientId: chat.client_id.clone(),
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get client: {e}"))?
-            .ok_or_else(|| anyhow::anyhow!("Client {} not found", chat.client_id))?;
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("client {} not found", chat.client_id))?;
 
-        let tg_client = self
+        let tg = ctx
             .sessions
             .get_for_telegram_id(&chat.user_id, &client.telegram_id)
-            .await
-            .map_err(anyhow::Error::from)?;
+            .await?;
 
         let chat_external_id = chat
             .chat_id
@@ -106,41 +95,34 @@ impl ChatScanner for ChatScannerImpl {
             .unwrap_or(&chat.chat_id)
             .to_string();
 
-        let scan_req = ChatScanRequest {
+        let req = ChatScanRequest {
             client_id: chat.client_id.clone(),
             user_id: chat.user_id.clone(),
-            external_id: client.telegram_id,
             chat_id: chat.chat_id.clone(),
             chat_external_id,
             is_pinned: chat.is_pinned,
             pinned_name: chat.pinned_name,
         };
 
-        scan_chat_messages(&self.convex, &tg_client, &scan_req)
-            .await
-            .map_err(anyhow::Error::from)?;
+        scan_chat_messages(&ctx.convex, &tg, &req).await?;
 
-        // Transition: → fullScanned=true, scanPhase=Listening
-        self.convex
+        ctx.convex
             .chats_worker_complete_scan(ChatsWorkerCompleteScanArgs {
                 chatId: chat_doc_id,
             })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to complete scan: {e}"))?;
-
+            .await?;
         Ok(())
     }
 }
 
-/// Full message scan for a single chat.
-pub async fn scan_chat_messages(
+async fn scan_chat_messages(
     convex: &ConvexApiClient,
-    tg_client: &TelegramClient,
+    tg: &TelegramClient,
     req: &ChatScanRequest,
 ) -> Result<(), WorkerError> {
-    info!(chat_id = %req.chat_id, chat_external_id = %req.chat_external_id, "Scanning messages");
+    info!(chat_id = %req.chat_id, "scanning messages");
 
-    let total_messages = tg_client
+    let total_messages = tg
         .get_messages_count(&req.chat_external_id)
         .await
         .unwrap_or(0);
@@ -154,12 +136,12 @@ pub async fn scan_chat_messages(
             fullScanned: None,
         })
         .await
-        .warn_on_err("Failed to update initial sync progress");
+        .warn_on_err("failed to update initial sync progress");
 
-    let mut msg_stream = match tg_client.iter_messages(&req.chat_external_id).await {
+    let mut msg_stream = match tg.iter_messages(&req.chat_external_id).await {
         Ok(s) => s,
         Err(e) => {
-            warn!(chat_id = %req.chat_id, error = %e, "Failed to iterate messages");
+            warn!(chat_id = %req.chat_id, error = %e, "failed to iterate messages");
             return Ok(());
         }
     };
@@ -170,7 +152,7 @@ pub async fn scan_chat_messages(
         let msg = match result {
             Ok(m) => m,
             Err(e) => {
-                warn!(error = %e, "Error reading message, skipping");
+                warn!(error = %e, "error reading message — skipping");
                 continue;
             }
         };
@@ -181,7 +163,6 @@ pub async fn scan_chat_messages(
         }
 
         let message_id = format!("{}:{}", req.chat_id, msg.external_id);
-
         let message_id_clone = message_id.clone();
         convex
             .messages_worker_upsert_message(MessagesWorkerUpsertMessageArgs {
@@ -209,7 +190,6 @@ pub async fn scan_chat_messages(
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
 
-        // Create pending media record (reconciler dispatches MediaDownloader)
         if let Some(ref summary) = msg.media_summary
             && let Some(ref media_ext_id) = msg.media_external_id
             && let Err(e) = convex
@@ -229,7 +209,7 @@ pub async fn scan_chat_messages(
                 })
                 .await
         {
-            warn!(error = %e, "Failed to create pending media record");
+            warn!(error = %e, "failed to create pending media");
         }
 
         msg_count += 1;
@@ -244,11 +224,10 @@ pub async fn scan_chat_messages(
                     fullScanned: None,
                 })
                 .await
-                .warn_on_err("Failed to update sync progress");
+                .warn_on_err("failed to update sync progress");
         }
     }
 
-    // Update lastMessageTs
     if last_ts > 0.0 {
         convex
             .chats_worker_upsert_chat(ChatsWorkerUpsertChatArgs {
@@ -264,7 +243,6 @@ pub async fn scan_chat_messages(
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
     }
 
-    // Mark scan complete with final progress
     convex
         .chats_worker_update_sync_progress(ChatsWorkerUpdateSyncProgressArgs {
             chatId: req.chat_id.clone(),
@@ -274,8 +252,8 @@ pub async fn scan_chat_messages(
             fullScanned: Some(true),
         })
         .await
-        .warn_on_err("Failed to update final sync progress");
+        .warn_on_err("failed to update final sync progress");
 
-    info!(chat_id = %req.chat_id, msg_count, "Chat fully scanned");
+    info!(chat_id = %req.chat_id, msg_count, "chat fully scanned");
     Ok(())
 }

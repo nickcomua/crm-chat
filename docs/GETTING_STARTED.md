@@ -113,14 +113,13 @@ For a detailed technical overview, see [Architecture](ARCHITECTURE.md).
 │ (React)  │     │ (Backend) │     │  (Rust)  │
 └─────────┘     └───────────┘     └──────────┘
      │               │                  │
-   Clerk          Database           Restate
-   Auth           + Storage         Workflows
+   Clerk          Database          Reactive
+   Auth           + Storage         job runner
 ```
 
 - **Browser**: React app with real-time Convex subscriptions
-- **Convex**: Self-hosted database, functions, and file storage
-- **Worker**: Rust service that connects to Telegram and syncs data
-- **Restate**: Durable workflow engine for reliable multi-step operations
+- **Convex**: Self-hosted database, functions, and file storage — *also the job queue* (each `pendingWork` query yields the entities still needing work)
+- **Worker**: Rust service that subscribes to each `pendingWork` stream and spawns per-entity tokio tasks; aborts them when the entity leaves the set
 
 ## Further Reading
 

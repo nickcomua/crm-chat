@@ -1,274 +1,232 @@
-//! crm-worker — Restate-based Telegram integration service.
+//! crm-worker — Convex-driven Telegram integration service.
 //!
-//! Leaf services (DialogSync, ChatScanner, etc.) are Restate virtual objects
-//! and workflows with full durable execution. The Reconciler runs as a plain
-//! tokio task that subscribes to per-table `pendingWork` queries and dispatches work
-//! to leaf services via HTTP POST to the Restate ingress endpoint — zero journal
-//! noise. Domain entity state IS the queue (Pattern B: domain-driven dispatch).
+//! The worker runs a handful of independent `Job`s. Each job subscribes to a
+//! Convex query that yields the current set of entity IDs needing work
+//! (e.g. clients with `phase = NeedsSync`, chats with `scanPhase = Queued`,
+//! media with `status = Pending`) and spawns a per-entity tokio task. When
+//! an entity leaves the set the task is aborted. No Restate, no ingress,
+//! no HTTP endpoint — Convex *is* the queue and the source of truth.
 
 mod auth;
 mod config;
 mod error;
+mod job;
+mod jobs;
 mod ops;
+mod runner;
 pub mod secrets;
-mod services;
 pub mod session_manager;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use restate_sdk::prelude::*;
-use tokio_util::sync::CancellationToken;
-use tracing::info;
+use convex_backend::ClientsWorkerRegisterConnectedArgs;
+use messanger_interface::MessengerClient;
+use messanger_telegram::TelegramClient;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 use crate::config::WorkerConfig;
-use crate::services::chat_scanner::{ChatScanner, ChatScannerImpl};
-use crate::services::dialog_sync::{DialogSync, DialogSyncImpl};
-use crate::services::media_downloader::{MediaDownloader, MediaDownloaderImpl};
-use crate::services::phone_auth::{PhoneAuthWorkflow, PhoneAuthWorkflowImpl};
-use crate::services::profile_photo_sync::{ProfilePhotoSync, ProfilePhotoSyncImpl};
-use crate::services::qr_auth::{QrAuthWorkflow, QrAuthWorkflowImpl};
-use crate::services::reconciler::run_reconciler;
-use crate::services::update_listener::{UpdateListener, UpdateListenerImpl};
-use crate::session_manager::TelegramSessionManager;
+use crate::error::WorkerError;
+use crate::job::{Job, JobCtx};
+use crate::jobs::chat_scanner::ChatScannerJob;
+use crate::jobs::dialog_sync::DialogSyncJob;
+use crate::jobs::media_downloader::MediaDownloaderJob;
+use crate::jobs::phone_auth::PhoneAuthJob;
+use crate::jobs::profile_photo_sync::ProfilePhotoSyncJob;
+use crate::jobs::qr_auth::QrAuthJob;
+use crate::jobs::update_listener::UpdateListenerJob;
+use crate::ops::convex::ConvexApi;
+use crate::runner::run_job;
+use crate::session_manager::{SessionManager, TelegramSessionManager};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize Sentry (if SENTRY_URL is set)
-    let sentry_spec = secrets::SecretSpec::builder()
-        .with_profile("crm_worker")
-        .load()
-        .ok();
-    let _guard = sentry_spec
-        .and_then(|s| s.secrets.sentry_url)
-        .map(|dsn| {
-            sentry::init((
-                dsn,
-                sentry::ClientOptions {
-                    release: sentry::release_name!(),
-                    traces_sample_rate: 1.0,
-                    ..Default::default()
-                },
-            ))
-        });
+    let _sentry = init_sentry();
+    init_tracing();
 
-    // Initialize tracing
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,crm_worker=debug"));
-
-    let file_appender = tracing_appender::rolling::hourly("logs", "crm-worker.log");
-    let (non_blocking, _file_guard) = tracing_appender::non_blocking(file_appender);
-
-    let subscriber = tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(non_blocking),
-        )
-        .with(sentry_tracing::layer());
-
-    tracing::subscriber::set_global_default(subscriber)?;
-
-    info!("Starting crm-worker");
+    info!("starting crm-worker");
 
     let config = WorkerConfig::from_env()?;
-
-    // Unified session manager — handles session files, client caching, discovery
     let sessions = Arc::new(TelegramSessionManager::new(
         config.api_id,
         config.api_hash.clone(),
     ));
 
-    // Fetch Clerk M2M JWT and create Convex client for Restate handlers
     let http_for_auth = reqwest::Client::new();
     let token = auth::fetch_m2m_jwt(&http_for_auth, &config.m2m_secret_key).await?;
-    let mut raw_client = ::convex::ConvexClient::new(&config.convex_url).await?;
-    raw_client.set_auth(Some(token)).await;
-    let convex_client = convex_backend::ConvexApiClient::new(raw_client);
+    let mut raw = ::convex::ConvexClient::new(&config.convex_url).await?;
+    raw.set_auth(Some(token)).await;
+    let convex = convex_backend::ConvexApiClient::new(raw);
 
-    // Build Restate endpoint with leaf service handlers (no TaskOrchestrator —
-    // it runs as a plain tokio task to avoid journal noise)
-    let endpoint = Endpoint::builder()
-        .bind(
-            PhoneAuthWorkflowImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            QrAuthWorkflowImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            DialogSyncImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            ProfilePhotoSyncImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            ChatScannerImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            MediaDownloaderImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .bind(
-            UpdateListenerImpl {
-                convex: convex_client.clone(),
-                sessions: sessions.clone(),
-            }
-            .serve(),
-        )
-        .build();
-
-    let restate_port = config.restate_port;
-    let ingress_url = config.restate_ingress_url.clone();
-
-    // Spawn the Restate HTTP server
-    let restate_handle = tokio::spawn(async move {
-        info!(port = restate_port, "Starting Restate HTTP server");
-        HttpServer::new(endpoint)
-            .listen_and_serve(
-                format!("0.0.0.0:{restate_port}")
-                    .parse::<std::net::SocketAddr>()
-                    .unwrap(),
-            )
-            .await;
+    let ctx = Arc::new(JobCtx {
+        convex,
+        sessions: sessions.clone(),
+        config: config.clone(),
     });
 
-    // Wait briefly for the HTTP server to bind, then register with Restate
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    register_deployment(&config).await;
+    // One-shot startup housekeeping.
+    sessions.cleanup_temp_sessions();
+    discover_and_register_sessions(&ctx).await;
 
-    // Spawn the reconciler as a plain tokio task — subscribes to
-    // per-table pendingWork queries and dispatches to Restate leaf services
-    let recon_convex = convex_client.clone();
-    let recon_config = config.clone();
-    let recon_sessions = sessions.clone();
-    let recon_ingress = ingress_url.clone();
-    let recon_cancel = CancellationToken::new();
-    let reconciler_handle = tokio::spawn(async move {
-        if let Err(e) = run_reconciler(
-            &recon_convex,
-            &recon_config,
-            &recon_sessions,
-            &recon_ingress,
-            &recon_cancel,
-        )
-        .await
-        {
-            tracing::error!(error = %e, "Reconciler exited with error");
-        }
-    });
+    // Background JWT refresh.
+    tokio::spawn(jwt_refresh_loop(ctx.clone()));
 
-    info!(restate_port, "crm-worker ready. All services registered.");
+    // Spawn every job runner. Each owns its own subscription and per-entity tasks.
+    let jobs: Vec<Arc<dyn Job>> = vec![
+        Arc::new(DialogSyncJob),
+        Arc::new(UpdateListenerJob),
+        Arc::new(ProfilePhotoSyncJob),
+        Arc::new(ChatScannerJob),
+        Arc::new(MediaDownloaderJob),
+        Arc::new(PhoneAuthJob),
+        Arc::new(QrAuthJob),
+    ];
+    let handles: Vec<_> = jobs
+        .into_iter()
+        .map(|j| tokio::spawn(run_job(j, ctx.clone())))
+        .collect();
 
-    // Wait for either server to exit
-    tokio::select! {
-        result = restate_handle => {
-            match result {
-                Ok(()) => info!("Restate server exited"),
-                Err(e) => tracing::error!(error = %e, "Restate server task panicked"),
-            }
-        }
-        result = reconciler_handle => {
-            match result {
-                Ok(()) => info!("Reconciler exited"),
-                Err(e) => tracing::error!(error = %e, "Reconciler task panicked"),
-            }
-        }
-    }
+    info!(job_count = handles.len(), "crm-worker ready");
 
+    // If any job runner exits, the worker exits. systemd / docker will restart.
+    let (_result, _idx, _remaining) = futures::future::select_all(handles).await;
+    warn!("a job runner exited — shutting down");
     Ok(())
 }
 
-/// Register this service endpoint with the Restate admin API.
-///
-/// Retries up to 30 times (1s apart) until the admin API is reachable,
-/// then panics if registration fails — without it, all Restate handler
-/// invocations will 404 and the worker is non-functional.
-async fn register_deployment(config: &WorkerConfig) {
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,crm_worker=debug"));
+    let fmt = tracing_subscriber::fmt::layer();
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt)
+        .with(sentry_tracing::layer())
+        .init();
+}
+
+fn init_sentry() -> Option<sentry::ClientInitGuard> {
+    let dsn = secrets::SecretSpec::builder()
+        .with_profile("crm_worker")
+        .load()
+        .ok()?
+        .secrets
+        .sentry_url?;
+    Some(sentry::init((
+        dsn,
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: 1.0,
+            ..Default::default()
+        },
+    )))
+}
+
+async fn jwt_refresh_loop(ctx: Arc<JobCtx>) {
     let http = reqwest::Client::new();
-    let url = format!("{}/deployments", config.restate_admin_url);
-
-    info!(
-        admin_url = %config.restate_admin_url,
-        service_url = %config.restate_service_url,
-        "Registering deployment with Restate"
-    );
-
-    let body = serde_json::json!({
-        "uri": config.restate_service_url,
-        "force": true,
-    });
-
-    // Retry loop — Restate may still be starting up (especially in test/CI)
-    let mut last_error = String::new();
-    for attempt in 1..=30 {
-        match http.post(&url).json(&body).send().await {
-            Ok(response) if response.status().is_success() => {
-                let result: serde_json::Value = response.json().await.unwrap_or_default();
-                let services: Vec<String> = result["services"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|s| s["name"].as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                info!(
-                    services = ?services,
-                    attempt,
-                    "Deployment registered with Restate"
-                );
-                return;
+    let mut interval = tokio::time::interval(Duration::from_secs(50 * 60));
+    interval.tick().await; // consume initial immediate tick
+    loop {
+        interval.tick().await;
+        match auth::fetch_m2m_jwt(&http, &ctx.config.m2m_secret_key).await {
+            Ok(new_token) => {
+                let mut handle = ctx.convex.inner().clone();
+                handle.set_auth(Some(new_token)).await;
+                info!("JWT refreshed");
             }
-            Ok(response) => {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                last_error = format!("HTTP {status}: {body}");
+            Err(e) => warn!(error = %e, "JWT refresh failed"),
+        }
+    }
+}
+
+/// Look for `.session` files on disk and register each authorized one with
+/// Convex as a connected client. Removes orphan sessions whose owner has
+/// deleted the client (tombstone check).
+async fn discover_and_register_sessions(ctx: &JobCtx) {
+    let discovered = ctx.sessions.discover_sessions();
+    if discovered.is_empty() {
+        info!("no existing session files");
+        return;
+    }
+    info!(count = discovered.len(), "checking sessions");
+
+    let mut registered = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+
+    for (owner_id, session_path) in &discovered {
+        let path_str = session_path.to_string_lossy().to_string();
+
+        let tg = match TelegramClient::new(ctx.config.api_id, ctx.config.api_hash.clone(), path_str)
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(path = ?session_path, error = %e, "failed to load session file");
+                failed += 1;
+                continue;
+            }
+        };
+
+        match tg.is_authorized().await {
+            Ok(true) => {}
+            Ok(false) => {
+                skipped += 1;
+                continue;
             }
             Err(e) => {
-                last_error = e.to_string();
+                warn!(path = ?session_path, error = %e, "is_authorized failed");
+                failed += 1;
+                continue;
             }
         }
 
-        if attempt < 30 {
-            tracing::debug!(
-                attempt,
-                error = %last_error,
-                "Restate admin not ready, retrying in 1s"
-            );
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        let external_id = match tg.get_client_external_id().await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(path = ?session_path, error = %e, "get external id failed");
+                failed += 1;
+                continue;
+            }
+        };
+
+        let numeric_id = tg.get_numeric_external_id().await.ok();
+        let phone_number = tg.get_phone_number().await;
+
+        match ctx
+            .convex
+            .clients_worker_register_connected(ClientsWorkerRegisterConnectedArgs {
+                userId: owner_id.clone(),
+                telegramId: external_id.clone(),
+                externalId: numeric_id,
+                kind: "Telegram".to_string(),
+                phoneNumber: phone_number,
+            })
+            .await
+            .map_err(|e| WorkerError::MutationFailed(e.to_string()))
+        {
+            Ok(Some(client_id)) => {
+                registered += 1;
+                info!(client_id, external_id = %external_id, owner = %owner_id, "registered session");
+            }
+            Ok(None) => {
+                info!(
+                    external_id = %external_id,
+                    owner = %owner_id,
+                    path = ?session_path,
+                    "session blocked by tombstone — removing orphan"
+                );
+                std::fs::remove_file(session_path).ok();
+                skipped += 1;
+            }
+            Err(e) => {
+                warn!(external_id = %external_id, owner = %owner_id, error = %e, "register failed");
+                failed += 1;
+            }
         }
     }
 
-    panic!(
-        "Failed to register deployment with Restate after 30 attempts: {last_error}. \
-         Admin URL: {}, Service URL: {}",
-        config.restate_admin_url, config.restate_service_url
-    );
+    info!(registered, skipped, failed, "session discovery complete");
 }
