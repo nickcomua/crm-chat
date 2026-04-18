@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import {
+  api,
   getConvexUserId,
   getRobotClient,
   seedNotification,
@@ -206,41 +207,18 @@ test.describe("Notifications — UI", () => {
   test("empty state shows 'All caught up' when no notifications", async ({
     page,
   }) => {
-    // Dismiss all remaining notifications first
+    // Clear all notifications server-side. The UI dismiss loop used to race
+    // the crm-worker, which creates fresh Error notifications whenever it
+    // fails to reach Telegram — by the time the loop reached 0 visible
+    // cards, a new one had already been inserted.
+    const robot = await getRobotClient(workerCfg);
+    await robot.mutation(api.testHelpers.dismissAllNotifications, { userId });
+
     await page.goto("/#/chats");
     await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
 
     const bellButton = page.locator('button[title="Notifications"]');
     await bellButton.click();
-    await expect(page.locator("text=Notifications").first()).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Dismiss all visible notifications by hovering each .group card
-    // Scope to the notifications panel (z-50 fixed sidebar) to avoid matching
-    // chat list items that also use .group
-    const panel = page.locator(".z-50").filter({
-      has: page.locator("text=Notifications"),
-    });
-    for (let i = 0; i < 10; i++) {
-      const notifCards = panel
-        .locator(".group")
-        .filter({ has: page.locator("button") });
-      const countBefore = await notifCards.count();
-      if (countBefore === 0) {
-        break;
-      }
-
-      // Hover the first card to reveal dismiss button, then force-click it
-      // (the button has opacity-0 → group-hover:opacity-100 CSS which can
-      //  cause Playwright's actionability check to fail intermittently)
-      const firstCard = notifCards.first();
-      await firstCard.hover();
-      await firstCard.locator("button").last().click({ force: true });
-      // Wait for card count to decrease (firstCard re-resolves to the next
-      // card after dismiss, so toBeHidden would never pass)
-      await expect(notifCards).toHaveCount(countBefore - 1, { timeout: 5000 });
-    }
 
     // Verified: notifications-panel.tsx:53 — "All caught up" empty state text
     await expect(page.locator("text=All caught up")).toBeVisible({

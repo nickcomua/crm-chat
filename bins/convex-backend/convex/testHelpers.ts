@@ -33,6 +33,29 @@ export const seedNotification = workerMutation({
   },
 });
 
+/**
+ * Mark every notification for a user as dismissed. Used by the
+ * "All caught up" empty-state e2e test to avoid racing the crm-worker,
+ * which happily creates fresh Error notifications in the background
+ * whenever it fails to reach Telegram during the test run.
+ */
+export const dismissAllNotifications = workerMutation({
+  args: { userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId }) => {
+    const notifs = await ctx.db
+      .query("notifications")
+      .withIndex("by_userId_dismissed", (q) =>
+        q.eq("userId", userId).eq("dismissed", false)
+      )
+      .collect();
+    for (const n of notifs) {
+      await ctx.db.patch(n._id, { dismissed: true });
+    }
+    return null;
+  },
+});
+
 /** Upsert a chat. Robot-accessible version of chats.upsert for test seeding. */
 export const seedChat = workerMutation({
   args: {
