@@ -152,11 +152,18 @@ test.describe("Contacts — group chat filter", () => {
     ).toBeVisible();
 
     // "All dialogs" is selected by default. Verify it ONLY shows the DM's
-    // message — the group's message must be filtered out.
+    // message — the group's message must be filtered out. Scope to the
+    // active tabpanel so we don't match GROUP_ONLY_MESSAGE in unrelated
+    // chat-list previews elsewhere on the page.
+    const activeTabPanel = page
+      .getByRole("tabpanel")
+      .filter({ visible: true });
     await expect(
-      page.locator("text=MERGED_DIALOG_MESSAGE").first()
+      activeTabPanel.locator("text=MERGED_DIALOG_MESSAGE").first()
     ).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("text=GROUP_ONLY_MESSAGE")).toHaveCount(0);
+    await expect(
+      activeTabPanel.locator("text=GROUP_ONLY_MESSAGE")
+    ).toHaveCount(0);
 
     // Clicking the group-chat tab should show the group's message directly.
     await tablist.getByRole("tab", { name: /COBOL Team.*group/i }).click();

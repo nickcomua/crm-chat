@@ -234,12 +234,16 @@ test.describe("Contacts — create from 1:1 dialog", () => {
       .allTextContents();
 
     // Filter to messages seeded by this test, preserving DOM order.
+    // The merged timeline UI reverses the desc-by-timestamp query result so
+    // that the oldest message sits at the top and newest at the bottom
+    // (chat-style; see contact-merged-timeline.tsx:103). The interleave
+    // below reflects that top-to-bottom DOM order.
     const expected = [
-      "Third personal message",
-      "Second work message",
-      "Second personal message",
-      "Hello from work chat",
       "Hello from personal chat",
+      "Hello from work chat",
+      "Second personal message",
+      "Second work message",
+      "Third personal message",
     ];
     const filtered = bubbleTexts.filter((t) => expected.includes(t));
     expect(filtered).toEqual(expected);
