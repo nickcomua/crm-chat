@@ -34,6 +34,11 @@ const messageFields = v.object({
   mediaExternalId: v.optional(v.string()),
   mediaKind: v.optional(mediaKind),
   replyToMessageId: v.optional(v.string()),
+  // Snapshot of the replied-to message's text at the time of sending. The
+  // merged timeline query in model/contacts.ts and the message-bubble UI
+  // already read this field; adding it to the schema makes it actually
+  // storable (previously it was a dangling reference).
+  replyToText: v.optional(v.string()),
   forwardedFrom: v.optional(forwardedFromValidator),
   reactions: v.optional(v.array(reactionValidator)),
 });
