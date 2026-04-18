@@ -41,6 +41,15 @@ export default defineConfig({
   },
   projects: [
     { name: "setup", testMatch: /auth\.setup\.ts/ },
+    // Smoke project — exercises the workerBackend fixture end-to-end
+    // (jj workspace + devenv up + vite) WITHOUT Clerk auth / storage state,
+    // so the fixture's parallel behavior can be validated cheaply via
+    // `bun x playwright test --project=workspace-smoke --workers=2`.
+    {
+      name: "workspace-smoke",
+      testMatch: /workspace-smoke-.*\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
     {
       name: "chromium",
       use: {
@@ -54,6 +63,7 @@ export default defineConfig({
         /e2e-telegram\/media-visual\.spec/,
         /e2e-telegram\/qr-auth\.spec/,
         /e2e-telegram\/qr-auth-real\.spec/,
+        /workspace-smoke-.*\.spec/,
       ],
     },
     // Real-TG specs run sequentially via dependency chain.

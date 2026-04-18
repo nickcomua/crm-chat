@@ -1,5 +1,6 @@
 /* eslint-disable no-empty-pattern */
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +8,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 import { $ } from "zx";
+
+/**
+ * Reproduce flake.nix's docker-compose project name so teardown can target
+ * the right compose project without calling out to `nix eval`.
+ *
+ * Must stay in sync with flake.nix:
+ *   env.COMPOSE_PROJECT_NAME = "crm-chat-${
+ *     builtins.substring 0 8 (builtins.hashString "sha256" config.devenv.root)
+ *   }";
+ */
+function composeProjectFor(workspacePath: string): string {
+  const hash = createHash("sha256").update(workspacePath).digest("hex");
+  return `crm-chat-${hash.slice(0, 8)}`;
+}
 
 $.shell = "/bin/sh";
 $.prefix = "";
@@ -16,10 +31,11 @@ const WEB_DIR = path.resolve(TESTS_DIR, "..");
 const ROOT = path.resolve(WEB_DIR, "../..");
 
 // ---------------------------------------------------------------------------
-// Shared mutex — serializes the "enter shell + start devenv up + wait for
-// backend to bind" phase across parallel Playwright workers so two workspaces
-// never probe the same unbound port at the same time. Once the backend on
-// port X is listening, subsequent probes correctly skip X.
+// Shared mutex — serializes the "create workspace + start devenv up + wait
+// for backend to bind" phase across parallel Playwright workers. Ports are
+// deterministic (hash-derived per-workspace offset in flake.nix), so strict
+// serialization is no longer required for correctness, but it still cheaply
+// guards against concurrent docker-compose network-setup races.
 // ---------------------------------------------------------------------------
 let bootQueue: Promise<void> = Promise.resolve();
 function serializeBoot<T>(fn: () => Promise<T>): Promise<T> {
@@ -115,7 +131,14 @@ interface TestFixtures {
 interface WorkerFixtures {
   workerBackend: {
     convexUrl: string;
-    m2mSecretKey: string;
+    // Optional: only tests that talk to Convex as a worker-role (via
+    // helpers.getRobotClient) need this. Smoke tests skip it. The raw
+    // value comes from process.env, which Playwright worker subprocesses
+    // inherit from the runner; it is NOT loaded from .env again inside
+    // the fixture, so a runner invoked outside `secretspec run` will get
+    // undefined here — that's fine, the tests that need it will fail
+    // themselves when they try to use it.
+    m2mSecretKey: string | undefined;
     sessionDir: string;
     baseURL: string;
   };
@@ -124,20 +147,22 @@ interface WorkerFixtures {
 // ---------------------------------------------------------------------------
 // Worker-scoped fixture — one independent devenv-up per Playwright worker.
 //
-// Per-worker isolation is provided by a fresh jj workspace at
-// /tmp/crm-e2e-<wid>-<ts>:
-//   * unique CWD → unique $DEVENV_ROOT → unique $DEVENV_STATE
-//                → unique process-compose socket (/tmp/devenv-<hash>/pc.sock)
-//   * workspace basename → unique COMPOSE_PROJECT_NAME → namespaced
-//     container names + volumes
-//   * Nix flake's enterShell probes free ports in `ss` and writes them to
-//     <workspace>/.env + <workspace>/.devenv/state/admin_key, so the whole
-//     stack self-discovers per-workspace without externally pre-allocating.
+// Per-worker isolation is provided by the root flake's `workspace-new` devenv
+// script (see flake.nix), which:
+//   * `jj workspace add -r @` so the new workspace inherits the current
+//     working-copy snapshot (flake.nix edits, docker-compose tweaks, WIP)
+//   * Copies .env, bins/*/node_modules, and target/ (minus docker-mounted
+//     persistent volumes) so devenv up doesn't cold-build the Rust worker
+//   * Seeds <workspace>/.devenv/root so `nix develop` works without direnv
 //
-// The "enter shell + devenv up + wait for backend bind" phase is serialized
-// via the module-level `bootQueue` mutex so two workspaces never try to grab
-// the same unbound port at the same time. Tests themselves still run fully
-// in parallel.
+// The flake derives a deterministic per-workspace port offset from a hash
+// of the workspace root path (processes.*.ports.*.allocate = base + offset),
+// and COMPOSE_PROJECT_NAME = "crm-chat-<hash>" so docker container names
+// never collide. enterShell mirrors the offset ports into <workspace>/.env.
+//
+// The "create workspace + start devenv up + wait for backend to bind" phase
+// is serialized via the module-level `bootQueue` mutex; tests themselves
+// still run fully in parallel.
 // ---------------------------------------------------------------------------
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   baseURL: async ({ workerBackend }, use) => {
@@ -158,109 +183,106 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       } = { workspacePath, workspaceName };
 
       try {
-        // ── 1. Create a jj workspace ──────────────────────────────────
-        console.log(`[${wid}] Creating jj workspace at ${workspacePath}...`);
-        await $`jj -R ${ROOT} workspace add --name ${workspaceName} ${workspacePath}`;
-
-        // ── 2. Seed the workspace .env from the main repo ────────────
-        // The main .env carries every secret the devenv processes need
-        // (Clerk, Telegram, etc.). enterShell will overwrite the port-
-        // related keys once the devenv shell is entered. The previous
-        // CONVEX_SELF_HOSTED_ADMIN_KEY is invalid against the new backend,
-        // so the backend process's admin-key logic will regenerate it.
-        const mainEnvPath = path.join(ROOT, ".env");
-        const wsEnvPath = path.join(workspacePath, ".env");
-        await fs.copyFile(mainEnvPath, wsEnvPath);
-        // Append test-only overrides so devenv processes pick them up.
-        const sessionDir = path.join(workspacePath, "target/crm-worker-data");
-        await fs.mkdir(sessionDir, { recursive: true });
-        await fs.appendFile(
-          wsEnvPath,
-          `\nTG_SESSION_DIR=${sessionDir}\nSCAN_REFRESH_SECS=5\n`
-        );
-
-        // ── 3-5. Serialized boot: enter devenv shell, start devenv up,
-        //         wait for backend to bind. ────────────────────────────
-        const { webPort, convexUrl, devenv } = await serializeBoot(async () => {
-          // Strip inherited port vars so the workspace's enterShell actually
-          // probes instead of reusing the parent's PORT.
-          const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
-          for (const k of [
-            "PORT",
-            "SITE_PROXY_PORT",
-            "DASHBOARD_PORT",
-            "WEB_PORT",
-            "CONVEX_URL",
-            "CONVEX_SELF_HOSTED_URL",
-            "VITE_CONVEX_URL",
-          ]) {
-            delete cleanEnv[k];
-          }
-
-          // Prepare devenv-root marker (what .envrc does in dev).
-          await fs.mkdir(path.join(workspacePath, ".devenv"), {
-            recursive: true,
-          });
-          await fs.writeFile(
-            path.join(workspacePath, ".devenv/root"),
-            workspacePath
-          );
-
-          // Trigger enterShell side effects (port probe + .env upsert).
-          console.log(`[${wid}] Entering workspace devenv shell...`);
-          await $({
-            cwd: workspacePath,
-            env: cleanEnv,
-            quiet: true,
-          })`nix develop ${ROOT} --override-input devenv-root "file+file://${workspacePath}/.devenv/root" --command true`;
-
-          // Read allocated ports from the now-populated workspace .env.
-          const wsEnv = parseDotenv(await fs.readFile(wsEnvPath, "utf-8"));
-          const backendPort = Number(wsEnv.PORT);
-          const webPort = Number(wsEnv.WEB_PORT);
-          const convexUrl =
-            wsEnv.CONVEX_URL ?? `http://127.0.0.1:${backendPort}`;
-          if (!(Number.isFinite(backendPort) && Number.isFinite(webPort))) {
-            throw new Error(
-              `[${wid}] devenv shell did not allocate ports (PORT=${wsEnv.PORT}, WEB_PORT=${wsEnv.WEB_PORT})`
+        // ── 1-2. Serialized boot: spawn a jj workspace via the root flake's
+        //          `workspace-new` script, then start `devenv up`, then wait
+        //          for the backend to bind. ──────────────────────────────
+        const { webPort, convexUrl, sessionDir, devenv } = await serializeBoot(
+          async () => {
+            // `workspace-new` lives in the root flake's dev shell. Invoke it
+            // via `nix develop --command`, so the caller doesn't need to be
+            // inside the dev shell (`bun x playwright test` from outside).
+            console.log(
+              `[${wid}] Creating jj workspace at ${workspacePath}...`
             );
+            await $({
+              cwd: ROOT,
+              quiet: true,
+            })`nix develop --accept-flake-config --override-input devenv-root file+file://${ROOT}/.devenv/root --command workspace-new ${workspacePath}`;
+
+            // Append test-only overrides on top of the .env seeded from ROOT.
+            // enterShell has NOT run in the new workspace yet, so it will
+            // upsert the per-workspace PORT/WEB_PORT/etc. on top of these
+            // when `devenv up` boots below.
+            const wsEnvPath = path.join(workspacePath, ".env");
+            const sessionDir = path.join(
+              workspacePath,
+              "target/crm-worker-data"
+            );
+            await fs.mkdir(sessionDir, { recursive: true });
+            await fs.appendFile(
+              wsEnvPath,
+              `\nTG_SESSION_DIR=${sessionDir}\nSCAN_REFRESH_SECS=5\n`
+            );
+
+            // Pre-enter the workspace shell once so enterShell runs its
+            // port-upsert against the (freshly copied) .env. This makes the
+            // port values visible to us BEFORE devenv up starts, so we know
+            // which URL to poll.
+            console.log(`[${wid}] Priming devenv shell (enterShell)...`);
+            await $({
+              cwd: workspacePath,
+              quiet: true,
+            })`nix develop --accept-flake-config --override-input devenv-root file+file://${workspacePath}/.devenv/root --command true`;
+
+            const wsEnv = parseDotenv(await fs.readFile(wsEnvPath, "utf-8"));
+            const backendPort = Number(wsEnv.PORT);
+            const webPort = Number(wsEnv.WEB_PORT);
+            const convexUrl =
+              wsEnv.CONVEX_URL ?? `http://127.0.0.1:${backendPort}`;
+            if (!(Number.isFinite(backendPort) && Number.isFinite(webPort))) {
+              throw new Error(
+                `[${wid}] enterShell did not populate ports (PORT=${wsEnv.PORT}, WEB_PORT=${wsEnv.WEB_PORT})`
+              );
+            }
+            console.log(
+              `[${wid}] Allocated: backend=${backendPort} web=${webPort}`
+            );
+
+            // Spawn `devenv up` detached (own process group → one SIGTERM
+            // to the group cascades through process-compose). -t=false so
+            // there's no TUI (we're in a non-interactive test runner).
+            const devenvLogPath = path.join(
+              os.tmpdir(),
+              `crm-e2e-${wid}-devenv.log`
+            );
+            const devenvLogFd = (await fs.open(devenvLogPath, "w")).fd;
+            console.log(`[${wid}] devenv supervisor log: ${devenvLogPath}`);
+            const devenv = spawn(
+              "nix",
+              [
+                "develop",
+                "--accept-flake-config",
+                "--override-input",
+                "devenv-root",
+                `file+file://${workspacePath}/.devenv/root`,
+                "--command",
+                "devenv",
+                "up",
+                "-t=false",
+              ],
+              {
+                cwd: workspacePath,
+                detached: true,
+                stdio: ["ignore", devenvLogFd, devenvLogFd],
+              }
+            );
+
+            // Wait for the backend to actually answer on its port.
+            await pollUntilReady(
+              `${convexUrl}/version`,
+              `Convex backend on ${convexUrl}`,
+              180_000,
+              500
+            );
+            console.log(`[${wid}] Backend bound on ${backendPort}`);
+
+            return { webPort, convexUrl, sessionDir, devenv };
           }
-          console.log(
-            `[${wid}] Allocated: backend=${backendPort} web=${webPort}`
-          );
-
-          // Spawn `devenv up` in the workspace, detached (own process group
-          // → one SIGTERM to the group cascades through process-compose).
-          const devenvLogPath = path.join(
-            os.tmpdir(),
-            `crm-e2e-${wid}-devenv.log`
-          );
-          const devenvLogFd = (await fs.open(devenvLogPath, "w")).fd;
-          console.log(`[${wid}] devenv supervisor log: ${devenvLogPath}`);
-          const devenv = spawn("devenv", ["up"], {
-            cwd: workspacePath,
-            env: cleanEnv,
-            detached: true,
-            stdio: ["ignore", devenvLogFd, devenvLogFd],
-          });
-
-          // Wait for the backend to actually answer on its port — this is
-          // the point where it's safe to release the boot mutex (next
-          // worker's probe will now see this port as bound and skip it).
-          await pollUntilReady(
-            `${convexUrl}/version`,
-            `Convex backend on ${convexUrl}`,
-            180_000,
-            500
-          );
-          console.log(`[${wid}] Backend bound on ${backendPort}`);
-
-          return { webPort, convexUrl, devenv };
-        });
+        );
 
         resources = { workspacePath, workspaceName, devenv };
 
-        // ── 6. Wait for the rest of the stack ─────────────────────────
+        // ── 3. Wait for the rest of the stack ─────────────────────────
         // Admin key is written by the backend process once it has the key.
         await pollUntilFile(
           path.join(workspacePath, ".devenv/state/admin_key"),
@@ -277,15 +299,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         );
         console.log(`[${wid}] Web ready on http://localhost:${webPort}`);
 
-        const m2mSecretKey = process.env.CLERK_M2M_SECRET_KEY;
-        if (!m2mSecretKey) {
-          throw new Error("CLERK_M2M_SECRET_KEY must be set for E2E tests");
-        }
-
         // eslint-disable-next-line react-hooks/rules-of-hooks
         await use({
           convexUrl,
-          m2mSecretKey,
+          m2mSecretKey: process.env.CLERK_M2M_SECRET_KEY,
           sessionDir,
           baseURL: `http://localhost:${webPort}`,
         });
@@ -318,25 +335,33 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         }
 
         // Belt-and-suspenders: stop any lingering containers from this
-        // workspace's compose project (if devenv didn't get to them).
+        // workspace's compose project (devenv's EXIT trap stops backend on
+        // SIGTERM, but doesn't `down -v` — that cleans up stopped containers,
+        // the network, and the fresh-per-workspace persistent volumes).
+        const composeProject = composeProjectFor(resources.workspacePath);
         await $({
           cwd: resources.workspacePath,
           nothrow: true,
           quiet: true,
-        })`docker compose -p ${resources.workspaceName} down -v --remove-orphans`;
+        })`docker compose -p ${composeProject} down -v --remove-orphans`;
 
-        // Release the jj workspace, then rm -rf the directory.
+        // Release the jj workspace, then rm -rf the directory (sudo because
+        // docker containers create root-owned files under target/crm-chat-data
+        // and target/crm-worker-data).
         await $({
           cwd: ROOT,
           nothrow: true,
           quiet: true,
         })`jj workspace forget ${resources.workspaceName}`;
-        await fs.rm(resources.workspacePath, { recursive: true, force: true });
+        await $({
+          nothrow: true,
+          quiet: true,
+        })`sudo rm -rf ${resources.workspacePath}`;
 
         console.log(`[${wid}] Cleanup complete`);
       }
     },
-    { scope: "worker", timeout: 300_000 },
+    { scope: "worker", timeout: 600_000 },
   ],
 });
 

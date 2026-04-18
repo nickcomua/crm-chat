@@ -9,7 +9,10 @@ import { env } from "./env.ts";
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
   convexUrl: string;
-  m2mSecretKey: string;
+  // Undefined when the runner wasn't invoked via `secretspec run` (e.g. the
+  // workspace-smoke project). Helpers that actually mint an M2M JWT must
+  // assert it before use.
+  m2mSecretKey: string | undefined;
   sessionDir: string;
 }
 
@@ -51,6 +54,11 @@ async function fetchM2mJwt(m2mSecretKey: string): Promise<string> {
 export async function getRobotClient(
   config: WorkerConfig
 ): Promise<ConvexHttpClient> {
+  if (!config.m2mSecretKey) {
+    throw new Error(
+      "CLERK_M2M_SECRET_KEY must be set in the runner env (invoke via `secretspec run --profile e2e_web -- playwright test`) to use getRobotClient"
+    );
+  }
   const token = await fetchM2mJwt(config.m2mSecretKey);
   const client = new ConvexHttpClient(config.convexUrl);
   client.setAuth(token);

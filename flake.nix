@@ -358,6 +358,39 @@
               dashboardPorts = config.processes.dashboard.ports;
               webPorts = config.processes.crm-chat-web.ports;
 
+              # Per-workspace port offset so multiple `jj workspace`s running
+              # `devenv up` concurrently don't collide on host ports. devenv's
+              # own `ports.*.allocate` doesn't auto-relocate across parallel
+              # sessions, so we derive a deterministic offset from a hash of
+              # the workspace root path. Offset step is 10 (not 1) so that
+              # api (N) and site (N+1) ports across workspaces never alias.
+              hexDigits = {
+                "0" = 0;
+                "1" = 1;
+                "2" = 2;
+                "3" = 3;
+                "4" = 4;
+                "5" = 5;
+                "6" = 6;
+                "7" = 7;
+                "8" = 8;
+                "9" = 9;
+                "a" = 10;
+                "b" = 11;
+                "c" = 12;
+                "d" = 13;
+                "e" = 14;
+                "f" = 15;
+              };
+              rootHash = builtins.hashString "sha256" config.devenv.root;
+              # Take first 3 hex chars (12 bits, 0..4095), then mod 100 * 10
+              # → offset in {0, 10, 20, ..., 990} = 100 buckets.
+              hashInt12 =
+                (hexDigits.${builtins.substring 0 1 rootHash} * 256)
+                + (hexDigits.${builtins.substring 1 1 rootHash} * 16)
+                + hexDigits.${builtins.substring 2 1 rootHash};
+              portOffset = (hashInt12 - 100 * (hashInt12 / 100)) * 10;
+
               # Helper: every process's exec begins with this so its stdout
               # and stderr are tee'd to a per-service file under
               # `<devenv-root>/.devenv/state/logs/<name>.log`.
@@ -394,6 +427,15 @@
               # CWD and misses the root file from `bins/<sub>/`).
               env.SECRETSPEC_PROVIDER = "dotenv:${config.devenv.root}/.env";
 
+              # Deterministic, per-workspace docker-compose project name so
+              # multiple `jj workspace`s running `devenv up` concurrently
+              # don't collide on container names (e.g. `crm-chat-backend-1`).
+              # Derived from the workspace root path so two workspaces with
+              # the same basename still get distinct project names.
+              env.COMPOSE_PROJECT_NAME = "crm-chat-${
+                builtins.substring 0 8 (builtins.hashString "sha256" config.devenv.root)
+              }";
+
               # Ports + derived URLs exposed to every process.
               env.PORT = toString backendPorts.api.value;
               env.SITE_PROXY_PORT = toString backendPorts.site.value;
@@ -412,6 +454,18 @@
                 # tools (convex CLI, docker compose, editors) see the same
                 # ports / URLs as the shell. CONVEX_SELF_HOSTED_ADMIN_KEY is
                 # managed separately by processes.backend at runtime.
+                #
+                # An flock around the whole upsert block serializes concurrent
+                # enterShell runs against the same .env. Without it, running
+                # the root dev shell from N subprocesses at once (as the
+                # Playwright fixture does when spawning N parallel workspaces
+                # via `nix develop --command workspace-new ...`) races the
+                # awk-then-mv rewrite on `.env.tmp` and destroys the file —
+                # both awk invocations open `.env.tmp` with `>` (truncate),
+                # one mv wins, and the OTHER awk's partial output silently
+                # replaces the full file on the next mv. The lock file lives
+                # next to the .env it guards, so parallel workspaces (each
+                # with their own .env) still run their upserts concurrently.
                 _upsert_env() {
                   local file="$1" key="$2" value="$3"
                   if [ ! -f "$file" ]; then
@@ -422,21 +476,24 @@
                       BEGIN { FS = OFS = "="; replaced = 0 }
                       !replaced && $0 !~ /^[[:space:]]*#/ && $1 == k { print k "=" v; replaced = 1; next }
                       { print }
-                    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+                    ' "$file" > "$file.tmp.$$" && mv "$file.tmp.$$" "$file"
                   else
                     [ -s "$file" ] && [ "$(tail -c 1 "$file" | od -An -c | tr -d ' ')" != "\n" ] && printf '\n' >> "$file"
                     printf '%s=%s\n' "$key" "$value" >> "$file"
                   fi
                 }
                 _ENV_FILE="${config.devenv.root}/.env"
-                _upsert_env "$_ENV_FILE" PORT                     "$PORT"
-                _upsert_env "$_ENV_FILE" SITE_PROXY_PORT          "$SITE_PROXY_PORT"
-                _upsert_env "$_ENV_FILE" DASHBOARD_PORT           "$DASHBOARD_PORT"
-                _upsert_env "$_ENV_FILE" WEB_PORT                 "$WEB_PORT"
-                _upsert_env "$_ENV_FILE" CONVEX_URL               "$CONVEX_URL"
-                _upsert_env "$_ENV_FILE" CONVEX_SITE_URL          "$CONVEX_SITE_URL"
-                _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL   "$CONVEX_SELF_HOSTED_URL"
-                _upsert_env "$_ENV_FILE" VITE_CONVEX_URL          "$VITE_CONVEX_URL"
+                (
+                  flock 9
+                  _upsert_env "$_ENV_FILE" PORT                     "$PORT"
+                  _upsert_env "$_ENV_FILE" SITE_PROXY_PORT          "$SITE_PROXY_PORT"
+                  _upsert_env "$_ENV_FILE" DASHBOARD_PORT           "$DASHBOARD_PORT"
+                  _upsert_env "$_ENV_FILE" WEB_PORT                 "$WEB_PORT"
+                  _upsert_env "$_ENV_FILE" CONVEX_URL               "$CONVEX_URL"
+                  _upsert_env "$_ENV_FILE" CONVEX_SITE_URL          "$CONVEX_SITE_URL"
+                  _upsert_env "$_ENV_FILE" CONVEX_SELF_HOSTED_URL   "$CONVEX_SELF_HOSTED_URL"
+                  _upsert_env "$_ENV_FILE" VITE_CONVEX_URL          "$VITE_CONVEX_URL"
+                ) 9> "$_ENV_FILE.lock"
                 unset -f _upsert_env
                 unset _ENV_FILE
               '';
@@ -447,6 +504,13 @@
                 exec = ''
                   ${logTo "backend"}
                   trap 'docker compose stop backend' EXIT INT TERM
+                  # Invalidate any admin_key left over from a prior devenv
+                  # session: the `ready` gate below keys off this file, and a
+                  # stale value would let dependents (convex-backend, worker)
+                  # race ahead of the freshly (re)started backend. The cached
+                  # key is still recovered from .env via key_valid() below if
+                  # it's still valid against this backend.
+                  rm -f "$DEVENV_STATE/admin_key"
                   docker compose up -d backend
 
                   echo "Waiting for Convex backend to become healthy on port $PORT..."
@@ -492,11 +556,16 @@
                   docker compose logs -f backend
                 '';
                 ports = {
-                  api.allocate = 3210;
-                  site.allocate = 3211;
+                  api.allocate = 3210 + portOffset;
+                  site.allocate = 3211 + portOffset;
                 };
                 ready = {
-                  exec = "test -f $DEVENV_STATE/admin_key";
+                  # Combined check: (1) backend container is accepting HTTP
+                  # on $PORT, and (2) *this session's* admin_key has been
+                  # written (stale files from prior sessions are removed at
+                  # the top of exec). Without the HTTP probe, dependents
+                  # raced the backend into ~30 "Connection refused" retries.
+                  exec = ''curl -sf "http://localhost:$PORT/version" >/dev/null 2>&1 && [ -s "$DEVENV_STATE/admin_key" ]'';
                   initial_delay = 5;
                   period = 3;
                 };
@@ -510,7 +579,7 @@
                   docker compose up -d dashboard
                   docker compose logs -f dashboard
                 '';
-                ports.http.allocate = 6791;
+                ports.http.allocate = 6791 + portOffset;
                 after = ["devenv:processes:backend"];
               };
 
@@ -548,13 +617,96 @@
               processes.crm-chat-web = {
                 exec = ''
                   ${logTo "crm-chat-web"}
+                  # Guard: on process-compose restarts WEB_PORT was observed
+                  # to expand empty, which made vite crash with
+                  # `CACError: option --port <port> value is missing` and
+                  # silently crash-loop. Fail loudly instead.
+                  if [ -z "''${WEB_PORT:-}" ]; then
+                    echo "crm-chat-web: WEB_PORT is unset/empty — check env.WEB_PORT in flake.nix" >&2
+                    exit 1
+                  fi
                   bun install
                   exec bun dev --port "$WEB_PORT"
                 '';
                 cwd = "${config.devenv.root}/bins/crm-chat-web";
-                ports.http.allocate = 5173;
+                ports.http.allocate = 5173 + portOffset;
                 after = ["devenv:processes:backend"];
               };
+
+              # ── Scripts ─────────────────────────────────────────────
+              # Spawn a parallel jj workspace pre-seeded with .env,
+              # node_modules, and a warm Rust target/. Excludes the three
+              # docker-mounted persistent volumes (target/{crm-chat,restate,
+              # crm-worker}-data) so concurrent `devenv up` sessions don't
+              # stomp on each other's state.
+              scripts.workspace-new.exec = ''
+                set -euo pipefail
+                if [ "$#" -ne 1 ]; then
+                  echo "usage: workspace-new <path>" >&2
+                  exit 2
+                fi
+                DEST="$1"
+                ROOT="${config.devenv.root}"
+                if [ -e "$DEST" ]; then
+                  echo "workspace-new: $DEST already exists" >&2
+                  exit 1
+                fi
+
+                cd "$ROOT"
+                # -r @ bases the new workspace's WC on the current change
+                # (including its working-copy snapshot), so uncommitted edits
+                # to flake.nix / docker-compose.yml / etc. are carried over.
+                # Default `jj workspace add` would base it on @- and leave
+                # uncommitted changes behind, which shipped a stale flake.
+                jj workspace add -r @ "$DEST"
+
+                # Pre-seed devenv's root pointer so `nix develop` in $DEST can
+                # resolve the flake without needing direnv to run enterShell
+                # first (direnv would, but scripts/CI often skip it).
+                mkdir -p "$DEST/.devenv"
+                printf %s "$DEST" > "$DEST/.devenv/root"
+
+                # .env — dynamic port values are re-upserted on first
+                # `enterShell` in the new workspace (different portOffset →
+                # different ports); CONVEX_SELF_HOSTED_ADMIN_KEY is
+                # re-validated / re-minted by processes.backend.
+                if [ -f "$ROOT/.env" ]; then
+                  cp "$ROOT/.env" "$DEST/.env"
+                fi
+
+                # node_modules — cp -al hardlinks instead of copying (both
+                # the source and the new workspace live on the same
+                # filesystem), so spawning a workspace is near-instant even
+                # for large trees. cargo/bun write new files by content hash
+                # rather than mutating existing ones, so hardlink sharing is
+                # safe. -a preserves symlinks (e.g. workspace-relative
+                # package links).
+                for d in bins/crm-chat-web bins/convex-backend; do
+                  if [ -d "$ROOT/$d/node_modules" ]; then
+                    mkdir -p "$DEST/$d"
+                    cp -al "$ROOT/$d/node_modules" "$DEST/$d/node_modules"
+                  fi
+                done
+
+                # target/ — `cp -al` hardlinks the whole tree in ~1 s (vs
+                # ~80 s for `rsync -a --link-dest`). cargo writes new files
+                # by content hash rather than mutating existing ones, so
+                # hardlink sharing across workspaces is safe. Docker-mounted
+                # persistent volumes are skipped at the top level because
+                # their contents are root-owned (set_uid on hardlink fails)
+                # and each workspace needs fresh backend/worker state.
+                if [ -d "$ROOT/target" ]; then
+                  mkdir -p "$DEST/target"
+                  find "$ROOT/target" -mindepth 1 -maxdepth 1 \
+                    ! -name crm-chat-data \
+                    ! -name restate-data \
+                    ! -name crm-worker-data \
+                    -exec cp -al {} "$DEST/target/" \;
+                fi
+
+                echo "Workspace ready: $DEST"
+                echo "Next: cd \"$DEST\" && nix develop --command devenv up"
+              '';
 
               # Inherit from child flake dev shells
               inputsFrom = [
@@ -577,6 +729,7 @@
                 sqlite
                 alejandra
                 statix
+                rsync # used by scripts.workspace-new
               ];
 
               cachix = {
