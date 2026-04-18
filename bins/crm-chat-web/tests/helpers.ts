@@ -65,6 +65,51 @@ export async function getRobotClient(
   return client;
 }
 
+/**
+ * Create a ConvexHttpClient authenticated as the current browser user via
+ * their Clerk session JWT. Use this when you need to call a `humanMutation`
+ * from test-side code (not from the page itself). Requires the page to
+ * already be signed in (i.e. auth.setup.ts must have run and the test's
+ * browser context uses `storageState: "tests/.auth/user.json"`).
+ */
+export async function getHumanClient(
+  page: Page,
+  config: WorkerConfig
+): Promise<ConvexHttpClient> {
+  // Wait for Clerk SDK to expose a live session. `isSignedIn` becoming true
+  // precedes `session` being attached by a tick or two on first navigation,
+  // so poll rather than read once. Using a manual loop instead of
+  // waitForFunction because the callback there must return synchronously.
+  const deadline = Date.now() + 10_000;
+  let token: string | null = null;
+  while (Date.now() < deadline) {
+    token = await page.evaluate(async () => {
+      const w = globalThis as unknown as {
+        Clerk?: {
+          loaded?: boolean;
+          session?: { getToken: () => Promise<string | null> };
+        };
+      };
+      if (!w.Clerk?.loaded || !w.Clerk.session) {
+        return null;
+      }
+      return (await w.Clerk.session.getToken()) ?? null;
+    });
+    if (token) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!token) {
+    throw new Error(
+      "getHumanClient: window.Clerk.session never produced a token within 10s — page not signed in?"
+    );
+  }
+  const client = new ConvexHttpClient(config.convexUrl);
+  client.setAuth(token);
+  return client;
+}
+
 export { api } from "crm-chat-convex-backend/convex/_generated/api";
 export type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 

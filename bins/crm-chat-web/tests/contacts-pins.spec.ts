@@ -17,6 +17,7 @@ import { expect, test } from "./fixtures";
 import {
   api,
   getConvexUserId,
+  getHumanClient,
   getRobotClient,
   type Id,
   seedMessage,
@@ -168,11 +169,20 @@ test.describe("Contacts — pinned messages", () => {
   test("scenario 11: disabling scan purges messages, pin snapshot still renders as orphaned", async ({
     page,
   }) => {
+    // Navigate so Clerk SDK loads and window.Clerk.session is populated; we
+    // need a human JWT below to call the humanMutation updateScanEnabled.
+    await page.goto("/");
+    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
+
+    // `updateScanEnabled` is a humanMutation (see chats.ts:187), so we need
+    // a human-auth client here. The robot client would get
+    // "Unauthorized: this action is for human users only".
+    const human = await getHumanClient(page, workerCfg);
     const robot = await getRobotClient(workerCfg);
 
     // Hard-delete all messages for the chat via `updateScanEnabled(false)`.
     // This is the same path the client-settings toggle exercises.
-    const res = await robot.mutation(api.model.chats.updateScanEnabled, {
+    const res = await human.mutation(api.model.chats.updateScanEnabled, {
       chatId,
       scanEnabled: false,
     });
