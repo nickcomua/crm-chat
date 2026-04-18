@@ -132,14 +132,18 @@ export function AttachDialogToContactDialog({
     return contacts.filter((c) => c.displayName.toLowerCase().includes(q));
   }, [contacts, search]);
 
-  const attemptLink = (contactId: Id<"contacts">, reassign = false): void => {
-    if (senderId === null) {
+  const attemptLink = (
+    contactId: Id<"contacts">,
+    pickedSenderId: string | null,
+    reassign = false
+  ): void => {
+    if (pickedSenderId === null) {
       return;
     }
     linkSender({
       contactId,
       chatId: chat.chatId,
-      senderId,
+      senderId: pickedSenderId,
       reassign,
     }).then((res) => {
       if (
@@ -162,7 +166,7 @@ export function AttachDialogToContactDialog({
     setSelectedContactId(contactId);
     if (chat.chatType === "Dialog") {
       if (senderId !== null) {
-        attemptLink(contactId, false);
+        attemptLink(contactId, senderId, false);
       }
       return;
     }
@@ -173,7 +177,11 @@ export function AttachDialogToContactDialog({
   const handlePickSender = (picked: string): void => {
     setSenderId(picked);
     if (selectedContactId) {
-      attemptLink(selectedContactId, false);
+      // Pass `picked` directly — `senderId` state hasn't flushed yet, so
+      // relying on it here would call linkSender with senderId=null and
+      // the mutation would silently no-op (causing the sender-picker flow
+      // to hang with no success UI).
+      attemptLink(selectedContactId, picked, false);
     }
   };
 
@@ -279,7 +287,7 @@ export function AttachDialogToContactDialog({
               <Button
                 onClick={() => {
                   setReassignNeeded(false);
-                  attemptLink(selectedContactId, true);
+                  attemptLink(selectedContactId, senderId, true);
                 }}
                 size="sm"
               >
