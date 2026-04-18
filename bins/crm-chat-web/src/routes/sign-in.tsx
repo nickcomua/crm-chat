@@ -79,12 +79,31 @@ function AutoSignIn(): React.ReactNode {
   );
 }
 
+/**
+ * Tests that need the app to behave as an unauthenticated session (e.g. the
+ * auth-guard redirect spec) can disable auto-signin by setting this
+ * sessionStorage flag before navigation. Needed because VITE_TEST_USERNAME
+ * is baked into the build, so AutoSignIn would otherwise always fire.
+ */
+const E2E_DISABLE_AUTO_SIGNIN_KEY = "e2e:disable-auto-signin";
+
+function autoSignInDisabled(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.sessionStorage?.getItem(E2E_DISABLE_AUTO_SIGNIN_KEY) === "1"
+  );
+}
+
 function SignInPage(): React.ReactNode {
   const { isLoaded, isSignedIn } = useAuth();
   if (isLoaded && isSignedIn) {
     return <Navigate to="/chats" />;
   }
-  if (env.VITE_TEST_USERNAME && env.VITE_TEST_PASSWORD) {
+  if (
+    env.VITE_TEST_USERNAME &&
+    env.VITE_TEST_PASSWORD &&
+    !autoSignInDisabled()
+  ) {
     return <AutoSignIn />;
   }
   return (

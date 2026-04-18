@@ -22,7 +22,12 @@ const CLIENT_URL_PATTERN = /\/#\/client\//;
 const TEXT_PRIMARY_RE = /text-primary/;
 const TEXT_MUTED_RE = /text-muted-foreground/;
 const DARK_CLASS_RE = /dark/;
-const CLERK_RE = /clerk/;
+// Matches Clerk's network endpoints (clerk.accounts.dev, api.clerk.com,
+// clerk-frontend-api), but NOT local/vite URLs that happen to include the
+// word "clerk" in their path (e.g. /@fs/.../node_modules/@clerk/clerk-react/...).
+// Using the broader /clerk/ regex would block the Clerk SDK bundle in dev mode
+// so the app would never render.
+const CLERK_API_RE = /\bclerk\.(accounts\.dev|com)\b/;
 
 test.describe.configure({ mode: "serial" });
 
@@ -232,7 +237,15 @@ test.describe("Navigation — Auth Guard", () => {
     // (third-party cookies from clerk.accounts.dev), making the "fresh" context
     // still appear authenticated.
     const context = await browser.newContext();
-    await context.route(CLERK_RE, (route) => route.abort());
+    await context.route(CLERK_API_RE, (route) => route.abort());
+
+    // Disable AutoSignIn for this test. VITE_TEST_USERNAME is baked into the
+    // build (needed so auth.setup can log in), so without this flag the /sign-in
+    // route would render AutoSignIn and show "Signing in as tester..." instead
+    // of the expected "Loading..." / "Sign in" UI.
+    await context.addInitScript(() => {
+      window.sessionStorage.setItem("e2e:disable-auto-signin", "1");
+    });
 
     const page = await context.newPage();
     await page.goto("/#/chats");
