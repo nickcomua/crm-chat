@@ -157,7 +157,14 @@ test.describe("Contacts — unlink and reassign", () => {
     await expect(
       attachDialog.getByText(/dialog linked successfully/i)
     ).toBeVisible({ timeout: 10_000 });
-    await attachDialog.getByRole("button", { name: /close/i }).click();
+    // The dialog has two buttons with accessible name "Close": the explicit
+    // footer `<button>Close</button>` and Radix's built-in `<button
+    // data-slot="dialog-close">` "X" at the top-right corner. Target the
+    // explicit footer button (the first match in document order).
+    await attachDialog
+      .getByRole("button", { name: "Close" })
+      .first()
+      .click();
 
     // Verify A no longer owns the sender (empty merged timeline)
     await page.goto(`/#/contacts/${contactAId}`);
