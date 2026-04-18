@@ -9,7 +9,7 @@
 import { expect, test } from "./fixtures";
 import {
   api,
-  getConvexUserId,
+  getCachedConvexUserId,
   getRobotClient,
   type Id,
   seedMessage,
@@ -17,7 +17,6 @@ import {
   type WorkerConfig,
 } from "./helpers";
 
-const CHATS_URL_PATTERN = /\/#\/chats/;
 
 test.describe.configure({ mode: "serial" });
 
@@ -28,18 +27,11 @@ let groupChatId: string;
 let workerCfg: WorkerConfig;
 
 test.describe("Contacts — group chat filter", () => {
-  test.beforeAll(async ({ browser, workerBackend }) => {
+  test.beforeAll(async ({ workerBackend }) => {
     workerCfg = workerBackend;
     const robot = await getRobotClient(workerCfg);
 
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
-    userId = await getConvexUserId(page);
-    await context.close();
+    userId = getCachedConvexUserId();
 
     clientId = await seedTestClient(
       userId,

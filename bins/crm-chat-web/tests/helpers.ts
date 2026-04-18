@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "crm-chat-convex-backend/convex/_generated/api";
@@ -140,6 +141,28 @@ export async function getConvexUserId(page: Page): Promise<string> {
   }
 
   return `${env.CLERK_JWT_ISSUER_DOMAIN}|${id}`;
+}
+
+const USER_META_FILE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".auth/user-meta.json"
+);
+
+/**
+ * Read the Convex tokenIdentifier cached by auth.setup.ts. Prefer this over
+ * `getConvexUserId(page)` in `test.beforeAll` hooks — it skips the page load
+ * + waitForURL round-trip, which was flaking under load.
+ */
+export function getCachedConvexUserId(): string {
+  if (!existsSync(USER_META_FILE)) {
+    throw new Error(
+      `getCachedConvexUserId: ${USER_META_FILE} missing — did auth.setup.ts run?`
+    );
+  }
+  const meta = JSON.parse(readFileSync(USER_META_FILE, "utf-8")) as {
+    tokenIdentifier: string;
+  };
+  return meta.tokenIdentifier;
 }
 
 /**

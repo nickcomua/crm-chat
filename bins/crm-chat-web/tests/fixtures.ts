@@ -111,6 +111,28 @@ async function pollUntilFile(
   throw new Error(`${label} (${filePath}) not present after ${timeoutMs}ms`);
 }
 
+// ---------------------------------------------------------------------------
+// Poll for a log file to contain a marker string.
+// ---------------------------------------------------------------------------
+async function pollUntilLogContains(
+  filePath: string,
+  marker: string,
+  label: string,
+  timeoutMs: number,
+  intervalMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath) && readFileSync(filePath, "utf-8").includes(marker)) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(
+    `${label}: log ${filePath} never contained "${marker}" in ${timeoutMs}ms`
+  );
+}
+
 function onExit(proc: ChildProcess): Promise<number | null> {
   return new Promise((resolve) => {
     if (proc.exitCode !== null) {
@@ -288,6 +310,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           path.join(workspacePath, ".devenv/state/admin_key"),
           "admin_key",
           60_000,
+          500
+        );
+        // Wait for `convex dev` to push functions + auth config. Without
+        // this, the first mutation a test makes races the deploy and returns
+        // `NoAuthProvider: ... (no providers configured)` because
+        // convex/auth.config.ts hasn't been synced yet.
+        await pollUntilLogContains(
+          path.join(workspacePath, ".devenv/state/logs/convex-backend.log"),
+          "Convex functions ready!",
+          "convex dev initial deploy",
+          120_000,
           500
         );
         // Vite serving.

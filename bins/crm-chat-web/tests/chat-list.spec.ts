@@ -1,6 +1,7 @@
 import { expect, test } from "./fixtures";
 import {
   api,
+  getCachedConvexUserId,
   getConvexUserId,
   getRobotClient,
   type Id,
@@ -18,16 +19,9 @@ let clientId: Id<"clients">;
 let workerCfg: WorkerConfig;
 
 test.describe("Chat List — Backend", () => {
-  test.beforeAll(async ({ browser, workerBackend }) => {
+  test.beforeAll(async ({ workerBackend }) => {
     workerCfg = workerBackend;
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 10_000 });
-    userId = await getConvexUserId(page);
-    await context.close();
+    userId = getCachedConvexUserId();
   });
 
   test("seeded chats appear in list query ordered by timestamp", async () => {

@@ -16,7 +16,7 @@
 import { expect, test } from "./fixtures";
 import {
   api,
-  getConvexUserId,
+  getCachedConvexUserId,
   getHumanClient,
   getRobotClient,
   type Id,
@@ -37,18 +37,11 @@ let contactId: Id<"contacts">;
 let workerCfg: WorkerConfig;
 
 test.describe("Contacts — pinned messages", () => {
-  test.beforeAll(async ({ browser, workerBackend }) => {
+  test.beforeAll(async ({ workerBackend }) => {
     workerCfg = workerBackend;
     const robot = await getRobotClient(workerCfg);
 
-    const context = await browser.newContext({
-      storageState: "tests/.auth/user.json",
-    });
-    const page = await context.newPage();
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
-    userId = await getConvexUserId(page);
-    await context.close();
+    userId = getCachedConvexUserId();
 
     clientId = await seedTestClient(
       userId,
