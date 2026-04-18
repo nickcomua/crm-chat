@@ -176,6 +176,10 @@ export function ContactCustomFields({
                             updateField(index, { key: e.target.value })
                           }
                           placeholder="Key (e.g. email)"
+                          // Override Radix PopoverTrigger's default type="button"
+                          // so this remains a typable text input (users filter
+                          // the suggestion popover by typing into it).
+                          type="text"
                           value={field.key}
                         />
                       </PopoverTrigger>
