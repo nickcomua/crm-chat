@@ -34,10 +34,10 @@ const messageFields = v.object({
   mediaExternalId: v.optional(v.string()),
   mediaKind: v.optional(mediaKind),
   replyToMessageId: v.optional(v.string()),
-  // Snapshot of the replied-to message's text at the time of sending. The
-  // merged timeline query in model/contacts.ts and the message-bubble UI
-  // already read this field; adding it to the schema makes it actually
-  // storable (previously it was a dangling reference).
+  // Quoted fragment of the replied-to message. Populated ONLY when the sender
+  // used Telegram's "Quote this part" feature — plain full-message replies
+  // leave this undefined, because we already have the parent message in our
+  // DB and callers look it up by `replyToMessageId` when rendering a preview.
   replyToText: v.optional(v.string()),
   forwardedFrom: v.optional(forwardedFromValidator),
   reactions: v.optional(v.array(reactionValidator)),
@@ -147,11 +147,28 @@ export const listByChat = humanQuery({
       throw new Error("Unauthorized: you do not own this resource");
     }
 
-    return await ctx.db
+    const result = await ctx.db
       .query("messages")
       .withIndex("by_chatId_timestamp", (q) => q.eq("chatId", chatId))
       .order("desc")
       .paginate(paginationOpts);
+
+    // Resolve reply previews: `replyToText` is only stored for quote-replies;
+    // for plain replies we look up the parent message and surface its text so
+    // the UI can render a preview without a second round trip.
+    const page = await asyncMap(result.page, async (m) => {
+      if (m.replyToText || !m.replyToMessageId) {
+        return m;
+      }
+      const parent = await ctx.db
+        .query("messages")
+        .withIndex("by_messageId", (q) =>
+          q.eq("messageId", m.replyToMessageId as string)
+        )
+        .unique();
+      return parent?.text ? { ...m, replyToText: parent.text } : m;
+    });
+    return { ...result, page };
   },
 });
 

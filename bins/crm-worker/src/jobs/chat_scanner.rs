@@ -184,6 +184,7 @@ async fn scan_chat_messages(
                 replyToMessageId: msg
                     .reply_to_message_id
                     .map(|id| format!("{}:{}", req.chat_id, id)),
+                replyToText: msg.reply_to_text,
                 forwardedFrom: None,
                 reactions: None,
             })

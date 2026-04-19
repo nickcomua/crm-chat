@@ -997,8 +997,28 @@ export const listMergedMessages = humanQuery({
 
     const isDone = Object.values(nextCursor.perChat).every((v) => v === null);
 
+    // Resolve reply previews: `replyToText` is stored only for quote-replies;
+    // for plain replies we fetch the parent message's text so the UI can
+    // render a preview without extra round trips.
+    const resolvedPage: typeof page = [];
+    for (const msg of page) {
+      if (msg.replyToText || !msg.replyToMessageId) {
+        resolvedPage.push(msg);
+        continue;
+      }
+      const parent = await ctx.db
+        .query("messages")
+        .withIndex("by_messageId", (q) =>
+          q.eq("messageId", msg.replyToMessageId as string)
+        )
+        .unique();
+      resolvedPage.push(
+        parent?.text ? { ...msg, replyToText: parent.text } : msg
+      );
+    }
+
     return {
-      page,
+      page: resolvedPage,
       isDone,
       continueCursor: JSON.stringify(nextCursor),
       isDegraded,

@@ -21,6 +21,17 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::TelegramClient;
 
+/// Extract the quoted fragment from a grammers message's reply header.
+/// Populated only when the sender used Telegram's "Quote this part" feature;
+/// plain full-message replies have no quote text (callers can look up the
+/// parent by `reply_to_message_id` instead).
+fn extract_reply_quote(msg: &grammers_client::message::Message) -> Option<String> {
+    match msg.reply_header()? {
+        tl::enums::MessageReplyHeader::Header(h) => h.quote_text,
+        tl::enums::MessageReplyHeader::MessageReplyStoryHeader(_) => None,
+    }
+}
+
 /// Classify a grammers `Media` into our `MediaSummary` with type and metadata.
 fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSummary> {
     let external_id = format!("media:{}:{}", chat_id, msg_id);
@@ -475,6 +486,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
                 reply_to_message_id: message.reply_to_message_id(),
+                reply_to_text: extract_reply_quote(message),
             })
         }
         TgUpdate::MessageEdited(message) => {
@@ -506,6 +518,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
                 reply_to_message_id: message.reply_to_message_id(),
+                reply_to_text: extract_reply_quote(message),
             })
         }
         TgUpdate::MessageDeleted(deleted) => {
@@ -724,6 +737,7 @@ impl MessengerClient for TelegramClient {
                             .map(|_| format!("media:{}:{}", chat_bare_id, msg.id())),
                         media_summary,
                         reply_to_message_id: msg.reply_to_message_id(),
+                        reply_to_text: extract_reply_quote(&msg),
                     };
                     count += 1;
                     // If receiver is dropped, stop producing to avoid unnecessary work

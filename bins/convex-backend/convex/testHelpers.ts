@@ -129,35 +129,24 @@ export const seedMessage = workerMutation({
     mediaExternalId: v.optional(v.string()),
     mediaKind: v.optional(mediaKind),
     replyToMessageId: v.optional(v.string()),
-    // Explicit snapshot of the replied-to message text. When omitted and
-    // `replyToMessageId` points at an already-seeded message, we look it up
-    // and copy its `text` — matching what the import worker does in prod.
+    // Pass only to simulate a "Quote this part" reply. Plain replies should
+    // leave this undefined — matches prod semantics where the worker only
+    // fills replyToText from the Telegram reply header's quote_text.
     replyToText: v.optional(v.string()),
     forwardedFrom: v.optional(forwardedFromValidator),
     reactions: v.optional(v.array(reactionValidator)),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    let { replyToText } = args;
-    if (!replyToText && args.replyToMessageId) {
-      const parent = await ctx.db
-        .query("messages")
-        .withIndex("by_messageId", (q) =>
-          q.eq("messageId", args.replyToMessageId as string)
-        )
-        .unique();
-      replyToText = parent?.text;
-    }
-    const fields = { ...args, replyToText };
     const existing = await ctx.db
       .query("messages")
       .withIndex("by_messageId", (q) => q.eq("messageId", args.messageId))
       .unique();
 
     if (existing) {
-      await ctx.db.patch(existing._id, fields);
+      await ctx.db.patch(existing._id, args);
     } else {
-      await ctx.db.insert("messages", fields);
+      await ctx.db.insert("messages", args);
     }
     return null;
   },
@@ -254,6 +243,14 @@ export const queryLastPerChat = workerQuery({
       }
     }
     return results;
+  },
+});
+
+/** Get a single client by ID. Robot-accessible. */
+export const queryClient = workerQuery({
+  args: { clientId: v.id("clients") },
+  handler: async (ctx, { clientId }) => {
+    return await ctx.db.get(clientId);
   },
 });
 

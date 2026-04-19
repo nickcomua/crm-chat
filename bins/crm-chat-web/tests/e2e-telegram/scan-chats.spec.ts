@@ -206,6 +206,51 @@ test.describe("Client Settings & Chat Scanning", () => {
     }
   });
 
+  test("Sync Dialogs button re-syncs and client returns to Listening", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    // Drives the real user flow: click the button, assert the backend reaches
+    // Listening. The pre-fix race aborted DialogSync the instant phase flipped
+    // to Syncing, so this test fails against the old pendingWork query.
+    await page.goto(`/#/client/${registeredClientId}`);
+    await page.waitForSelector("text=Chat Scanning", { timeout: 10_000 });
+
+    const robot = await getRobotClient(workerCfg);
+
+    const syncButton = page.getByRole("button", { name: "Sync Dialogs" });
+    await expect(syncButton).toBeVisible({ timeout: 10_000 });
+
+    const chatsBefore = (
+      (await robot.query(api.testHelpers.queryChats, {
+        userId: convexUserId,
+      })) as Array<{ clientId: string }>
+    ).filter((c) => c.clientId === registeredClientId).length;
+
+    await syncButton.click();
+
+    // Phase must round-trip NeedsSync → Syncing → Listening. Poll Listening:
+    // if the bug returns, the client strands in Syncing and this times out.
+    await pollUntil(
+      page,
+      async () => {
+        const c = (await robot.query(api.testHelpers.queryClient, {
+          clientId: registeredClientId,
+        })) as { phase?: string } | null;
+        return c?.phase === "Listening";
+      },
+      500,
+      25_000
+    );
+
+    const chatsAfter = (
+      (await robot.query(api.testHelpers.queryChats, {
+        userId: convexUserId,
+      })) as Array<{ clientId: string }>
+    ).filter((c) => c.clientId === registeredClientId).length;
+    expect(chatsAfter).toBeGreaterThanOrEqual(chatsBefore);
+  });
+
   test("at least 1 chat has scanned messages", async ({ page }) => {
     // Scanning was enabled in beforeAll — by now (after 5 earlier serial tests),
     // the worker should have completed scanning at least 1 chat.

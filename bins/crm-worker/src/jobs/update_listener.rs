@@ -204,6 +204,7 @@ async fn process_update(
                         .as_ref()
                         .map(|s| to_upsert_media_kind(s.kind)),
                     replyToMessageId: reply_to_message_id,
+                    replyToText: msg.reply_to_text.clone(),
                     forwardedFrom: None,
                     reactions: None,
                 })

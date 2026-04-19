@@ -332,6 +332,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         );
         console.log(`[${wid}] Web ready on http://localhost:${webPort}`);
 
+        // crm-worker has finished its cold build and subscribed to pending
+        // work. Otherwise tests that register a client can run before the
+        // worker picks it up, leaving the UI in "No chats synced yet" and
+        // tripping selectors that expect chat rows.
+        await pollUntilLogContains(
+          path.join(workspacePath, ".devenv/state/logs/crm-worker.log"),
+          "crm-worker ready",
+          "crm-worker cold build + subscribe",
+          300_000,
+          1000
+        );
+        console.log(`[${wid}] crm-worker ready`);
+
         // eslint-disable-next-line react-hooks/rules-of-hooks
         await use({
           convexUrl,

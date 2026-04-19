@@ -605,10 +605,18 @@
               };
 
               # Rust worker: subscribes to Convex, drives Telegram.
+              # Explicit `-w` paths + debounce so transient writes under
+              # `.devenv/state/` and `target/` in a fresh jj workspace can't
+              # trap cargo-watch in a restart loop during the cold build.
               processes.crm-worker = {
                 exec = ''
                   ${logTo "crm-worker"}
-                  exec secretspec run --profile crm_worker -- cargo watch -x 'run -p crm-worker'
+                  exec secretspec run --profile crm_worker -- \
+                    cargo watch \
+                      --delay 2 \
+                      -w Cargo.toml -w Cargo.lock \
+                      -w bins -w libs \
+                      -x 'run -p crm-worker'
                 '';
                 after = ["devenv:processes:backend"];
               };

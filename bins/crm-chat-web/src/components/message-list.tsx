@@ -14,7 +14,6 @@ import { useContactForChat } from "@/hooks/use-contact-for-chat";
 import { api, onResultError } from "@/lib/convex";
 import { displayChatName, displayClientName } from "@/utils/display";
 import { formatDateHeader } from "@/utils/format";
-import { cn } from "../lib/utils";
 import { AttachDialogToContactDialog } from "./attach-dialog-to-contact";
 import { CreateContactDialog } from "./create-contact-dialog";
 import type { MediaInfo } from "./media-renderer";
@@ -484,6 +483,9 @@ export function MessageList({
                             }
                           : undefined
                       }
+                      onReplyClick={(replyToMessageId) => {
+                        setPendingTarget(makeScrollRequest(replyToMessageId));
+                      }}
                     />
                   </div>
                 </div>

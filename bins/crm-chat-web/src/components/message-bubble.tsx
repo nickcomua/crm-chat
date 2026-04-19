@@ -92,17 +92,68 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength)}…`;
 }
 
+function ReplyPreview({
+  replyToText,
+  replyToMessageId,
+  hasMedia,
+  isOutgoing,
+  onReplyClick,
+}: {
+  replyToText: string;
+  replyToMessageId?: string;
+  hasMedia: boolean;
+  isOutgoing: boolean;
+  onReplyClick?: (replyToMessageId: string) => void;
+}): React.ReactNode {
+  const canNavigate = Boolean(onReplyClick && replyToMessageId);
+  const className = cn(
+    "mb-1 rounded-md border-l-2 px-2 py-1 text-left text-[11px]",
+    hasMedia ? "mx-1.5 mt-1" : "",
+    canNavigate && "w-full cursor-pointer hover:bg-opacity-80",
+    isOutgoing
+      ? "border-primary-foreground/40 bg-primary-foreground/10 text-primary-foreground/70"
+      : "border-muted-foreground/40 bg-muted/50 text-muted-foreground"
+  );
+  const inner = (
+    <div className="flex items-center gap-1">
+      <Reply className="h-3 w-3 shrink-0" />
+      <span className="truncate">{truncateText(replyToText, 100)}</span>
+    </div>
+  );
+  if (canNavigate && replyToMessageId) {
+    return (
+      <button
+        aria-label="Go to replied message"
+        className={className}
+        data-testid="reply-preview"
+        onClick={() => onReplyClick?.(replyToMessageId)}
+        type="button"
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className={className} data-testid="reply-preview">
+      {inner}
+    </div>
+  );
+}
+
 interface MessageBubbleProps {
-  message: MessageDoc;
-  media?: MediaInfo;
-  highlighted?: boolean;
   /** Optional label (usually the chat name) shown as a small badge on the
    *  bubble. Used by the merged-timeline view to attribute the message. */
   chatLabel?: string;
-  /** When provided, renders a pin toggle in the hover action cluster. */
-  onPinToggle?: () => void;
+  highlighted?: boolean;
   /** When true, renders a small pin indicator and marks the bubble as pinned. */
   isPinned?: boolean;
+  media?: MediaInfo;
+  message: MessageDoc;
+  /** When provided, renders a pin toggle in the hover action cluster. */
+  onPinToggle?: () => void;
+  /** When provided, the reply preview becomes a button that invokes this with
+   *  the replied-to message id (enabling scroll-to-parent navigation). */
+  onReplyClick?: (replyToMessageId: string) => void;
 }
 
 export function MessageBubble({
@@ -112,6 +163,7 @@ export function MessageBubble({
   chatLabel,
   onPinToggle,
   isPinned,
+  onReplyClick,
 }: MessageBubbleProps): React.ReactNode {
   const isOutgoing = message.outgoing;
   const isDeleted = message.deleted;
@@ -200,23 +252,13 @@ export function MessageBubble({
         )}
 
         {message.replyToText && (
-          <div
-            className={cn(
-              "mb-1 rounded-md border-l-2 px-2 py-1 text-[11px]",
-              hasMedia ? "mx-1.5 mt-1" : "",
-              isOutgoing
-                ? "border-primary-foreground/40 bg-primary-foreground/10 text-primary-foreground/70"
-                : "border-muted-foreground/40 bg-muted/50 text-muted-foreground"
-            )}
-            data-testid="reply-preview"
-          >
-            <div className="flex items-center gap-1">
-              <Reply className="h-3 w-3 shrink-0" />
-              <span className="truncate">
-                {truncateText(message.replyToText, 100)}
-              </span>
-            </div>
-          </div>
+          <ReplyPreview
+            hasMedia={hasMedia}
+            isOutgoing={isOutgoing}
+            onReplyClick={onReplyClick}
+            replyToMessageId={message.replyToMessageId}
+            replyToText={message.replyToText}
+          />
         )}
 
         {isDeleted && (
@@ -267,7 +309,7 @@ export function MessageBubble({
           <button
             aria-label={isPinned ? "Unpin from contact" : "Pin to contact"}
             className={cn(
-              "absolute top-1 opacity-0 transition-opacity group-hover/bubble:opacity-100 focus:opacity-100",
+              "absolute top-1 opacity-0 transition-opacity focus:opacity-100 group-hover/bubble:opacity-100",
               isOutgoing ? "left-1" : "right-1",
               "flex h-6 w-6 items-center justify-center rounded-full",
               isOutgoing

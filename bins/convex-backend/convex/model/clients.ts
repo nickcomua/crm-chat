@@ -312,11 +312,21 @@ export const pendingWork = workerQuery({
   handler: async (ctx) => {
     const work: { service: string; key: string; handler: string }[] = [];
 
-    const needsSync = await ctx.db
-      .query("clients")
-      .withIndex("by_phase", (q) => q.eq("phase", "NeedsSync"))
-      .collect();
-    for (const c of needsSync) {
+    // Keep the key in the DialogSync set across both NeedsSync and Syncing so
+    // the runner doesn't abort the task when the worker flips phase to
+    // Syncing mid-run. The idempotency guard in dialog_sync.rs prevents
+    // re-spawning concurrent work on the Syncing key.
+    const needsOrSyncing = [
+      ...(await ctx.db
+        .query("clients")
+        .withIndex("by_phase", (q) => q.eq("phase", "NeedsSync"))
+        .collect()),
+      ...(await ctx.db
+        .query("clients")
+        .withIndex("by_phase", (q) => q.eq("phase", "Syncing"))
+        .collect()),
+    ];
+    for (const c of needsOrSyncing) {
       work.push({ service: "DialogSync", key: c._id, handler: "sync" });
     }
 

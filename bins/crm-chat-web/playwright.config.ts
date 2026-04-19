@@ -63,6 +63,7 @@ export default defineConfig({
         /e2e-telegram\/media-visual\.spec/,
         /e2e-telegram\/qr-auth\.spec/,
         /e2e-telegram\/qr-auth-real\.spec/,
+        /e2e-telegram\/replies-real\.spec/,
         /workspace-smoke-.*\.spec/,
       ],
     },
@@ -114,6 +115,18 @@ export default defineConfig({
         storageState: "tests/.auth/user.json",
       },
       dependencies: ["tg-media-render"],
+    },
+    // Real-TG: verifies that two manually-seeded messages (one plain reply,
+    // one "Quote this part" reply) in the test account scan, render a
+    // preview in the chat view, and navigate to the parent on click.
+    {
+      name: "tg-replies-real",
+      testMatch: /e2e-telegram\/replies-real\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "tests/.auth/user.json",
+      },
+      dependencies: ["tg-media-visual"],
     },
   ],
 });
