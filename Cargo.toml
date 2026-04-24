@@ -1,3 +1,4 @@
+#:schema https://raw.githubusercontent.com/rust-lang/cargo/refs/heads/master/crates/cargo-util-schemas/manifest.schema.json
 [workspace]
 members = [
   "bins/convex-backend",

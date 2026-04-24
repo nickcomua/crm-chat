@@ -21,13 +21,11 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 
 ## How It Works
 
-Tests use **testcontainers** to automatically spin up infrastructure:
+Tests assume `devenv up` is already running in the repo root (started before the test suite). They connect to the existing services and clean up test data via Convex mutations.
 
-1. `global-setup.ts` starts a Convex Docker container, generates robot RSA keys, deploys Convex functions, and launches `crm-worker` (which subscribes to Convex directly — no separate runtime).
-2. Tests run against the ephemeral backend (no manual Docker/deploy needed).
-3. `global-teardown.ts` kills the worker and stops the containers.
-
-The setup mirrors what `scripts/run-e2e-tests.sh` used to do, but programmatically via Bun.
+1. `auth.setup.ts` signs in via Clerk, caches the user's tokenIdentifier, and calls `cleanupUser` to wipe stale data.
+2. Tests run against the pre-running backend.
+3. `global-teardown.ts` reads the cached tokenIdentifier and calls `cleanupUser` again to ensure no test data is left behind.
 
 ## Running Tests
 
@@ -44,15 +42,9 @@ bun run test:ui
 bun run test:headed
 ```
 
-### Run against an external server (skip testcontainers)
+### Run against an external server
 
-If you already have backend services running, set `TEST_BASE_URL` to skip the auto-started Vite dev server:
-
-```bash
-TEST_BASE_URL=https://crm-chat.kaminazuma.com bun test
-```
-
-Note: `global-setup.ts` still starts a Convex container unless you also set `E2E_CONVEX_URL` to point at your existing backend.
+If you already have backend services running, set `TEST_BASE_URL` in your `secretspec.toml` profile or environment to point at the existing Vite dev server.
 
 ## Directory Structure
 
@@ -64,11 +56,10 @@ tests/
 │   ├── qr-auth-real.spec.ts
 │   ├── media-rendering.spec.ts
 │   └── media-visual.spec.ts
-├── auth.setup.ts          # Clerk auth setup (shared by all tests)
-├── global-setup.ts        # Testcontainers global setup
-├── global-teardown.ts     # Cleanup
-├── helpers.ts             # Shared utilities (imported by both dirs)
-├── env.ts                 # Environment variable helpers
+├── auth.setup.ts          # Clerk auth setup + pre-test cleanup
+├── global-teardown.ts     # Post-test data cleanup
+├── helpers.ts             # Shared utilities (Convex clients, seeding, cleanup)
+├── env.ts                 # Typed environment variables
 └── *.spec.ts              # Seeded-data tests (no real Telegram needed)
 ```
 
@@ -80,8 +71,7 @@ tests/
 
 | File | Description |
 |------|-------------|
-| `global-setup.ts` | Testcontainers global setup (Convex container, robot keys, deploy, crm-worker) |
-| `global-teardown.ts` | Cleanup (kill worker, stop containers) |
+| `global-teardown.ts` | Post-suite cleanup (delete test user data via Convex mutation) |
 | `helpers.ts` | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
 | `e2e-telegram/scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |
 | `e2e-telegram/qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
@@ -94,8 +84,8 @@ tests/
 Tests are configured in `playwright.config.ts`:
 - Uses Chromium browser
 - 60s timeout per test
-- `globalSetup` / `globalTeardown` for infrastructure lifecycle
-- Auto-starts Vite dev server unless `TEST_BASE_URL` is set
+- `auth.setup.ts` runs before dependent projects for authentication + cleanup
+- Assumes `devenv up` is already running; no auto-started infrastructure
 
 ### Environment Variables
 

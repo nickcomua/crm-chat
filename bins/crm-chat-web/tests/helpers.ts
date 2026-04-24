@@ -10,10 +10,7 @@ import { env } from "./env.ts";
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
   convexUrl: string;
-  // Undefined when the runner wasn't invoked via `secretspec run` (e.g. the
-  // workspace-smoke project). Helpers that actually mint an M2M JWT must
-  // assert it before use.
-  m2mSecretKey: string | undefined;
+  m2mSecretKey: string;
   sessionDir: string;
 }
 
@@ -32,7 +29,7 @@ export function unwrapResult<T>(res: unknown): T {
 /**
  * Fetch an M2M JWT from the Clerk Backend API.
  */
-async function fetchM2mJwt(m2mSecretKey: string): Promise<string> {
+export async function fetchM2mJwt(m2mSecretKey: string): Promise<string> {
   const resp = await fetch("https://api.clerk.com/v1/m2m_tokens", {
     method: "POST",
     headers: {
@@ -55,13 +52,19 @@ async function fetchM2mJwt(m2mSecretKey: string): Promise<string> {
 export async function getRobotClient(
   config: WorkerConfig
 ): Promise<ConvexHttpClient> {
-  if (!config.m2mSecretKey) {
-    throw new Error(
-      "CLERK_M2M_SECRET_KEY must be set in the runner env (invoke via `secretspec run --profile e2e_web -- playwright test`) to use getRobotClient"
-    );
-  }
   const token = await fetchM2mJwt(config.m2mSecretKey);
   const client = new ConvexHttpClient(config.convexUrl);
+  client.setAuth(token);
+  return client;
+}
+
+/**
+ * Create a ConvexHttpClient authenticated as the worker service via Clerk M2M.
+ * Standalone variant that reads env directly (for teardown / non-fixture callers).
+ */
+export async function createRobotClient(): Promise<ConvexHttpClient> {
+  const token = await fetchM2mJwt(env.CLERK_M2M_SECRET_KEY);
+  const client = new ConvexHttpClient(env.VITE_CONVEX_URL);
   client.setAuth(token);
   return client;
 }
@@ -360,9 +363,9 @@ export function getSessionPath(
   ownerId: string,
   sessionDir?: string
 ): string {
-  const baseDir = sessionDir ?? process.env.E2E_SESSION_DIR;
+  const baseDir = sessionDir ?? env.TG_SESSION_DIR;
   if (!baseDir) {
-    throw new Error("E2E_SESSION_DIR not set — is globalSetup running?");
+    throw new Error("TG_SESSION_DIR not set — add it to the e2e_web secretspec profile");
   }
   const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
   // Strip "telegram:" scheme prefix, then use "telegram_" file prefix (matching Rust)

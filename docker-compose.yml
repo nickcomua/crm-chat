@@ -1,67 +1,67 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/refs/heads/main/schema/compose-spec.json
 services:
-  backend:
-    image: ghcr.io/get-convex/convex-backend:latest
-    stop_grace_period: 10s
-    stop_signal: SIGINT
-    ports:
-      - "${PORT:-3210}:3210"
-      - "${SITE_PROXY_PORT:-3211}:3211"
-    volumes:
-      - ./target/crm-chat-data:/convex/data
-    environment:
-      - CONVEX_CLOUD_ORIGIN=http://localhost:3210
-      - CONVEX_SITE_ORIGIN=http://localhost:3211
-      - INSTANCE_NAME
-      - INSTANCE_SECRET
-      - RUST_LOG=${RUST_LOG:-info}
-      - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
-    healthcheck:
-      test: curl -f http://localhost:3210/version
-      interval: 5s
-      start_period: 10s
+    backend:
+        image: ghcr.io/get-convex/convex-backend:latest
+        stop_grace_period: 10s
+        stop_signal: SIGINT
+        ports:
+            - "${PORT:-3210}:3210"
+            - "${SITE_PROXY_PORT:-3211}:3211"
+        volumes:
+            - ./target/crm-chat-data:/convex/data
+        environment:
+            - CONVEX_CLOUD_ORIGIN=http://localhost:3210
+            - CONVEX_SITE_ORIGIN=http://localhost:3211
+            - INSTANCE_NAME
+            - INSTANCE_SECRET
+            - RUST_LOG=${RUST_LOG:-info}
+            - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
+        healthcheck:
+            test: curl -f http://localhost:3210/version
+            interval: 5s
+            start_period: 10s
+    dashboard:
+        image: ghcr.io/get-convex/convex-dashboard:latest
+        stop_grace_period: 10s
+        stop_signal: SIGINT
+        ports:
+            - "${DASHBOARD_PORT:-6791}:6791"
+        environment:
+            - NEXT_PUBLIC_DEPLOYMENT_URL=http://localhost:${PORT:-3210}
+            - NEXT_PUBLIC_ADMIN_KEY=${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
+        depends_on:
+            backend:
+                condition: service_healthy
 
-  dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:latest
-    stop_grace_period: 10s
-    stop_signal: SIGINT
-    ports:
-      - "${DASHBOARD_PORT:-6791}:6791"
-    environment:
-      - NEXT_PUBLIC_DEPLOYMENT_URL=http://localhost:${PORT:-3210}
-      - NEXT_PUBLIC_ADMIN_KEY=${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
-    depends_on:
-      backend:
-        condition: service_healthy
+    crm-worker:
+        image: nick395/crm-worker:latest
+        # platform: linux/amd64
+        # Share the backend's network namespace so localhost:3210/3211 reach Convex
+        # directly. This fixes media uploads which use presigned URLs containing
+        # CONVEX_SITE_ORIGIN (http://localhost:3211).
+        network_mode: "service:backend"
+        volumes:
+            - ./target/crm-worker-data:/crm-worker-data
+        environment:
+            - TG_ID=${TG_ID}
+            - TG_HASH=${TG_HASH}
+            - CONVEX_URL=${CONVEX_URL:-http://localhost:3210}
+            - CLERK_M2M_SECRET_KEY=${CLERK_M2M_SECRET_KEY}
+            - MAX_MEDIA_WORKFLOWS=${MAX_MEDIA_WORKFLOWS:-2}
+            - SENTRY_URL=${SENTRY_URL:-}
+            - RUST_LOG=${RUST_LOG:-info}
+            - TG_SESSION_DIR=/crm-worker-data
+        depends_on:
+            backend:
+                condition: service_healthy
 
-  crm-worker:
-    image: nick395/crm-worker:latest
-    # platform: linux/amd64
-    # Share the backend's network namespace so localhost:3210/3211 reach Convex
-    # directly. This fixes media uploads which use presigned URLs containing
-    # CONVEX_SITE_ORIGIN (http://localhost:3211).
-    network_mode: "service:backend"
-    volumes:
-      - ./target/crm-worker-data:/crm-worker-data
-    environment:
-      - TG_ID=${TG_ID}
-      - TG_HASH=${TG_HASH}
-      - CONVEX_URL=${CONVEX_URL:-http://localhost:3210}
-      - CLERK_M2M_SECRET_KEY=${CLERK_M2M_SECRET_KEY}
-      - MAX_MEDIA_WORKFLOWS=${MAX_MEDIA_WORKFLOWS:-2}
-      - SENTRY_URL=${SENTRY_URL:-}
-      - RUST_LOG=${RUST_LOG:-info}
-      - TG_SESSION_DIR=/crm-worker-data
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  web:
-    image: nick395/crm-chat-web:latest
-    environment:
-      - VITE_CONVEX_URL=${VITE_CONVEX_URL:-http://localhost:${PORT:-3210}}
-      - VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
-      - VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
-      - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
-    depends_on:
-      backend:
-        condition: service_healthy
+    web:
+        image: nick395/crm-chat-web:latest
+        environment:
+            - VITE_CONVEX_URL=${VITE_CONVEX_URL:-http://localhost:${PORT:-3210}}
+            - VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+            - VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
+            - VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+        depends_on:
+            backend:
+                condition: service_healthy

@@ -1,0 +1,12 @@
+{
+    "load_direnv": "shell_hook",
+    "lsp": {
+        "nixd": {
+            "initialization_options": {
+                "formatting": {
+                    "command": ["alejandra", "--quiet", "--"]
+                }
+            }
+        }
+    }
+}

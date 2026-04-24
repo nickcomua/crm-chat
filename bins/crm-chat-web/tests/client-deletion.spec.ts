@@ -55,7 +55,7 @@ test.describe("Client Deletion", () => {
     // 1. Worker discovers a session file and registers the client
     const clientId = (await robot.mutation(
       api.model.clients.workerRegisterConnected,
-      { userId, telegramId, kind: "Telegram" }
+      { userId, telegramId, kind: "Telegram" },
     )) as Id<"clients">;
 
     // 2. User deletes the client (writes a tombstone)
@@ -72,7 +72,7 @@ test.describe("Client Deletion", () => {
     //    Tombstone blocks re-creation — returns null.
     const result = await robot.mutation(
       api.model.clients.workerRegisterConnected,
-      { userId, telegramId, kind: "Telegram" }
+      { userId, telegramId, kind: "Telegram" },
     );
     expect(result).toBeNull();
   });

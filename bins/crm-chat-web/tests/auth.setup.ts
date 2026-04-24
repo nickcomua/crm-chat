@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
 import { test as setup } from "./fixtures";
+import { cleanupUser, createRobotClient } from "./helpers";
 
 const AUTH_FILE = "tests/.auth/user.json";
 const USER_META_FILE = "tests/.auth/user-meta.json";
@@ -32,10 +33,18 @@ setup("authenticate", async ({ page }) => {
   // look up `userId`. Under load (cold crm-worker compile, convex dev
   // startup) that dance has exceeded the 15s waitForURL budget and flaked.
   const clerkUserId = (await clerkUserHandle.jsonValue()) as string;
-  const userMeta = {
-    clerkUserId,
-    tokenIdentifier: `${env.CLERK_JWT_ISSUER_DOMAIN}|${clerkUserId}`,
-  };
+  const tokenIdentifier = `${env.CLERK_JWT_ISSUER_DOMAIN}|${clerkUserId}`;
+  const userMeta = { clerkUserId, tokenIdentifier };
   await fs.mkdir(path.dirname(USER_META_FILE), { recursive: true });
   await fs.writeFile(USER_META_FILE, JSON.stringify(userMeta, null, 2));
+
+  // Clean up any stale data from previous runs for this user before tests start
+  try {
+    const robot = await createRobotClient();
+    await cleanupUser(tokenIdentifier, robot);
+    console.log(`[auth.setup] Cleaned up previous data for ${tokenIdentifier}`);
+  } catch (err) {
+    // Not fatal — global-teardown.ts will try again at the end
+    console.warn(`[auth.setup] cleanupUser failed (will retry in teardown): ${err}`);
+  }
 });

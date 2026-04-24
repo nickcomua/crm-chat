@@ -17,6 +17,11 @@ export const env = createEnv({
     TG_HASH: z.string().min(1),
     TG_SESSION_FILE_1: z.string().min(1),
     TG_USER_ID_1: z.string().min(1),
+    TEST_BASE_URL: z.string().url(),
+    VITE_CONVEX_URL: z.string().url(),
+    CONVEX_URL: z.string().url().optional(),
+    TG_SESSION_DIR: z.string().min(1).optional(),
+    CI: z.string().optional(),
   },
   runtimeEnv: process.env,
 });
