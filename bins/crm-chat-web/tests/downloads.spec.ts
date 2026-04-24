@@ -1,6 +1,7 @@
 import { expect, test } from "./fixtures";
 import {
   api,
+  cleanupUser,
   getConvexUserId,
   getRobotClient,
   type Id,
@@ -33,6 +34,7 @@ test.describe("Downloads — Backend", () => {
 
     userId = await getConvexUserId(page);
     const robot = await getRobotClient(workerCfg);
+    await cleanupUser(userId, robot);
     clientId = await seedTestClient(
       userId,
       `telegram:dl-backend-${Date.now()}`,
@@ -197,6 +199,7 @@ test.describe("Downloads — UI", () => {
 
     const robot = await getRobotClient(workerCfg);
     userId = await getConvexUserId(page);
+    await cleanupUser(userId, robot);
     clientId = await seedTestClient(
       userId,
       `telegram:dl-ui-${Date.now()}`,

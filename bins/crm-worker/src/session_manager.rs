@@ -55,6 +55,9 @@ pub trait SessionManager: Send + Sync {
         telegram_id: &str,
     ) -> Result<Arc<TelegramClient>, WorkerError>;
 
+    /// Check whether a canonical session file exists on disk for a given client.
+    fn has_canonical_session(&self, owner_id: &str, telegram_id: &str) -> bool;
+
     /// Remove a specific temp session from cache.
     /// Scoped by `(owner_id, task_id)` — each QR auth flow only removes its own.
     fn remove_temp(&self, owner_id: &str, task_id: &str);
@@ -248,6 +251,11 @@ impl SessionManager for TelegramSessionManager {
             .await
     }
 
+    fn has_canonical_session(&self, owner_id: &str, telegram_id: &str) -> bool {
+        let suffix = telegram_id.strip_prefix("telegram:").unwrap_or(telegram_id);
+        let stem = format!("telegram_{suffix}");
+        Self::session_path(owner_id, &stem).exists()
+    }
     fn remove_temp(&self, owner_id: &str, task_id: &str) {
         let key = CacheKey {
             owner_id: owner_id.to_string(),

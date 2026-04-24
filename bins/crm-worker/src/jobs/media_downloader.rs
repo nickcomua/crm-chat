@@ -79,6 +79,22 @@ impl Job for MediaDownloaderJob {
             .await?
             .ok_or_else(|| anyhow::anyhow!("client {} not found", media.client_id))?;
 
+        // Skip media for clients that don't have an active Telegram session.
+        // This prevents the worker from incorrectly marking test media as Failed
+        // in E2E environments with fake clients, and gracefully defers work for
+        // real clients that haven't authenticated yet.
+        if !ctx
+            .sessions
+            .has_canonical_session(&media.user_id, &client.telegram_id)
+        {
+            info!(
+                client_id = %media.client_id,
+                telegram_id = %client.telegram_id,
+                "client has no session — skipping media download"
+            );
+            return Ok(());
+        }
+
         let tg = ctx
             .sessions
             .get_for_telegram_id(&media.user_id, &client.telegram_id)
