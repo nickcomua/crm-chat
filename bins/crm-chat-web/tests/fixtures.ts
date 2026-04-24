@@ -68,6 +68,102 @@ function parseDotenv(text: string): Record<string, string> {
   return out;
 }
 
+const PERSIST = process.env.E2E_PERSIST_WORKSPACE === "1";
+
+async function isWorkspaceHealthy(workspacePath: string): Promise<boolean> {
+  const wsEnvPath = path.join(workspacePath, ".env");
+  if (!existsSync(wsEnvPath)) {
+    return false;
+  }
+  try {
+    const wsEnv = parseDotenv(await fs.readFile(wsEnvPath, "utf-8"));
+    const backendPort = Number(wsEnv.PORT);
+    const webPort = Number(wsEnv.WEB_PORT);
+    const convexUrl =
+      wsEnv.CONVEX_URL ?? `http://127.0.0.1:${backendPort}`;
+    if (!(Number.isFinite(backendPort) && Number.isFinite(webPort))) {
+      return false;
+    }
+    // Check Convex backend.
+    const backendRes = await fetch(`${convexUrl}/version`);
+    if (!backendRes.ok) {
+      return false;
+    }
+    // Check Vite dev server can actually serve a JS module (not just the
+    // SPA HTML fallback). A stale/leaked Vite process often returns 500 or
+    // an HTML error overlay for .tsx modules while still answering 200 for /.
+    const moduleRes = await fetch(
+      `http://localhost:${webPort}/src/routes/sign-in.tsx`
+    );
+    if (!moduleRes.ok) {
+      return false;
+    }
+    const contentType = moduleRes.headers.get("content-type") ?? "";
+    if (!contentType.includes("javascript")) {
+      return false;
+    }
+    // Verify the Vite server is serving from the correct workspace, not a
+    // leaked process from another workspace squatting on the same port.
+    const idRes = await fetch(
+      `http://localhost:${webPort}/.workspace-id`
+    );
+    if (!idRes.ok) {
+      return false;
+    }
+    const idText = await idRes.text();
+    if (idText.trim() !== path.basename(workspacePath)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function cleanupStaleWorkspace(
+  workspacePath: string,
+  workspaceName: string
+): Promise<void> {
+  // 1. Kill any lingering devenv process group from a previous run.
+  const pidFile = path.join(workspacePath, ".devenv", "e2e-devenv.pid");
+  if (existsSync(pidFile)) {
+    const pid = Number(readFileSync(pidFile, "utf-8"));
+    if (Number.isFinite(pid)) {
+      try {
+        process.kill(-pid, "SIGTERM");
+        // Give it a moment to cascade through process-compose.
+        await new Promise((r) => setTimeout(r, 5_000));
+      } catch {
+        // already gone
+      }
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+  }
+
+  // 2. Stop docker containers for this workspace's compose project.
+  const composeProject = composeProjectFor(workspacePath);
+  await $({
+    cwd: ROOT,
+    nothrow: true,
+    quiet: true,
+  })`docker compose -p ${composeProject} down -v --remove-orphans`;
+
+  // 3. Forget the jj workspace and remove the directory.
+  await $({
+    cwd: ROOT,
+    nothrow: true,
+    quiet: true,
+  })`jj workspace forget ${workspaceName}`;
+  await $({
+    nothrow: true,
+    quiet: true,
+  })`sudo rm -rf ${workspacePath}`;
+}
+
 // ---------------------------------------------------------------------------
 // Poll a URL until it responds with 2xx or the deadline passes.
 // ---------------------------------------------------------------------------
@@ -194,8 +290,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   workerBackend: [
     // biome-ignore lint/correctness/noEmptyPattern: playwright fixture pattern
     async ({}, use) => {
-      const wid = `${process.pid}-${Date.now()}`;
-      const workspacePath = path.join(os.tmpdir(), `crm-e2e-${wid}`);
+      const workerIndex = process.env.TEST_WORKER_INDEX ?? "0";
+      const repoHash = createHash("sha256").update(ROOT).digest("hex").slice(0, 8);
+      const wid = PERSIST ? `w${workerIndex}` : `${process.pid}-${Date.now()}`;
+      const workspacePath = PERSIST
+        ? path.join(os.tmpdir(), `crm-e2e-${repoHash}-w${workerIndex}`)
+        : path.join(os.tmpdir(), `crm-e2e-${wid}`);
       const workspaceName = path.basename(workspacePath);
 
       let resources: {
@@ -204,7 +304,40 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         devenv?: ChildProcess;
       } = { workspacePath, workspaceName };
 
+      const skipTeardown = PERSIST;
+
       try {
+        // ── 0. Reuse existing healthy persistent workspace ─────────────
+        if (PERSIST && (await isWorkspaceHealthy(workspacePath))) {
+          console.log(
+            `[${wid}] Reusing healthy workspace ${workspacePath}`
+          );
+          const wsEnv = parseDotenv(
+            await fs.readFile(path.join(workspacePath, ".env"), "utf-8")
+          );
+          const webPort = Number(wsEnv.WEB_PORT);
+          const backendPort = Number(wsEnv.PORT);
+          const convexUrl =
+            wsEnv.CONVEX_URL ?? `http://127.0.0.1:${backendPort}`;
+          const sessionDir = path.join(
+            workspacePath,
+            "target/crm-worker-data"
+          );
+          await use({
+            convexUrl,
+            m2mSecretKey: process.env.CLERK_M2M_SECRET_KEY,
+            sessionDir,
+            baseURL: `http://localhost:${webPort}`,
+          });
+          return;
+        }
+
+        // If persistent but directory exists and is unhealthy, clean up stale.
+        if (PERSIST && existsSync(workspacePath)) {
+          console.log(`[${wid}] Stale workspace detected, cleaning up...`);
+          await cleanupStaleWorkspace(workspacePath, workspaceName);
+        }
+
         // ── 1-2. Serialized boot: spawn a jj workspace via the root flake's
         //          `workspace-new` script, then start `devenv up`, then wait
         //          for the backend to bind. ──────────────────────────────
@@ -220,6 +353,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
               cwd: ROOT,
               quiet: true,
             })`nix develop --accept-flake-config --override-input devenv-root file+file://${ROOT}/.devenv/root --command workspace-new ${workspacePath}`;
+
+            // Write a workspace identity marker so isWorkspaceHealthy can
+            // detect leaked Vite processes from other workspaces squatting
+            // on the same port.
+            const webPublicDir = path.join(
+              workspacePath,
+              "bins/crm-chat-web/public"
+            );
+            await fs.mkdir(webPublicDir, { recursive: true });
+            await fs.writeFile(
+              path.join(webPublicDir, ".workspace-id"),
+              workspaceName
+            );
 
             // Append test-only overrides on top of the .env seeded from ROOT.
             // enterShell has NOT run in the new workspace yet, so it will
@@ -289,6 +435,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
               }
             );
 
+            // Write PID so stale cleanup can target this process group later.
+            const devenvPidFile = path.join(
+              workspacePath,
+              ".devenv",
+              "e2e-devenv.pid"
+            );
+            await fs.mkdir(path.dirname(devenvPidFile), { recursive: true });
+            await fs.writeFile(devenvPidFile, String(devenv.pid));
+
             // Wait for the backend to actually answer on its port.
             await pollUntilReady(
               `${convexUrl}/version`,
@@ -353,6 +508,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           baseURL: `http://localhost:${webPort}`,
         });
       } finally {
+        if (skipTeardown) {
+          console.log(
+            `[${wid}] Persisting workspace for reuse: ${workspacePath}`
+          );
+          return;
+        }
+
         console.log(`[${wid}] Tearing down...`);
 
         // Group-kill the devenv supervisor — process-compose shuts all its

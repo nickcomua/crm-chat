@@ -12,6 +12,7 @@
     "fix": "ultracite fix",
     "test": "secretspec run --profile e2e_web -- playwright test",
     "test:ui": "secretspec run --profile e2e_web -- playwright test --ui",
+    "test:ui:persist": "E2E_PERSIST_WORKSPACE=1 secretspec run --profile e2e_web -- playwright test --ui",
     "test:headed": "secretspec run --profile e2e_web -- playwright test --headed",
     "postinstall": "if [ -z \"$NIX_BUILD_TOP\" ]; then bun2nix -o bun.nix && nix fmt .; fi"
   },
