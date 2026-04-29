@@ -37,7 +37,7 @@ impl Job for ProfilePhotoSyncJob {
                     Ok(items) => Some(
                         items
                             .into_iter()
-                            .filter(|i| i.service == SERVICE)
+                            .filter(|i| i.service.to_string() == SERVICE)
                             .map(|i| i.key)
                             .collect(),
                     ),

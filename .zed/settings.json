@@ -1,12 +1,47 @@
 {
-    "load_direnv": "shell_hook",
-    "lsp": {
-        "nixd": {
-            "initialization_options": {
-                "formatting": {
-                    "command": ["alejandra", "--quiet", "--"]
-                }
-            }
-        }
+  "agent": {
+    "tool_permissions": {
+      "default": "allow"
     }
+  },
+  "load_direnv": "direct",
+  "lsp": {
+    "nixd": {
+      "initialization_options": {
+        "formatting": {
+          "command": ["alejandra", "--quiet", "--"]
+        }
+      }
+    }
+  },
+  "languages": {
+    "JavaScript": {
+      "formatter": {
+        "language_server": { "name": "biome" }
+      }
+    },
+    "TypeScript": {
+      "formatter": {
+        "language_server": { "name": "biome" }
+      }
+    },
+    "TSX": {
+      "formatter": {
+        "language_server": { "name": "biome" }
+      }
+    },
+    "JSON": {
+      "formatter": {
+        "language_server": { "name": "biome" }
+      }
+    },
+    "JSONC": {
+      "formatter": {
+        "language_server": { "name": "biome" }
+      }
+    },
+    "TOML": {
+      "show_edit_predictions": false
+    }
+  }
 }

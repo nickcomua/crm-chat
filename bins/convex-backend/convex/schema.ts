@@ -11,15 +11,15 @@ import { phoneAuthsTable } from "./model/phoneAuth";
 import { qrAuthsTable } from "./model/qrAuth";
 
 export default defineSchema({
-  clients: clientsTable,
-  deletedClients: deletedClientsTable,
-  chats: chatsTable,
-  messages: messagesTable,
-  media: mediaTable,
-  phoneAuths: phoneAuthsTable,
-  notifications: notificationsTable,
-  qrAuths: qrAuthsTable,
-  contacts: contactsTable,
-  contactPins: contactPinsTable,
-  chatContactLinks: chatContactLinksTable,
+	clients: clientsTable,
+	deletedClients: deletedClientsTable,
+	chats: chatsTable,
+	messages: messagesTable,
+	media: mediaTable,
+	phoneAuths: phoneAuthsTable,
+	notifications: notificationsTable,
+	qrAuths: qrAuthsTable,
+	contacts: contactsTable,
+	contactPins: contactPinsTable,
+	chatContactLinks: chatContactLinksTable,
 });

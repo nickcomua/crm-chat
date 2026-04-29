@@ -16,7 +16,7 @@ grammers-session = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = [
   "impl-serde",
 ] }
-hack = { version = "0.1", path = "../hack" }
+hack = { path = "../hack", version = "0.1" }
 messanger-interface = { path = "../messanger-interface" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -15,14 +15,14 @@
 
 import { expect, test } from "./fixtures";
 import {
-  api,
-  getCachedConvexUserId,
-  getHumanClient,
-  getRobotClient,
-  type Id,
-  seedMessage,
-  seedTestClient,
-  type WorkerConfig,
+	api,
+	getCachedConvexUserId,
+	getHumanClient,
+	getRobotClient,
+	type Id,
+	seedMessage,
+	seedTestClient,
+	type WorkerConfig,
 } from "./helpers";
 
 const CHATS_URL_PATTERN = /\/#\/chats/;
@@ -37,168 +37,164 @@ let contactId: Id<"contacts">;
 let workerCfg: WorkerConfig;
 
 test.describe("Contacts — pinned messages", () => {
-  test.beforeAll(async ({ workerBackend }) => {
-    workerCfg = workerBackend;
-    const robot = await getRobotClient(workerCfg);
+	test.beforeAll(async ({ workerBackend }) => {
+		workerCfg = workerBackend;
+		const robot = await getRobotClient(workerCfg);
 
-    userId = getCachedConvexUserId();
+		userId = getCachedConvexUserId();
 
-    clientId = await seedTestClient(
-      userId,
-      `telegram:contacts-pins-${Date.now()}`,
-      robot
-    );
-    chatId = `${clientId}:pins-chat`;
+		clientId = await seedTestClient(
+			userId,
+			`telegram:contacts-pins-${Date.now()}`,
+			robot,
+		);
+		chatId = `${clientId}:pins-chat`;
 
-    await robot.mutation(api.testHelpers.seedChat, {
-      chatId,
-      userId,
-      clientId,
-      chatType: "Dialog",
-      isPinned: true,
-      pinnedName: "Nikola Tesla",
-      lastMessageTimestamp: Date.now(),
-    });
+		await robot.mutation(api.testHelpers.seedChat, {
+			chatId,
+			userId,
+			clientId,
+			chatType: "Dialog",
+			isPinned: true,
+			pinnedName: "Nikola Tesla",
+			lastMessageTimestamp: Date.now(),
+		});
 
-    // Seed three incoming messages. senderId "tesla-dm" becomes the sender
-    // auto-detected by `resolveDefaultSenderId`.
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      `${chatId}:pin-msg-1`,
-      "PIN_TARGET_MESSAGE_ONE",
-      robot,
-      { senderId: "tesla-dm", timestamp: 1000 }
-    );
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      `${chatId}:pin-msg-2`,
-      "PIN_TARGET_MESSAGE_TWO",
-      robot,
-      { senderId: "tesla-dm", timestamp: 2000 }
-    );
-    await seedMessage(
-      userId,
-      clientId,
-      chatId,
-      `${chatId}:pin-msg-3`,
-      "OTHER_MESSAGE",
-      robot,
-      { senderId: "tesla-dm", timestamp: 3000 }
-    );
+		// Seed three incoming messages. senderId "tesla-dm" becomes the sender
+		// auto-detected by `resolveDefaultSenderId`.
+		await seedMessage(
+			userId,
+			clientId,
+			chatId,
+			`${chatId}:pin-msg-1`,
+			"PIN_TARGET_MESSAGE_ONE",
+			robot,
+			{ senderId: "tesla-dm", timestamp: 1000 },
+		);
+		await seedMessage(
+			userId,
+			clientId,
+			chatId,
+			`${chatId}:pin-msg-2`,
+			"PIN_TARGET_MESSAGE_TWO",
+			robot,
+			{ senderId: "tesla-dm", timestamp: 2000 },
+		);
+		await seedMessage(
+			userId,
+			clientId,
+			chatId,
+			`${chatId}:pin-msg-3`,
+			"OTHER_MESSAGE",
+			robot,
+			{ senderId: "tesla-dm", timestamp: 3000 },
+		);
 
-    // Create the contact directly so we have a stable contactId.
-    contactId = (await robot.mutation(api.testHelpers.insertTestContact, {
-      userId,
-      displayName: "Nikola Tesla",
-    })) as Id<"contacts">;
-    await robot.mutation(api.testHelpers.insertTestChatContactLink, {
-      userId,
-      chatId,
-      senderId: "tesla-dm",
-      contactId,
-    });
-  });
+		// Create the contact directly so we have a stable contactId.
+		contactId = (await robot.mutation(api.testHelpers.insertTestContact, {
+			userId,
+			displayName: "Nikola Tesla",
+		})) as Id<"contacts">;
+		await robot.mutation(api.testHelpers.insertTestChatContactLink, {
+			userId,
+			chatId,
+			senderId: "tesla-dm",
+			contactId,
+		});
+	});
 
-  test("scenario 6: pin → indicator in single chat, merged view, and survives reload", async ({
-    page,
-  }) => {
-    // Open the underlying chat and pin the first message via the bubble
-    // hover action.
-    await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
-    await page.waitForURL(/\/#\/chats\//, { timeout: 15_000 });
-    await expect(
-      page.locator("text=PIN_TARGET_MESSAGE_ONE").first()
-    ).toBeVisible({ timeout: 15_000 });
+	test("scenario 6: pin → indicator in single chat, merged view, and survives reload", async ({
+		page,
+	}) => {
+		// Open the underlying chat and pin the first message via the bubble
+		// hover action.
+		await page.goto(`/#/chats/${encodeURIComponent(chatId)}`);
+		await page.waitForURL(/\/#\/chats\//, { timeout: 15_000 });
+		await expect(
+			page.locator("text=PIN_TARGET_MESSAGE_ONE").first(),
+		).toBeVisible({ timeout: 15_000 });
 
-    // Hover the target bubble so the pin button becomes visible, then click.
-    const targetBubble = page.locator(
-      '[data-message-id$=":pin-msg-1"]'
-    );
-    await targetBubble.hover();
-    await targetBubble
-      .getByRole("button", { name: /pin to contact/i })
-      .click();
+		// Hover the target bubble so the pin button becomes visible, then click.
+		const targetBubble = page.locator('[data-message-id$=":pin-msg-1"]');
+		await targetBubble.hover();
+		await targetBubble.getByRole("button", { name: /pin to contact/i }).click();
 
-    // After pinning, the indicator on the bubble flips to "Pinned to contact".
-    await expect(
-      targetBubble.getByLabel(/pinned to contact/i)
-    ).toBeVisible({ timeout: 5_000 });
+		// After pinning, the indicator on the bubble flips to "Pinned to contact".
+		await expect(targetBubble.getByLabel(/pinned to contact/i)).toBeVisible({
+			timeout: 5_000,
+		});
 
-    // Navigate to the contact page and verify the pin appears in the panel.
-    await page.goto(`/#/contacts/${contactId}`);
-    await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 10_000 });
-    await page.getByRole("button", { name: /contact details/i }).click();
+		// Navigate to the contact page and verify the pin appears in the panel.
+		await page.goto(`/#/contacts/${contactId}`);
+		await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 10_000 });
+		await page.getByRole("button", { name: /contact details/i }).click();
 
-    const sheet = page.getByRole("dialog", { name: /contact details/i });
-    await expect(sheet).toBeVisible();
-    await expect(
-      sheet.getByText("PIN_TARGET_MESSAGE_ONE").first()
-    ).toBeVisible({ timeout: 10_000 });
+		const sheet = page.getByRole("dialog", { name: /contact details/i });
+		await expect(sheet).toBeVisible();
+		await expect(sheet.getByText("PIN_TARGET_MESSAGE_ONE").first()).toBeVisible(
+			{ timeout: 10_000 },
+		);
 
-    // Pin indicator in the merged "All dialogs" view. Dismiss the sheet so
-    // we can see the timeline again.
-    await page.keyboard.press("Escape");
-    const mergedPinned = page.locator(
-      '[data-message-id$=":pin-msg-1"] [aria-label="Pinned to contact"]'
-    );
-    await expect(mergedPinned.first()).toBeVisible({ timeout: 10_000 });
+		// Pin indicator in the merged "All dialogs" view. Dismiss the sheet so
+		// we can see the timeline again.
+		await page.keyboard.press("Escape");
+		const mergedPinned = page.locator(
+			'[data-message-id$=":pin-msg-1"] [aria-label="Pinned to contact"]',
+		);
+		await expect(mergedPinned.first()).toBeVisible({ timeout: 10_000 });
 
-    // Reload the page and verify the pin survives.
-    await page.reload();
-    await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 15_000 });
-    await page.getByRole("button", { name: /contact details/i }).click();
-    const sheetAfter = page.getByRole("dialog", {
-      name: /contact details/i,
-    });
-    await expect(
-      sheetAfter.getByText("PIN_TARGET_MESSAGE_ONE").first()
-    ).toBeVisible({ timeout: 10_000 });
-  });
+		// Reload the page and verify the pin survives.
+		await page.reload();
+		await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 15_000 });
+		await page.getByRole("button", { name: /contact details/i }).click();
+		const sheetAfter = page.getByRole("dialog", {
+			name: /contact details/i,
+		});
+		await expect(
+			sheetAfter.getByText("PIN_TARGET_MESSAGE_ONE").first(),
+		).toBeVisible({ timeout: 10_000 });
+	});
 
-  test("scenario 11: disabling scan purges messages, pin snapshot still renders as orphaned", async ({
-    page,
-  }) => {
-    // Navigate so Clerk SDK loads and window.Clerk.session is populated; we
-    // need a human JWT below to call the humanMutation updateScanEnabled.
-    await page.goto("/");
-    await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
+	test("scenario 11: disabling scan purges messages, pin snapshot still renders as orphaned", async ({
+		page,
+	}) => {
+		// Navigate so Clerk SDK loads and window.Clerk.session is populated; we
+		// need a human JWT below to call the humanMutation updateScanEnabled.
+		await page.goto("/");
+		await page.waitForURL(CHATS_URL_PATTERN, { timeout: 15_000 });
 
-    // `updateScanEnabled` is a humanMutation (see chats.ts:187), so we need
-    // a human-auth client here. The robot client would get
-    // "Unauthorized: this action is for human users only".
-    const human = await getHumanClient(page, workerCfg);
-    const robot = await getRobotClient(workerCfg);
+		// `updateScanEnabled` is a humanMutation (see chats.ts:187), so we need
+		// a human-auth client here. The robot client would get
+		// "Unauthorized: this action is for human users only".
+		const human = await getHumanClient(page, workerCfg);
+		const robot = await getRobotClient(workerCfg);
 
-    // Hard-delete all messages for the chat via `updateScanEnabled(false)`.
-    // This is the same path the client-settings toggle exercises.
-    const res = await human.mutation(api.model.chats.updateScanEnabled, {
-      chatId,
-      scanEnabled: false,
-    });
-    expect(res).toMatchObject({ Ok: null });
+		// Hard-delete all messages for the chat via `updateScanEnabled(false)`.
+		// This is the same path the client-settings toggle exercises.
+		const res = await human.mutation(api.model.chats.updateScanEnabled, {
+			chatId,
+			scanEnabled: false,
+		});
+		expect(res).toMatchObject({ Ok: null });
 
-    // Sanity check: there should be zero messages left for this chat.
-    const remaining = (await robot.query(api.testHelpers.queryMessages, {
-      chatId,
-    })) as unknown[];
-    expect(remaining).toHaveLength(0);
+		// Sanity check: there should be zero messages left for this chat.
+		const remaining = (await robot.query(api.testHelpers.queryMessages, {
+			chatId,
+		})) as unknown[];
+		expect(remaining).toHaveLength(0);
 
-    // Open the contact and verify the pinned panel still shows the snapshot,
-    // now marked with the "Original message no longer available" indicator.
-    await page.goto(`/#/contacts/${contactId}`);
-    await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 15_000 });
-    await page.getByRole("button", { name: /contact details/i }).click();
-    const sheet = page.getByRole("dialog", { name: /contact details/i });
-    await expect(sheet).toBeVisible();
-    await expect(
-      sheet.getByText("PIN_TARGET_MESSAGE_ONE").first()
-    ).toBeVisible({ timeout: 10_000 });
-    await expect(
-      sheet.getByText(/original message no longer available/i).first()
-    ).toBeVisible({ timeout: 10_000 });
-  });
+		// Open the contact and verify the pinned panel still shows the snapshot,
+		// now marked with the "Original message no longer available" indicator.
+		await page.goto(`/#/contacts/${contactId}`);
+		await page.waitForURL(CONTACTS_URL_PATTERN, { timeout: 15_000 });
+		await page.getByRole("button", { name: /contact details/i }).click();
+		const sheet = page.getByRole("dialog", { name: /contact details/i });
+		await expect(sheet).toBeVisible();
+		await expect(sheet.getByText("PIN_TARGET_MESSAGE_ONE").first()).toBeVisible(
+			{ timeout: 10_000 },
+		);
+		await expect(
+			sheet.getByText(/original message no longer available/i).first(),
+		).toBeVisible({ timeout: 10_000 });
+	});
 });

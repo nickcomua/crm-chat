@@ -2,9 +2,9 @@ import { useQuery } from "convex-helpers/react/cache";
 import { api, type Id } from "@/lib/convex";
 
 export interface ContactForChat {
-  contactId: Id<"contacts">;
-  displayName: string;
-  senderId: string;
+	contactId: Id<"contacts">;
+	displayName: string;
+	senderId: string;
 }
 
 /**
@@ -13,15 +13,15 @@ export interface ContactForChat {
  * multiple consumers share the same subscription.
  */
 export function useContactForChat(chatId: string | undefined): {
-  contacts: ContactForChat[];
-  isLoading: boolean;
+	contacts: ContactForChat[];
+	isLoading: boolean;
 } {
-  const result = useQuery(
-    api.model.contacts.getContactForChat,
-    chatId ? { chatId } : "skip"
-  ) as ContactForChat[] | undefined;
-  return {
-    contacts: result ?? [],
-    isLoading: result === undefined,
-  };
+	const result = useQuery(
+		api.model.contacts.getContactForChat,
+		chatId ? { chatId } : "skip",
+	) as ContactForChat[] | undefined;
+	return {
+		contacts: result ?? [],
+		isLoading: result === undefined,
+	};
 }

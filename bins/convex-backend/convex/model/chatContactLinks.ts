@@ -20,14 +20,14 @@ import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
 const chatContactLinkFields = v.object({
-  userId: v.string(),
-  chatId: v.string(),
-  senderId: v.string(),
-  contactId: v.id("contacts"),
-  createdAt: v.number(),
+	userId: v.string(),
+	chatId: v.string(),
+	senderId: v.string(),
+	contactId: v.id("contacts"),
+	createdAt: v.number(),
 });
 
 export const chatContactLinksTable = defineTable(chatContactLinkFields)
-  .index("by_userId_chatId", ["userId", "chatId"])
-  .index("by_userId_chatId_senderId", ["userId", "chatId", "senderId"])
-  .index("by_contactId", ["contactId"]);
+	.index("by_userId_chatId", ["userId", "chatId"])
+	.index("by_userId_chatId_senderId", ["userId", "chatId", "senderId"])
+	.index("by_contactId", ["contactId"]);

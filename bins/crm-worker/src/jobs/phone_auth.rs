@@ -28,8 +28,6 @@ use crate::job::{Job, JobCtx};
 use crate::ops::convex::ConvexResultExt as _;
 use crate::session_manager::SessionManager as _;
 
-const SERVICE: &str = "PhoneAuthWorkflow";
-
 pub struct PhoneAuthJob;
 
 #[async_trait]
@@ -43,13 +41,7 @@ impl Job for PhoneAuthJob {
         Ok(sub
             .filter_map(|res| async move {
                 match res {
-                    Ok(items) => Some(
-                        items
-                            .into_iter()
-                            .filter(|i| i.service == SERVICE)
-                            .map(|i| i.key)
-                            .collect(),
-                    ),
+                    Ok(items) => Some(items),
                     Err(e) => {
                         warn!(error = %e, "phoneAuth.pendingWork subscription error");
                         None

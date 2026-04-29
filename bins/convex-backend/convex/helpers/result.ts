@@ -24,24 +24,24 @@ import { type Validator, v } from "convex/values";
 
 /** Validator for Result<T, E>: v.union(ok branch, err branch). */
 export function result<
-  T extends Validator<any, "required", any>,
-  E extends Validator<any, "required", any>,
+	T extends Validator<any, "required", any>,
+	E extends Validator<any, "required", any>,
 >(
-  okValidator: T,
-  errValidator: E
+	okValidator: T,
+	errValidator: E,
 ): Validator<{ Ok: T["type"] } | { Err: E["type"] }, "required", string> {
-  return v.union(
-    v.object({ Ok: okValidator }),
-    v.object({ Err: errValidator })
-  ) as any;
+	return v.union(
+		v.object({ Ok: okValidator }),
+		v.object({ Err: errValidator }),
+	) as any;
 }
 
 /** Construct a success result. */
 export function ok<const T>(value: T): { Ok: T } {
-  return { Ok: value };
+	return { Ok: value };
 }
 
 /** Construct an error result. */
 export function err<const E>(error: E): { Err: E } {
-  return { Err: error };
+	return { Err: error };
 }

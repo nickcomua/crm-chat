@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use convex_backend::{
-    ClientsGetForWorkerArgs, ConvexApi, MediaGetForDownloadArgs, MediaPendingWorkArgs, MediaStatus,
-};
+use convex_backend::{ClientsGetForWorkerArgs, ConvexApi, MediaGetForDownloadArgs, MediaStatus};
 use futures::{StreamExt, stream::BoxStream};
 use tracing::{info, warn};
 
@@ -27,19 +25,18 @@ impl Job for MediaDownloaderJob {
     }
 
     async fn subscribe(&self, ctx: &JobCtx) -> anyhow::Result<BoxStream<'static, Vec<String>>> {
-        let max = if ctx.config.max_media_workflows > 0 {
-            Some(ctx.config.max_media_workflows as f64)
-        } else {
-            None
-        };
-        let sub = ctx
-            .convex
-            .subscribe_media_pending_work(MediaPendingWorkArgs { maxDownloads: max })
-            .await?;
+        let max = ctx.config.max_media_workflows;
+        let sub = ctx.convex.subscribe_media_pending_work().await?;
         Ok(sub
-            .filter_map(|res| async move {
+            .filter_map(move |res| async move {
                 match res {
-                    Ok(items) => Some(items.into_iter().map(|i| i.key).collect()),
+                    Ok(items) => {
+                        if max > 0 {
+                            Some(items.into_iter().take(max).collect())
+                        } else {
+                            Some(items)
+                        }
+                    }
                     Err(e) => {
                         warn!(error = %e, "media.pendingWork subscription error");
                         None

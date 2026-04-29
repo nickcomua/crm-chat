@@ -41,10 +41,10 @@ const presence = new Presence(components.presence);
  * Placeholder for future connect-time side effects.
  */
 async function handleConnect(
-  _ctx: MutationCtx,
-  _userId: string
+	_ctx: MutationCtx,
+	_userId: string,
 ): Promise<void> {
-  // No-op — hook for future logic (e.g. update last-seen, sync state, etc.)
+	// No-op — hook for future logic (e.g. update last-seen, sync state, etc.)
 }
 
 /**
@@ -52,26 +52,26 @@ async function handleConnect(
  * Cancels all active (non-terminal) QR auth sessions for that user.
  */
 async function handleDisconnect(
-  ctx: MutationCtx,
-  userId: string
+	ctx: MutationCtx,
+	userId: string,
 ): Promise<void> {
-  const qrAuths = await ctx.db
-    .query("qrAuths")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
-    .collect();
+	const qrAuths = await ctx.db
+		.query("qrAuths")
+		.withIndex("by_userId", (q) => q.eq("userId", userId))
+		.collect();
 
-  for (const auth of qrAuths) {
-    if (
-      auth.step === "Pending" ||
-      auth.step === "Generating" ||
-      auth.step === "Token"
-    ) {
-      await ctx.db.patch(auth._id, {
-        step: "Cancelled",
-        updatedAt: Date.now(),
-      });
-    }
-  }
+	for (const auth of qrAuths) {
+		if (
+			auth.step === "Pending" ||
+			auth.step === "Generating" ||
+			auth.step === "Token"
+		) {
+			await ctx.db.patch(auth._id, {
+				step: "Cancelled",
+				updatedAt: Date.now(),
+			});
+		}
+	}
 }
 
 // =============================================================================
@@ -87,34 +87,34 @@ async function handleDisconnect(
  * 4. Delegates to the presence component for session tracking.
  */
 export const heartbeat = humanMutation({
-  args: {
-    roomId: v.string(),
-    userId: v.string(),
-    sessionId: v.string(),
-    interval: v.number(),
-  },
-  returns: v.object({
-    roomToken: v.string(),
-    sessionToken: v.string(),
-  }),
-  handler: async (ctx, { roomId, sessionId, interval }) => {
-    await handleConnect(ctx, ctx.caller.tokenIdentifier);
+	args: {
+		roomId: v.string(),
+		userId: v.string(),
+		sessionId: v.string(),
+		interval: v.number(),
+	},
+	returns: v.object({
+		roomToken: v.string(),
+		sessionToken: v.string(),
+	}),
+	handler: async (ctx, { roomId, sessionId, interval }) => {
+		await handleConnect(ctx, ctx.caller.tokenIdentifier);
 
-    // Schedule offline check — fires only if heartbeats stop
-    await ctx.scheduler.runAfter(
-      interval * 2.5,
-      internal.model.presence.checkOffline,
-      { userId: ctx.caller.tokenIdentifier }
-    );
+		// Schedule offline check — fires only if heartbeats stop
+		await ctx.scheduler.runAfter(
+			interval * 2.5,
+			internal.model.presence.checkOffline,
+			{ userId: ctx.caller.tokenIdentifier },
+		);
 
-    return await presence.heartbeat(
-      ctx,
-      roomId,
-      ctx.caller.tokenIdentifier,
-      sessionId,
-      interval
-    );
-  },
+		return await presence.heartbeat(
+			ctx,
+			roomId,
+			ctx.caller.tokenIdentifier,
+			sessionId,
+			interval,
+		);
+	},
 });
 
 /**
@@ -128,32 +128,32 @@ export const heartbeat = humanMutation({
  * so we check presence for each user that has a non-terminal QR auth session.
  */
 export const disconnect = mutation({
-  args: { sessionToken: v.string() },
-  handler: async (ctx, { sessionToken }) => {
-    await presence.disconnect(ctx, sessionToken);
+	args: { sessionToken: v.string() },
+	handler: async (ctx, { sessionToken }) => {
+		await presence.disconnect(ctx, sessionToken);
 
-    // Find users with active QR auth sessions and disconnect if fully offline.
-    // Very few users have active QR auths at any given time, so a full scan is cheap.
-    const qrAuths = await ctx.db.query("qrAuths").collect();
-    const usersToCheck = new Set<string>();
+		// Find users with active QR auth sessions and disconnect if fully offline.
+		// Very few users have active QR auths at any given time, so a full scan is cheap.
+		const qrAuths = await ctx.db.query("qrAuths").collect();
+		const usersToCheck = new Set<string>();
 
-    for (const auth of qrAuths) {
-      if (
-        auth.step === "Pending" ||
-        auth.step === "Generating" ||
-        auth.step === "Token"
-      ) {
-        usersToCheck.add(auth.userId);
-      }
-    }
+		for (const auth of qrAuths) {
+			if (
+				auth.step === "Pending" ||
+				auth.step === "Generating" ||
+				auth.step === "Token"
+			) {
+				usersToCheck.add(auth.userId);
+			}
+		}
 
-    for (const userId of usersToCheck) {
-      const rooms = await presence.listUser(ctx, userId, true);
-      if (rooms.length === 0) {
-        await handleDisconnect(ctx, userId);
-      }
-    }
-  },
+		for (const userId of usersToCheck) {
+			const rooms = await presence.listUser(ctx, userId, true);
+			if (rooms.length === 0) {
+				await handleDisconnect(ctx, userId);
+			}
+		}
+	},
 });
 
 /**
@@ -164,15 +164,15 @@ export const disconnect = mutation({
  * `handleDisconnect` to cancel active QR auth sessions.
  */
 export const checkOffline = internalMutation({
-  args: { userId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, { userId }) => {
-    const rooms = await presence.listUser(ctx, userId, true);
-    if (rooms.length === 0) {
-      await handleDisconnect(ctx, userId);
-    }
-    return null;
-  },
+	args: { userId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, { userId }) => {
+		const rooms = await presence.listUser(ctx, userId, true);
+		if (rooms.length === 0) {
+			await handleDisconnect(ctx, userId);
+		}
+		return null;
+	},
 });
 
 /**
@@ -180,8 +180,8 @@ export const checkOffline = internalMutation({
  * reactively display who's online.
  */
 export const list = query({
-  args: { roomToken: v.string() },
-  handler: async (ctx, { roomToken }) => {
-    return await presence.list(ctx, roomToken);
-  },
+	args: { roomToken: v.string() },
+	handler: async (ctx, { roomToken }) => {
+		return await presence.list(ctx, roomToken);
+	},
 });

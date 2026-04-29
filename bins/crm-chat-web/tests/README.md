@@ -5,6 +5,7 @@ This directory contains Playwright integration tests for the CRM Chat web applic
 ## Prerequisites
 
 1. **Install Playwright browsers:**
+
    ```bash
    cd bins/crm-chat-web
    bun x playwright install chromium
@@ -69,19 +70,20 @@ tests/
 
 ## Test Files
 
-| File | Description |
-|------|-------------|
-| `global-teardown.ts` | Post-suite cleanup (delete test user data via Convex mutation) |
-| `helpers.ts` | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
-| `e2e-telegram/scan-chats.spec.ts` | Client settings page: chat list, scan toggles, inline name editing |
-| `e2e-telegram/qr-auth.spec.ts` | QR code authentication flow (generation, decode, cancel) |
-| `e2e-telegram/qr-auth-real.spec.ts` | Real QR auth backend verification (task creation, token step) |
-| `e2e-telegram/media-rendering.spec.ts` | Media rendering: photos, videos, audio, documents, stickers, animations |
-| `e2e-telegram/media-visual.spec.ts` | Visual constraints: thumbnail sizes, circular VideoNote, duration overlays |
+| File                                   | Description                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `global-teardown.ts`                   | Post-suite cleanup (delete test user data via Convex mutation)                     |
+| `helpers.ts`                           | Shared utilities: Clerk login, robot JWT minting, Convex client, test data seeding |
+| `e2e-telegram/scan-chats.spec.ts`      | Client settings page: chat list, scan toggles, inline name editing                 |
+| `e2e-telegram/qr-auth.spec.ts`         | QR code authentication flow (generation, decode, cancel)                           |
+| `e2e-telegram/qr-auth-real.spec.ts`    | Real QR auth backend verification (task creation, token step)                      |
+| `e2e-telegram/media-rendering.spec.ts` | Media rendering: photos, videos, audio, documents, stickers, animations            |
+| `e2e-telegram/media-visual.spec.ts`    | Visual constraints: thumbnail sizes, circular VideoNote, duration overlays         |
 
 ## Test Configuration
 
 Tests are configured in `playwright.config.ts`:
+
 - Uses Chromium browser
 - 60s timeout per test
 - `auth.setup.ts` runs before dependent projects for authentication + cleanup
@@ -89,13 +91,13 @@ Tests are configured in `playwright.config.ts`:
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TEST_CLERK_USERNAME` | Yes | Clerk test user username |
-| `TEST_CLERK_PASSWORD` | Yes | Clerk test user password |
-| `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key for the frontend |
-| `TG_ID` | Yes | Telegram API ID |
-| `TG_HASH` | Yes | Telegram API hash |
-| `TEST_BASE_URL` | No | Override base URL (skips auto-started dev server) |
-| `E2E_CONVEX_URL` | No | Set by global-setup; override to skip container startup |
-| `E2E_ROBOT_PRIVATE_KEY` | No | Set by global-setup; robot JWT private key for test helpers |
+| Variable                     | Required | Description                                                 |
+| ---------------------------- | -------- | ----------------------------------------------------------- |
+| `TEST_CLERK_USERNAME`        | Yes      | Clerk test user username                                    |
+| `TEST_CLERK_PASSWORD`        | Yes      | Clerk test user password                                    |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Yes      | Clerk publishable key for the frontend                      |
+| `TG_ID`                      | Yes      | Telegram API ID                                             |
+| `TG_HASH`                    | Yes      | Telegram API hash                                           |
+| `TEST_BASE_URL`              | No       | Override base URL (skips auto-started dev server)           |
+| `E2E_CONVEX_URL`             | No       | Set by global-setup; override to skip container startup     |
+| `E2E_ROBOT_PRIVATE_KEY`      | No       | Set by global-setup; robot JWT private key for test helpers |

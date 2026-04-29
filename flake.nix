@@ -360,38 +360,45 @@
                 dashboardPorts = config.processes.dashboard.ports;
                 webPorts = config.processes.crm-chat-web.ports;
 
-                # Per-workspace port offset so multiple `jj workspace`s running
-                # `devenv up` concurrently don't collide on host ports. devenv's
-                # own `ports.*.allocate` doesn't auto-relocate across parallel
-                # sessions, so we derive a deterministic offset from a hash of
-                # the workspace root path. Offset step is 10 (not 1) so that
-                # api (N) and site (N+1) ports across workspaces never alias.
-                hexDigits = {
-                  "0" = 0;
-                  "1" = 1;
-                  "2" = 2;
-                  "3" = 3;
-                  "4" = 4;
-                  "5" = 5;
-                  "6" = 6;
-                  "7" = 7;
-                  "8" = 8;
-                  "9" = 9;
-                  "a" = 10;
-                  "b" = 11;
-                  "c" = 12;
-                  "d" = 13;
-                  "e" = 14;
-                  "f" = 15;
-                };
-                rootHash = builtins.hashString "sha256" config.devenv.root;
-                # Take first 3 hex chars (12 bits, 0..4095), then mod 100 * 10
-                # → offset in {0, 10, 20, ..., 990} = 100 buckets.
-                hashInt12 =
-                  (hexDigits.${builtins.substring 0 1 rootHash} * 256)
-                  + (hexDigits.${builtins.substring 1 1 rootHash} * 16)
-                  + hexDigits.${builtins.substring 2 1 rootHash};
-                portOffset = (hashInt12 - 100 * (hashInt12 / 100)) * 10;
+                bunZshCompletion = pkgs.runCommand "bun-zsh-completion" { } ''
+                  mkdir -p $out/share/zsh/site-functions
+                  cp ${
+                    pkgs.fetchurl {
+                      url = "https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/completions/bun.zsh";
+                      sha256 = "1avm6cvmvzd87s6kbgfagkrwjfa6341rz61fksiby3nr02j53wi4";
+                    }
+                  } $out/share/zsh/site-functions/_bun
+                '';
+
+                cleanupDockerCompose = ''
+                  docker compose \
+                    --project-directory "${config.devenv.root}" \
+                    -f "${config.devenv.root}/docker-compose.yml" \
+                    down --remove-orphans >/dev/null 2>&1 || true
+
+                  docker ps -a \
+                    --filter "label=com.docker.compose.project" \
+                    --filter "label=com.docker.compose.service=dashboard" \
+                    --format '{{.Label "com.docker.compose.project"}}' \
+                    | sort -u \
+                    | while IFS= read -r project; do
+                      case "$project" in
+                        crm-chat-*) ;;
+                        *) continue ;;
+                      esac
+
+                      if [ -z "$(docker ps -q \
+                        --filter "label=com.docker.compose.project=$project" \
+                        --filter "label=com.docker.compose.service=backend" \
+                        --filter "status=running")" ]; then
+                        docker compose \
+                          --project-directory "${config.devenv.root}" \
+                          -f "${config.devenv.root}/docker-compose.yml" \
+                          -p "$project" \
+                          down --remove-orphans >/dev/null 2>&1 || true
+                      fi
+                    done
+                '';
 
                 # Helper: every process's exec begins with this so its stdout
                 # and stderr are tee'd to a per-service file under
@@ -457,9 +464,14 @@
                 env.CONVEX_SELF_HOSTED_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
                 env.VITE_CONVEX_URL = "http://127.0.0.1:${toString backendPorts.api.value}";
 
+                process.manager.before = cleanupDockerCompose;
+
+                process.manager.after = cleanupDockerCompose;
+
                 enterShell = ''
                   export PATH="$HOME/.local/bin:$PATH"
                   export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:${pkgs.sqlite.out}/lib:${pkgs.dbus.lib}/lib:''${LD_LIBRARY_PATH:-}"
+                  export BUN_ZSH_COMPLETION_DIR="${bunZshCompletion}/share/zsh/site-functions"
 
                   # Mirror devenv-allocated values into .env so dotenv-only
                   # tools (convex CLI, docker compose, editors) see the same
@@ -565,8 +577,8 @@
                     docker compose logs -f backend
                   '';
                   ports = {
-                    api.allocate = 3210 + portOffset;
-                    site.allocate = 3211 + portOffset;
+                    api.allocate = 3210;
+                    site.allocate = 3211;
                   };
                   ready = {
                     # Combined check: (1) backend container is accepting HTTP
@@ -588,7 +600,7 @@
                     docker compose up -d dashboard
                     docker compose logs -f dashboard
                   '';
-                  ports.http.allocate = 6791 + portOffset;
+                  ports.http.allocate = 6791;
                   after = [ "devenv:processes:backend" ];
                 };
 
@@ -646,7 +658,7 @@
                     exec bun dev --port "$WEB_PORT"
                   '';
                   cwd = "${config.devenv.root}/bins/crm-chat-web";
-                  ports.http.allocate = 5173 + portOffset;
+                  ports.http.allocate = 5173;
                   after = [ "devenv:processes:backend" ];
                 };
 
@@ -659,7 +671,7 @@
                   secretspec
                   openssl
                   dbus.dev
-                  taplo
+                  tombi
                   cargo-hakari
                   cargo-audit
                   cargo-watch

@@ -44,7 +44,7 @@ impl Job for ChatScannerJob {
         Ok(sub
             .filter_map(|res| async move {
                 match res {
-                    Ok(items) => Some(items.into_iter().map(|i| i.key).collect()),
+                    Ok(items) => Some(items),
                     Err(e) => {
                         warn!(error = %e, "chats.pendingWork subscription error");
                         None

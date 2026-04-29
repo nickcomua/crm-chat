@@ -22,8 +22,6 @@ use crate::job::{Job, JobCtx};
 use crate::ops::convex::ConvexWarnExt as _;
 use crate::session_manager::SessionManager as _;
 
-const SERVICE: &str = "QrAuthWorkflow";
-
 pub struct QrAuthJob;
 
 #[async_trait]
@@ -37,13 +35,7 @@ impl Job for QrAuthJob {
         Ok(sub
             .filter_map(|res| async move {
                 match res {
-                    Ok(items) => Some(
-                        items
-                            .into_iter()
-                            .filter(|i| i.service == SERVICE)
-                            .map(|i| i.key)
-                            .collect(),
-                    ),
+                    Ok(items) => Some(items),
                     Err(e) => {
                         warn!(error = %e, "qrAuth.pendingWork subscription error");
                         None

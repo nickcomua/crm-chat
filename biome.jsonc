@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core"],
+  "linter": {
+    "rules": {
+      "correctness": {
+        // React Compiler handles dependency and memoization optimization. Keep
+        // hook placement checks enabled, but don't require manual dependency
+        // bookkeeping that can conflict with compiler-driven patterns.
+        "useExhaustiveDependencies": "off",
+        "useHookAtTopLevel": "error"
+      }
+    }
+  }
+}

@@ -6,16 +6,16 @@ description = "End-to-end integration tests for Telegram client (requires real c
 license = "MIT"
 publish = false
 
+[dependencies]
+hack = { path = "../../libs/hack", version = "0.1" }
+
 [dev-dependencies]
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
-tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
-serial_test = "3"
+secrecy = "0.10"
 secretspec = { version = "0.8", default-features = false }
 secretspec-derive = "0.8"
-secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
-
-[dependencies]
-hack = { version = "0.1", path = "../../libs/hack" }
+serial_test = "3"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
