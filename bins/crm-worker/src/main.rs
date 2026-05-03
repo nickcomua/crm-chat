@@ -20,9 +20,8 @@ pub mod session_manager;
 use std::sync::Arc;
 use std::time::Duration;
 
-use convex_backend::ClientsWorkerRegisterConnectedArgs;
+use convex_backend::{ClientsWorkerMarkSessionErrorArgs, ClientsWorkerRegisterConnectedArgs};
 use messanger_interface::MessengerClient;
-use messanger_telegram::TelegramClient;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -142,6 +141,10 @@ async fn jwt_refresh_loop(ctx: Arc<JobCtx>) {
 /// Look for `.session` files on disk and register each authorized one with
 /// Convex as a connected client. Removes orphan sessions whose owner has
 /// deleted the client (tombstone check).
+///
+/// Uses the session manager's client cache so the same TelegramClient is
+/// reused by subsequent jobs (UpdateListener, ChatScanner, etc.) instead
+/// of building standalone clients that race on the same session file.
 async fn discover_and_register_sessions(ctx: &JobCtx) {
     let discovered = ctx.sessions.discover_sessions();
     if discovered.is_empty() {
@@ -154,15 +157,20 @@ async fn discover_and_register_sessions(ctx: &JobCtx) {
     let mut skipped = 0u32;
     let mut failed = 0u32;
 
-    for (owner_id, session_path) in &discovered {
-        let path_str = session_path.to_string_lossy().to_string();
-
-        let tg = match TelegramClient::new(ctx.config.api_id, ctx.config.api_hash.clone(), path_str)
+    for (owner_id, telegram_id) in &discovered {
+        let tg = match ctx
+            .sessions
+            .get_for_telegram_id(owner_id, telegram_id)
             .await
         {
             Ok(c) => c,
             Err(e) => {
-                warn!(path = ?session_path, error = %e, "failed to load session file");
+                warn!(
+                    owner = %owner_id,
+                    telegram_id = %telegram_id,
+                    error = %e,
+                    "failed to build client for session"
+                );
                 failed += 1;
                 continue;
             }
@@ -171,11 +179,44 @@ async fn discover_and_register_sessions(ctx: &JobCtx) {
         match tg.is_authorized().await {
             Ok(true) => {}
             Ok(false) => {
+                warn!(
+                    owner = %owner_id,
+                    telegram_id = %telegram_id,
+                    "session not authorized — marking client as error"
+                );
+                if let Err(e) = ctx
+                    .convex
+                    .clients_worker_mark_session_error(ClientsWorkerMarkSessionErrorArgs {
+                        userId: owner_id.clone(),
+                        telegramId: telegram_id.clone(),
+                        message: "Telegram session is no longer authorized. Re-login required."
+                            .to_string(),
+                    })
+                    .await
+                {
+                    warn!(error = %e, "failed to mark client session error in Convex");
+                }
                 skipped += 1;
                 continue;
             }
             Err(e) => {
-                warn!(path = ?session_path, error = %e, "is_authorized failed");
+                warn!(
+                    owner = %owner_id,
+                    telegram_id = %telegram_id,
+                    error = %e,
+                    "is_authorized check failed"
+                );
+                if let Err(e) = ctx
+                    .convex
+                    .clients_worker_mark_session_error(ClientsWorkerMarkSessionErrorArgs {
+                        userId: owner_id.clone(),
+                        telegramId: telegram_id.clone(),
+                        message: format!("Authorization check failed: {e}"),
+                    })
+                    .await
+                {
+                    warn!(error = %e, "failed to mark client session error in Convex");
+                }
                 failed += 1;
                 continue;
             }
@@ -184,7 +225,12 @@ async fn discover_and_register_sessions(ctx: &JobCtx) {
         let external_id = match tg.get_client_external_id().await {
             Ok(id) => id,
             Err(e) => {
-                warn!(path = ?session_path, error = %e, "get external id failed");
+                warn!(
+                    owner = %owner_id,
+                    telegram_id = %telegram_id,
+                    error = %e,
+                    "get external id failed"
+                );
                 failed += 1;
                 continue;
             }
@@ -213,10 +259,10 @@ async fn discover_and_register_sessions(ctx: &JobCtx) {
                 info!(
                     external_id = %external_id,
                     owner = %owner_id,
-                    path = ?session_path,
+                    telegram_id = %telegram_id,
                     "session blocked by tombstone — removing orphan"
                 );
-                std::fs::remove_file(session_path).ok();
+                ctx.sessions.remove_session_file(owner_id, telegram_id);
                 skipped += 1;
             }
             Err(e) => {

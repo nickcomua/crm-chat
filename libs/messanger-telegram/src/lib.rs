@@ -48,7 +48,7 @@ impl TelegramClient {
         use grammers_mtsender::SenderPool;
         use grammers_session::storages::SqliteSession;
         use messanger_interface::MessengerError;
-        use tracing::{debug, error, info};
+        use tracing::{debug, error, info, warn};
 
         info!("Building TelegramClient");
 
@@ -78,12 +78,17 @@ impl TelegramClient {
         let pool_runner_handle = tokio::spawn(pool.runner.run());
 
         debug!("Checking authorization");
-        client.is_authorized().await.map_err(|e| {
+        let authorized = client.is_authorized().await.map_err(|e| {
             error!(error = %e, "Failed to check authorization");
             MessengerError::Connection(format!("Failed to check authorization: {}", e))
         })?;
 
-        info!("TelegramClient built successfully");
+        if authorized {
+            info!("TelegramClient built successfully (authorized)");
+        } else {
+            warn!("TelegramClient built successfully (not authorized)");
+        }
+
         Ok(TelegramClient {
             client: Arc::new(Mutex::new(client)),
             session,

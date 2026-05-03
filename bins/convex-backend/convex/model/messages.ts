@@ -45,6 +45,11 @@ const messageFields = v.object({
 	replyToText: v.optional(v.string()),
 	forwardedFrom: v.optional(forwardedFromValidator),
 	reactions: v.optional(v.array(reactionValidator)),
+	// Self-destruct timer period for this message (in seconds), if any.
+	ttlPeriod: v.optional(v.number()),
+	// TTL seconds for the media in this message (for view-once/self-destructing
+	// photos/videos), if any.
+	ttlSeconds: v.optional(v.number()),
 });
 
 export const messageDoc = messageFields.extend({
@@ -177,6 +182,8 @@ export const upsert = humanMutation({
 				replyToMessageId: args.replyToMessageId,
 				forwardedFrom: args.forwardedFrom,
 				reactions: args.reactions,
+				ttlPeriod: args.ttlPeriod,
+				ttlSeconds: args.ttlSeconds,
 			});
 		} else {
 			await ctx.db.insert("messages", args);
@@ -303,6 +310,8 @@ export const workerUpsertMessage = workerMutation({
 				timestamp: args.timestamp,
 				mediaExternalId: args.mediaExternalId,
 				mediaKind: args.mediaKind,
+				ttlPeriod: args.ttlPeriod,
+				ttlSeconds: args.ttlSeconds,
 			});
 		} else {
 			await ctx.db.insert("messages", args);

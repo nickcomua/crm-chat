@@ -126,6 +126,8 @@ mod tests {
                 media_summary: Some(media1.clone()),
                 reply_to_message_id: None,
                 reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             };
 
             let mut messages = HashMap::new();
@@ -375,6 +377,8 @@ mod tests {
                 media_summary: None,
                 reply_to_message_id: None,
                 reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             },
             MessageSummary {
                 external_id: "msg:2".to_string(),
@@ -387,6 +391,8 @@ mod tests {
                 media_summary: None,
                 reply_to_message_id: None,
                 reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             },
         ];
 
@@ -514,6 +520,8 @@ mod tests {
             media_summary: None,
             reply_to_message_id: None,
             reply_to_text: None,
+            ttl_period: None,
+            ttl_seconds: None,
         });
 
         let json = serde_json::to_string(&update).unwrap();
@@ -551,6 +559,8 @@ mod tests {
             chat_external_id: "chat:1".to_string(),
             sender_id: "sender:1".to_string(),
             text: Some("Hello".to_string()),
+            ttl_period: None,
+            ttl_seconds: None,
             outgoing: false,
             timestamp_ms: Some(1000),
             media_external_id: Some("media:1".to_string()),

@@ -31,4 +31,9 @@ pub struct MessageSummary {
     /// full-message replies (consumers should look up the parent by
     /// `reply_to_message_id` if they need a preview).
     pub reply_to_text: Option<String>,
+    /// Self-destruct timer period for this message (in seconds), if any.
+    pub ttl_period: Option<u32>,
+    /// TTL seconds for the media in this message (for view-once/self-destructing
+    /// photos/videos), if any.
+    pub ttl_seconds: Option<u32>,
 }

@@ -190,6 +190,8 @@ async fn scan_chat_messages(
                 replyToText: msg.reply_to_text,
                 forwardedFrom: None,
                 reactions: None,
+                ttlPeriod: msg.ttl_period.map(|v| v as f64),
+                ttlSeconds: msg.ttl_seconds.map(|v| v as f64),
             })
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;

@@ -897,6 +897,8 @@ export const listMergedMessages = humanQuery({
 				recent: Array<{ userId: string }>;
 			}>;
 			forwardedFrom?: { senderName: string; date?: number };
+			ttlPeriod?: number;
+			ttlSeconds?: number;
 			chatDisplayName: string;
 			contactPinned: boolean;
 		};
@@ -945,6 +947,8 @@ export const listMergedMessages = humanQuery({
 					replyToText: m.replyToText,
 					reactions: m.reactions,
 					forwardedFrom: m.forwardedFrom,
+					ttlPeriod: m.ttlPeriod,
+					ttlSeconds: m.ttlSeconds,
 					chatDisplayName: meta.displayName,
 					contactPinned: pinnedIds.has(m.messageId),
 				});

@@ -7,6 +7,7 @@ import {
 	Loader2,
 	Music,
 	Sticker,
+	Timer,
 	Video,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +36,9 @@ export interface MediaInfo {
 interface MediaRendererProps {
 	isOutgoing: boolean;
 	media: MediaInfo;
+	// TTL fields for self-destructing media
+	ttlPeriod?: number;
+	ttlSeconds?: number;
 }
 
 function formatFileSize(bytes: number): string {
@@ -514,12 +518,7 @@ function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
 	if (mime === "application/x-tgsticker") {
 		if (!media.url) {
 			return (
-				<img
-					alt="Sticker"
-					className="max-h-45 max-w-45"
-					height={h}
-					width={w}
-				/>
+				<img alt="Sticker" className="max-h-45 max-w-45" height={h} width={w} />
 			);
 		}
 		return <TgsSticker height={h} url={media.url} width={w} />;
@@ -640,22 +639,53 @@ function StoredMedia({
 export function MediaRenderer({
 	media,
 	isOutgoing,
+	ttlPeriod,
+	ttlSeconds,
 }: MediaRendererProps): React.ReactNode {
+	const isTtl = !!(ttlPeriod || ttlSeconds);
+
+	let inner: React.ReactNode;
 	if (media.status === "Downloading") {
-		return <DownloadingMedia isOutgoing={isOutgoing} media={media} />;
+		inner = <DownloadingMedia isOutgoing={isOutgoing} media={media} />;
+	} else if (media.status === "Pending") {
+		inner = <PendingMedia isOutgoing={isOutgoing} kind={media.kind} />;
+	} else if (media.status === "Skipped") {
+		inner = <SkippedMedia isOutgoing={isOutgoing} media={media} />;
+	} else if (media.status === "Failed" || !media.url) {
+		inner = <FailedMedia isOutgoing={isOutgoing} kind={media.kind} />;
+	} else {
+		inner = <StoredMedia isOutgoing={isOutgoing} media={media} />;
 	}
 
-	if (media.status === "Pending") {
-		return <PendingMedia isOutgoing={isOutgoing} kind={media.kind} />;
+	if (!isTtl) {
+		return inner;
 	}
 
-	if (media.status === "Skipped") {
-		return <SkippedMedia isOutgoing={isOutgoing} media={media} />;
-	}
+	const ttlLabel =
+		media.status === "Stored"
+			? "Self-destructing — saved"
+			: media.status === "Failed"
+				? "Self-destructing — expired (not saved)"
+				: media.status === "Pending" || media.status === "Downloading"
+					? "Self-destructing — downloading..."
+					: media.status === "Skipped"
+						? "Self-destructing — skipped"
+						: "Self-destructing";
 
-	if (media.status === "Failed" || !media.url) {
-		return <FailedMedia isOutgoing={isOutgoing} kind={media.kind} />;
-	}
-
-	return <StoredMedia isOutgoing={isOutgoing} media={media} />;
+	return (
+		<div>
+			{inner}
+			<div
+				className={cn(
+					"mt-0.5 flex items-center gap-1 px-1 text-[10px]",
+					isOutgoing
+						? "text-primary-foreground/60"
+						: "text-muted-foreground/70",
+				)}
+			>
+				<Timer className="h-3 w-3" />
+				{ttlLabel}
+			</div>
+		</div>
+	);
 }

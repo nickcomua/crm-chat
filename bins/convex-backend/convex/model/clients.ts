@@ -288,6 +288,34 @@ export const workerCompleteSync = workerMutation({
 	},
 });
 
+/** Mark a client as having a session error. Worker-only.
+ *  Sets status to Error and phase to Disconnected so the UI shows the problem
+ *  and no more jobs are dispatched for this client. */
+export const workerMarkSessionError = workerMutation({
+	args: {
+		userId: v.string(),
+		telegramId: v.string(),
+		message: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, { userId, telegramId, message }) => {
+		const client = await ctx.db
+			.query("clients")
+			.withIndex("by_userId_telegramId", (q) =>
+				q.eq("userId", userId).eq("telegramId", telegramId),
+			)
+			.unique();
+		if (!client) {
+			return null;
+		}
+		await ctx.db.patch(client._id, {
+			status: { type: "Error", message },
+			phase: "Disconnected",
+		});
+		return null;
+	},
+});
+
 /** Mark profile photos as synced for a client. Worker-only. */
 export const workerMarkPhotosSynced = workerMutation({
 	args: { clientId: v.id("clients") },

@@ -1,4 +1,4 @@
-import { Ban, Forward, Pin, PinOff, Reply } from "lucide-react";
+import { Ban, Forward, Pin, PinOff, Reply, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type MediaInfo, MediaRenderer } from "./media-renderer";
 import { Badge } from "./ui/badge";
@@ -28,6 +28,9 @@ export interface MessageDoc {
 	replyToText?: string;
 	text?: string;
 	timestamp: number;
+	// TTL fields for self-destructing/view-once media
+	ttlPeriod?: number;
+	ttlSeconds?: number;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -169,6 +172,7 @@ export function MessageBubble({
 	const isOutgoing = message.outgoing;
 	const isDeleted = message.deleted;
 	const hasMedia = media !== undefined;
+	const isTtl = !!(message.ttlPeriod || message.ttlSeconds);
 
 	return (
 		<div className={cn("flex", isOutgoing ? "justify-end" : "justify-start")}>
@@ -269,7 +273,14 @@ export function MessageBubble({
 					</div>
 				)}
 
-				{hasMedia && <MediaRenderer isOutgoing={isOutgoing} media={media} />}
+				{hasMedia && (
+					<MediaRenderer
+						isOutgoing={isOutgoing}
+						media={media}
+						ttlPeriod={message.ttlPeriod}
+						ttlSeconds={message.ttlSeconds}
+					/>
+				)}
 
 				{message.text && (
 					<p
@@ -283,7 +294,16 @@ export function MessageBubble({
 				)}
 
 				{!(message.text || hasMedia) && (
-					<p className="text-[13px] italic opacity-50">[Empty message]</p>
+					<p className="text-[13px] italic opacity-50">
+						{isTtl ? (
+							<span className="flex items-center gap-1">
+								<Timer className="h-3 w-3" />
+								Self-destructing photo (expired)
+							</span>
+						) : (
+							"[Empty message]"
+						)}
+					</p>
 				)}
 
 				<div
