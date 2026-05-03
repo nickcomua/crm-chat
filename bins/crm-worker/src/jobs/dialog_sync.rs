@@ -10,7 +10,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use convex_backend::{
     ChatsWorkerUpsertChatArgs, ClientsGetForWorkerArgs, ClientsWorkerCompleteSyncArgs,
-    ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient,
+    ClientsWorkerStartSyncArgs, ConvexApi, ConvexApiClient, MediaWorkerCreatePendingMediaArgs,
+    MediaWorkerCreatePendingMediaKind,
 };
 use futures::{StreamExt, stream::BoxStream};
 use messanger_interface::MessengerClient;
@@ -118,7 +119,7 @@ async fn sync_dialogs(
         let chat_id = format!("{client_id}:{}", dialog.external_id);
         convex
             .chats_worker_upsert_chat(ChatsWorkerUpsertChatArgs {
-                chatId: chat_id,
+                chatId: chat_id.clone(),
                 userId: user_id.to_string(),
                 clientId: client_id.to_string(),
                 chatType: cx::map_chat_type(dialog.chat_type.as_deref()),
@@ -128,6 +129,31 @@ async fn sync_dialogs(
             })
             .await
             .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
+
+        // Queue a profile-photo download if this chat has one.
+        if let Some(photo_id) = &dialog.photo_id {
+            let telegram_file_id = format!("profile:{}:{}", dialog.external_id, photo_id);
+            if let Err(e) = convex
+                .media_worker_create_pending_media(MediaWorkerCreatePendingMediaArgs {
+                    telegramFileId: telegram_file_id,
+                    userId: user_id.to_string(),
+                    clientId: client_id.to_string(),
+                    chatId: chat_id,
+                    messageId: None,
+                    kind: MediaWorkerCreatePendingMediaKind::Photo,
+                    mimeType: Some("image/jpeg".to_string()),
+                    fileName: None,
+                    fileSize: None,
+                    width: None,
+                    height: None,
+                    duration: None,
+                })
+                .await
+            {
+                warn!(error = %e, "failed to queue profile photo download");
+            }
+        }
+
         count += 1;
     }
 

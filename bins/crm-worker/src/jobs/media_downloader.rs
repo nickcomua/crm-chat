@@ -6,14 +6,21 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use convex_backend::{ClientsGetForWorkerArgs, ConvexApi, MediaGetForDownloadArgs, MediaStatus};
+use convex_backend::{
+    ChatsWorkerUpdateChatPhotoArgs, ClientsGetForWorkerArgs, ConvexApi, MediaGetForDownloadArgs,
+    MediaStatus, MediaWorkerStoreMediaArgs,
+};
 use futures::{StreamExt, stream::BoxStream};
 use tracing::{info, warn};
 
+use crate::error::WorkerError;
 use crate::job::{Job, JobCtx};
 use crate::ops::convex as cx;
+use crate::ops::convex::ConvexResultExt as _;
 use crate::ops::media::download_and_upload;
-use crate::ops::telegram::{default_mime_for_kind_str, parse_media_external_id};
+use crate::ops::telegram::{
+    default_mime_for_kind_str, parse_media_external_id, parse_profile_photo_external_id,
+};
 use crate::session_manager::SessionManager as _;
 
 pub struct MediaDownloaderJob;
@@ -100,6 +107,45 @@ impl Job for MediaDownloaderJob {
             .get_for_telegram_id(&media.user_id, &client.telegram_id)
             .await?;
 
+        if media.telegram_file_id.starts_with("profile:") {
+            // Profile-photo path (replaces the old ProfilePhotoSync job).
+            let (chat_ext_id, _photo_id) =
+                match parse_profile_photo_external_id(&media.telegram_file_id) {
+                    Some(parsed) => parsed,
+                    None => {
+                        let err = "invalid profile photo external ID format";
+                        warn!(telegram_file_id = %media.telegram_file_id, err);
+                        cx::mark_media_failed(&ctx.convex, &media.telegram_file_id, err).await;
+                        return Ok(());
+                    }
+                };
+
+            match download_profile_photo(
+                &ctx.convex,
+                &tg,
+                &media.chat_id,
+                &chat_ext_id,
+                &media.telegram_file_id,
+            )
+            .await
+            {
+                Ok(()) => {
+                    info!(telegram_file_id = %media.telegram_file_id, "profile photo downloaded")
+                }
+                Err(e) => {
+                    warn!(
+                        telegram_file_id = %media.telegram_file_id,
+                        error = %e,
+                        "profile photo download failed"
+                    );
+                    cx::mark_media_failed(&ctx.convex, &media.telegram_file_id, &e.to_string())
+                        .await;
+                }
+            }
+            return Ok(());
+        }
+
+        // Message-media path (original behaviour).
         let (chat_ext_id, msg_id) = match parse_media_external_id(&media.telegram_file_id) {
             Some(parsed) => parsed,
             None => {
@@ -150,4 +196,90 @@ impl Job for MediaDownloaderJob {
 
         Ok(())
     }
+}
+
+/// Download a chat's profile photo from Telegram, upload it to Convex storage,
+/// and update the chat record.  This is the profile-photo counterpart to
+/// `download_and_upload` for message media.
+async fn download_profile_photo(
+    convex: &convex_backend::ConvexApiClient,
+    tg: &messanger_telegram::TelegramClient,
+    chat_id: &str,
+    chat_ext_id: &str,
+    telegram_file_id: &str,
+) -> Result<(), WorkerError> {
+    // 1. Download from Telegram.
+    let photo_bytes = match tg.download_chat_photo(chat_ext_id).await {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            return Err(WorkerError::MutationFailed(
+                "chat has no profile photo".into(),
+            ));
+        }
+        Err(e) => {
+            return Err(WorkerError::MutationFailed(format!(
+                "failed to download profile photo: {e}"
+            )));
+        }
+    };
+
+    // 2. Get a presigned upload URL.
+    let upload_url = convex
+        .media_generate_upload_url()
+        .await
+        .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
+
+    // 3. Upload to Convex storage.
+    let http_client = reqwest::Client::new();
+    let response = http_client
+        .post(&upload_url)
+        .header("Content-Type", "image/jpeg")
+        .body(photo_bytes.clone())
+        .send()
+        .await
+        .map_err(|e| WorkerError::MutationFailed(format!("upload photo: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(WorkerError::MutationFailed(format!(
+            "photo upload HTTP {status}: {body}"
+        )));
+    }
+
+    let upload_result: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| WorkerError::MutationFailed(format!("parse upload: {e}")))?;
+
+    let storage_id = upload_result["storageId"]
+        .as_str()
+        .ok_or_else(|| WorkerError::MutationFailed("missing storageId".into()))?;
+
+    // 4. Update the chat record with the new photo.
+    convex
+        .chats_worker_update_chat_photo(ChatsWorkerUpdateChatPhotoArgs {
+            chatId: chat_id.to_string(),
+            storageId: storage_id.to_string(),
+            photoExternalId: telegram_file_id.to_string(),
+        })
+        .await
+        .check()?;
+
+    // 5. Mark the media record as stored.
+    convex
+        .media_worker_store_media(MediaWorkerStoreMediaArgs {
+            telegramFileId: telegram_file_id.to_string(),
+            storageId: storage_id.to_string(),
+            mimeType: Some("image/jpeg".to_string()),
+            fileName: None,
+            fileSize: Some(photo_bytes.len() as f64),
+            width: None,
+            height: None,
+            duration: None,
+        })
+        .await
+        .map_err(|e| WorkerError::MutationFailed(e.to_string()))?;
+
+    Ok(())
 }

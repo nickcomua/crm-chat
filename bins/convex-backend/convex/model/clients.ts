@@ -270,7 +270,6 @@ export const workerCompleteSync = workerMutation({
 		}
 		await ctx.db.patch(clientId, {
 			phase: "Listening",
-			photosSynced: false,
 		});
 
 		// Queue scan for scan-enabled chats that haven't been fully scanned
@@ -304,11 +303,7 @@ export const workerMarkPhotosSynced = workerMutation({
 });
 
 const pendingClientWorkItem = v.object({
-	service: v.union(
-		v.literal("DialogSync"),
-		v.literal("ProfilePhotoSync"),
-		v.literal("UpdateListener"),
-	),
+	service: v.union(v.literal("DialogSync"), v.literal("UpdateListener")),
 	key: v.id("clients"),
 	handler: v.string(),
 });
@@ -345,13 +340,6 @@ export const pendingWork = workerQuery({
 				key: c._id,
 				handler: "listen",
 			});
-			if (c.photosSynced === false) {
-				work.push({
-					service: "ProfilePhotoSync",
-					key: c._id,
-					handler: "syncPhotos",
-				});
-			}
 		}
 
 		return work;

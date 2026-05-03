@@ -202,7 +202,7 @@ async fn scan_chat_messages(
                     userId: req.user_id.clone(),
                     clientId: req.client_id.clone(),
                     chatId: req.chat_id.clone(),
-                    messageId: message_id_clone,
+                    messageId: Some(message_id_clone),
                     kind: to_create_pending_kind(summary.kind),
                     mimeType: summary.mime_type.clone(),
                     fileName: summary.file_name.clone(),

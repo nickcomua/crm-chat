@@ -11,6 +11,5 @@ pub mod chat_scanner;
 pub mod dialog_sync;
 pub mod media_downloader;
 pub mod phone_auth;
-pub mod profile_photo_sync;
 pub mod qr_auth;
 pub mod update_listener;

@@ -34,7 +34,6 @@ use crate::jobs::chat_scanner::ChatScannerJob;
 use crate::jobs::dialog_sync::DialogSyncJob;
 use crate::jobs::media_downloader::MediaDownloaderJob;
 use crate::jobs::phone_auth::PhoneAuthJob;
-use crate::jobs::profile_photo_sync::ProfilePhotoSyncJob;
 use crate::jobs::qr_auth::QrAuthJob;
 use crate::jobs::update_listener::UpdateListenerJob;
 use crate::ops::convex::ConvexApi;
@@ -77,7 +76,6 @@ async fn main() -> anyhow::Result<()> {
     let jobs: Vec<Arc<dyn Job>> = vec![
         Arc::new(DialogSyncJob),
         Arc::new(UpdateListenerJob),
-        Arc::new(ProfilePhotoSyncJob),
         Arc::new(ChatScannerJob),
         Arc::new(MediaDownloaderJob),
         Arc::new(PhoneAuthJob),

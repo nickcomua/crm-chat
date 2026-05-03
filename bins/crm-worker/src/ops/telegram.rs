@@ -58,10 +58,21 @@ pub fn default_mime_for_kind_str(kind: &str) -> &'static str {
 /// Parse a media external ID ("media:{chat_id}:{msg_id}") into its components.
 pub fn parse_media_external_id(external_id: &str) -> Option<(String, i32)> {
     let parts: Vec<&str> = external_id.split(':').collect();
-    if parts.len() < 3 {
+    if parts.len() < 3 || parts[0] != "media" {
         return None;
     }
     let chat_ext_id = parts[1].to_string();
     let msg_id: i32 = parts[2].parse().ok()?;
     Some((chat_ext_id, msg_id))
+}
+
+/// Parse a profile-photo external ID ("profile:{chat_id}:{photo_id}") into its components.
+pub fn parse_profile_photo_external_id(external_id: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = external_id.split(':').collect();
+    if parts.len() < 3 || parts[0] != "profile" {
+        return None;
+    }
+    let chat_ext_id = parts[1].to_string();
+    let photo_id = parts[2].to_string();
+    Some((chat_ext_id, photo_id))
 }

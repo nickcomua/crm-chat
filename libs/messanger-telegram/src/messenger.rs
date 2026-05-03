@@ -625,6 +625,11 @@ impl MessengerClient for TelegramClient {
                     tl::enums::Dialog::Dialog(d) => d.pinned,
                     tl::enums::Dialog::Folder(d) => d.pinned,
                 };
+                let photo_id = match chat {
+                    Peer::User(user) => user.photo().map(|p| p.photo_id.to_string()),
+                    Peer::Group(group) => group.photo().map(|p| p.photo_id.to_string()),
+                    Peer::Channel(channel) => channel.photo().map(|p| p.photo_id.to_string()),
+                };
                 let summary = ChatSummary {
                     external_id: chat.id().bare_id().to_string(),
                     name: chat.name().map(|s| s.to_string()),
@@ -637,6 +642,7 @@ impl MessengerClient for TelegramClient {
                         .to_string(),
                     ),
                     is_pinned,
+                    photo_id,
                 };
                 count += 1;
                 // If receiver is dropped, stop producing to avoid unnecessary work

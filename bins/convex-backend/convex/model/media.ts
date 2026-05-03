@@ -17,7 +17,7 @@ const mediaFields = v.object({
 	userId: v.string(),
 	clientId: v.id("clients"),
 	chatId: v.string(),
-	messageId: v.string(),
+	messageId: v.optional(v.string()),
 	status: mediaStatus,
 	storageId: v.optional(v.id("_storage")),
 	kind: mediaKind,
@@ -153,7 +153,7 @@ export const getForMessages = humanQuery({
 	args: { messageIds: v.array(v.string()) },
 	returns: v.array(
 		v.object({
-			messageId: v.string(),
+			messageId: v.optional(v.string()),
 			kind: mediaKind,
 			status: mediaStatus,
 			url: v.optional(v.string()),
@@ -209,7 +209,7 @@ export const getForChat = humanQuery({
 	returns: v.array(
 		v.object({
 			telegramFileId: v.string(),
-			messageId: v.string(),
+			messageId: v.optional(v.string()),
 			kind: mediaKind,
 			status: mediaStatus,
 			url: v.optional(v.string()),
@@ -265,7 +265,7 @@ export const getForChats = humanQuery({
 	returns: v.array(
 		v.object({
 			telegramFileId: v.string(),
-			messageId: v.string(),
+			messageId: v.optional(v.string()),
 			chatId: v.string(),
 			kind: mediaKind,
 			status: mediaStatus,
@@ -329,7 +329,7 @@ export const listPendingForClient = workerQuery({
 	returns: v.array(
 		v.object({
 			telegramFileId: v.string(),
-			messageId: v.string(),
+			messageId: v.optional(v.string()),
 			chatId: v.string(),
 			kind: mediaKind,
 			fileSize: v.optional(v.number()),
@@ -366,7 +366,7 @@ export const listByStatus = humanQuery({
 	returns: v.array(
 		v.object({
 			telegramFileId: v.string(),
-			messageId: v.string(),
+			messageId: v.optional(v.string()),
 			kind: mediaKind,
 			status: mediaStatus,
 			bytesDownloaded: v.optional(v.number()),
@@ -430,10 +430,13 @@ export const listByStatus = humanQuery({
 							.take(limit);
 
 			for (const m of records) {
-				const message = await ctx.db
-					.query("messages")
-					.withIndex("by_messageId", (q) => q.eq("messageId", m.messageId))
-					.unique();
+				const msgId = m.messageId;
+				const message = msgId
+					? await ctx.db
+							.query("messages")
+							.withIndex("by_messageId", (q) => q.eq("messageId", msgId))
+							.unique()
+					: undefined;
 
 				results.push({
 					telegramFileId: m.telegramFileId,
@@ -548,7 +551,7 @@ export const workerCreatePendingMedia = workerMutation({
 		userId: v.string(),
 		clientId: v.id("clients"),
 		chatId: v.string(),
-		messageId: v.string(),
+		messageId: v.optional(v.string()),
 		kind: mediaKind,
 		mimeType: v.optional(v.string()),
 		fileName: v.optional(v.string()),
