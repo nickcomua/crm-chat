@@ -55,8 +55,11 @@ impl Job for MediaDownloaderJob {
             .await?
             .ok_or_else(|| anyhow::anyhow!("media {media_id} not found"))?;
 
-        if media.status != MediaStatus::Pending {
-            info!(status = %media.status, "not Pending — skipping");
+        if !matches!(
+            media.status,
+            MediaStatus::Pending | MediaStatus::Downloading
+        ) {
+            info!(status = %media.status, "not a downloadable status — skipping");
             return Ok(());
         }
 

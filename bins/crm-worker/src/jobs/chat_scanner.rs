@@ -64,8 +64,11 @@ impl Job for ChatScannerJob {
             .ok_or_else(|| anyhow::anyhow!("chat {chat_doc_id} not found"))?;
 
         let scan_phase = chat.scan_phase.as_ref().map(|p| p.to_string());
-        if scan_phase.as_deref() != Some("Queued") {
-            info!(?scan_phase, "not Queued — skipping");
+        if !matches!(
+            scan_phase.as_deref(),
+            Some("Queued" | "ScanningMessages" | "DownloadingMedia")
+        ) {
+            info!(?scan_phase, "not an active scan phase — skipping");
             return Ok(());
         }
 

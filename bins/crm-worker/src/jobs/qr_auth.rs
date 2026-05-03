@@ -57,8 +57,8 @@ impl Job for QrAuthJob {
         let user_id = auth.user_id.clone();
 
         let step_str = auth.step.to_string();
-        if step_str != "Pending" {
-            info!(step = %step_str, "not Pending — skipping");
+        if !matches!(step_str.as_str(), "Pending" | "Generating" | "Token") {
+            info!(step = %step_str, "not an active QR auth step — skipping");
             return Ok(());
         }
 

@@ -711,11 +711,14 @@ export const pendingWork = workerQuery({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
-		return (
-			await ctx.db
-				.query("media")
-				.filter((q) => q.eq(q.field("status"), "Pending"))
-				.collect()
-		).map((m) => m._id);
+		const pending = await ctx.db
+			.query("media")
+			.filter((q) => q.eq(q.field("status"), "Pending"))
+			.collect();
+		const downloading = await ctx.db
+			.query("media")
+			.filter((q) => q.eq(q.field("status"), "Downloading"))
+			.collect();
+		return [...pending, ...downloading].map((m) => m._id);
 	},
 });

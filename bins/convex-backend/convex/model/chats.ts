@@ -488,23 +488,24 @@ export const workerUpdateChatPhoto = workerMutation({
 // Pending work (for reconciler dispatch)
 // =============================================================================
 
-/** Chats queued for scanning. */
+/** Chats with active scan work, including in-progress phases. */
 export const pendingWork = workerQuery({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
-		const queued = await ctx.db
-			.query("chats")
-			.withIndex("by_scanPhase", (q) => q.eq("scanPhase", "Queued"))
-			.collect();
-		const scanning = await ctx.db
-			.query("chats")
-			.withIndex("by_scanPhase", (q) => q.eq("scanPhase", "ScanningMessages"))
-			.collect();
-		const downloading = await ctx.db
-			.query("chats")
-			.withIndex("by_scanPhase", (q) => q.eq("scanPhase", "DownloadingMedia"))
-			.collect();
-		return [...queued, ...scanning, ...downloading].map((c) => c._id);
+		const activePhases = [
+			"Queued",
+			"ScanningMessages",
+			"DownloadingMedia",
+		] as const;
+		const activeChats = await Promise.all(
+			activePhases.map((phase) =>
+				ctx.db
+					.query("chats")
+					.withIndex("by_scanPhase", (q) => q.eq("scanPhase", phase))
+					.collect(),
+			),
+		);
+		return activeChats.flat().map((c) => c._id);
 	},
 });

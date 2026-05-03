@@ -62,10 +62,13 @@ impl Job for DialogSyncJob {
             .await?
             .ok_or_else(|| anyhow::anyhow!("client {client_id} not found"))?;
 
-        // Idempotency: only process NeedsSync clients.
+        // Idempotency/resume: process both initial and in-progress phases.
+        // `clients.pendingWork` keeps Syncing clients in the set so a worker
+        // restart after NeedsSync → Syncing can finish the sync instead of
+        // dropping the job.
         let phase = client.phase.as_ref().map(|p| p.to_string());
-        if phase.as_deref() != Some("NeedsSync") {
-            info!(?phase, "not NeedsSync — skipping");
+        if !matches!(phase.as_deref(), Some("NeedsSync" | "Syncing")) {
+            info!(?phase, "not a dialog sync phase — skipping");
             return Ok(());
         }
 

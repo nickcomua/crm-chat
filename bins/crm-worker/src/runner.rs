@@ -14,14 +14,11 @@ use crate::job::{Job, JobCtx};
 /// subscription stream to add/cancel tasks.
 pub async fn run_job(job: Arc<dyn Job>, ctx: Arc<JobCtx>) {
     let name = job.name();
-    let root = info_span!("job", name = name);
-    let _g = root.enter();
-
-    info!("subscribing");
+    info!(job = name, "subscribing");
     let mut stream = match job.subscribe(&ctx).await {
         Ok(s) => s,
         Err(e) => {
-            warn!(error = %e, "subscribe failed — job will not run");
+            warn!(job = name, error = %e, "subscribe failed — job will not run");
             return;
         }
     };
@@ -36,9 +33,9 @@ pub async fn run_job(job: Arc<dyn Job>, ctx: Arc<JobCtx>) {
             if !wanted.contains(key) {
                 if !handle.is_finished() {
                     handle.abort();
-                    info!(key = %key, "entity left set — aborting task");
+                    info!(job = name, key = %key, "entity left set — aborting task");
                 } else {
-                    info!(key = %key, "entity left set — task already done");
+                    info!(job = name, key = %key, "entity left set — task already done");
                 }
                 false
             } else if handle.is_finished() {
@@ -73,5 +70,5 @@ pub async fn run_job(job: Arc<dyn Job>, ctx: Arc<JobCtx>) {
         }
     }
 
-    warn!("subscription stream ended — job exiting");
+    warn!(job = name, "subscription stream ended — job exiting");
 }

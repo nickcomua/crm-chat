@@ -262,7 +262,7 @@ async fn process_update(
         }
 
         Update::Other { update_type, .. } => {
-            debug!(update_type, "ignoring non-message update");
+            // debug!(update_type, "ignoring non-message update");
         }
     }
     Ok(())
