@@ -6,7 +6,12 @@ import {
 	workerMutation,
 	workerQuery,
 } from "../functions";
-import { mediaKind, mediaStatus } from "../helpers/validators";
+import {
+	mediaKind,
+	mediaStatus,
+	mediaKindToSettingKey,
+	resolveMediaSetting,
+} from "../helpers/validators";
 
 // =============================================================================
 // Table-specific validators
@@ -544,7 +549,8 @@ export const getForDownload = workerQuery({
 
 /** Create a pending media record. Worker-only.
  *  Domain-driven: no task enqueue — the reconciler dispatches MediaDownloader
- *  when it sees media records with status "Pending". */
+ *  when it sees media records with status "Pending".
+ *  Respects per-chat and per-client media settings (default off). */
 export const workerCreatePendingMedia = workerMutation({
 	args: {
 		telegramFileId: v.string(),
@@ -560,7 +566,11 @@ export const workerCreatePendingMedia = workerMutation({
 		height: v.optional(v.number()),
 		duration: v.optional(v.number()),
 	},
-	returns: v.null(),
+	returns: v.union(
+		v.literal("Pending"),
+		v.literal("Skipped"),
+		v.literal("Exists"),
+	),
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query("media")
@@ -569,16 +579,39 @@ export const workerCreatePendingMedia = workerMutation({
 			)
 			.unique();
 
+		const chat = await ctx.db
+			.query("chats")
+			.withIndex("by_chatId", (q) => q.eq("chatId", args.chatId))
+			.unique();
+		const client = await ctx.db.get(args.clientId);
+
+		const settingKey = mediaKindToSettingKey(args.kind);
+		const shouldSave = resolveMediaSetting(
+			settingKey,
+			chat?.mediaSettings,
+			client?.mediaSettings,
+		);
+
 		if (existing) {
-			return null;
+			// Re-evaluate Pending/Skipped records when settings change.
+			if (existing.status === "Pending" && !shouldSave) {
+				await ctx.db.patch(existing._id, { status: "Skipped" as const });
+				return "Skipped";
+			}
+			if (existing.status === "Skipped" && shouldSave) {
+				await ctx.db.patch(existing._id, { status: "Pending" as const });
+				return "Pending";
+			}
+			return "Exists";
 		}
 
+		const status = shouldSave ? ("Pending" as const) : ("Skipped" as const);
 		await ctx.db.insert("media", {
 			...args,
-			status: "Pending" as const,
+			status,
 		});
 
-		return null;
+		return status;
 	},
 });
 

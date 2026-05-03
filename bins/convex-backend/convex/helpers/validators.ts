@@ -30,6 +30,46 @@ export const mediaSettingsValidator = v.object({
 	saveVideoNotes: v.optional(v.boolean()),
 });
 
+export type MediaSettingsKey =
+	| "savePhotos"
+	| "saveVideos"
+	| "saveAudio"
+	| "saveVoice"
+	| "saveStickers"
+	| "saveDocuments"
+	| "saveAnimations"
+	| "saveVideoNotes";
+
+export const MEDIA_KIND_TO_SETTING: Record<string, MediaSettingsKey> = {
+	Photo: "savePhotos",
+	Video: "saveVideos",
+	VideoNote: "saveVideoNotes",
+	Audio: "saveAudio",
+	Voice: "saveVoice",
+	Sticker: "saveStickers",
+	Animation: "saveAnimations",
+	Document: "saveDocuments",
+};
+
+export function mediaKindToSettingKey(
+	kind: string,
+): MediaSettingsKey | undefined {
+	return MEDIA_KIND_TO_SETTING[kind];
+}
+
+export function resolveMediaSetting(
+	settingKey: MediaSettingsKey | undefined,
+	chatSettings?: { [K in MediaSettingsKey]?: boolean },
+	clientSettings?: { [K in MediaSettingsKey]?: boolean },
+): boolean {
+	if (!settingKey) return true;
+	const chatVal = chatSettings?.[settingKey];
+	const clientVal = clientSettings?.[settingKey];
+	if (chatVal !== undefined) return chatVal;
+	if (clientVal !== undefined) return clientVal;
+	return false;
+}
+
 // =============================================================================
 // Contact-domain validators (used by contacts, chatContactLinks, contactPins)
 // =============================================================================

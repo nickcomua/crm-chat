@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use convex_backend::{
-    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MessagesWorkerMarkMessageDeletedArgs,
+    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MediaWorkerCreatePendingMediaArgs,
+    MediaWorkerCreatePendingMediaReturn, MessagesWorkerMarkMessageDeletedArgs,
     MessagesWorkerUpsertMessageArgs,
 };
 use futures::{StreamExt, stream::BoxStream};
@@ -23,7 +24,7 @@ use crate::error::WorkerError;
 use crate::job::{Job, JobCtx};
 use crate::ops::convex::{self as cx, ConvexWarnExt as _};
 use crate::ops::media::download_and_upload_media;
-use crate::ops::telegram::to_upsert_media_kind;
+use crate::ops::telegram::{to_create_pending_kind, to_upsert_media_kind};
 use crate::session_manager::SessionManager as _;
 
 const SERVICE: &str = "UpdateListener";
@@ -192,7 +193,7 @@ async fn process_update(
                     externalId: msg.external_id.clone(),
                     userId: req.user_id.clone(),
                     clientId: req.client_id.clone(),
-                    chatId: chat_id,
+                    chatId: chat_id.clone(),
                     senderId: msg.sender_id.clone(),
                     text: msg.text.clone(),
                     outgoing: msg.outgoing,
@@ -215,30 +216,63 @@ async fn process_update(
                 && let Some(ref summary) = msg.media_summary
                 && let Some(ref media_ext_id) = msg.media_external_id
             {
-                let convex = convex.clone();
-                let dl_tg = tg.clone();
-                let dl_chat_ext = msg.chat_external_id.clone();
-                let dl_msg_ext = msg.external_id.clone();
-                let dl_media_ext = media_ext_id.clone();
-                let dl_summary = summary.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = download_and_upload_media(
-                        &convex,
-                        &dl_tg,
-                        &dl_chat_ext,
-                        &dl_msg_ext,
-                        &dl_media_ext,
-                        &dl_summary,
-                    )
+                match convex
+                    .media_worker_create_pending_media(MediaWorkerCreatePendingMediaArgs {
+                        telegramFileId: media_ext_id.clone(),
+                        userId: req.user_id.clone(),
+                        clientId: req.client_id.clone(),
+                        chatId: chat_id.clone(),
+                        messageId: Some(msg.external_id.clone()),
+                        kind: to_create_pending_kind(summary.kind),
+                        mimeType: summary.mime_type.clone(),
+                        fileName: summary.file_name.clone(),
+                        fileSize: summary.file_size.map(|s| s as f64),
+                        width: summary.width.map(|w| w as f64),
+                        height: summary.height.map(|h| h as f64),
+                        duration: summary.duration,
+                    })
                     .await
-                    {
+                {
+                    Ok(MediaWorkerCreatePendingMediaReturn::Pending) => {
+                        let convex = convex.clone();
+                        let dl_tg = tg.clone();
+                        let dl_chat_ext = msg.chat_external_id.clone();
+                        let dl_msg_ext = msg.external_id.clone();
+                        let dl_media_ext = media_ext_id.clone();
+                        let dl_summary = summary.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = download_and_upload_media(
+                                &convex,
+                                &dl_tg,
+                                &dl_chat_ext,
+                                &dl_msg_ext,
+                                &dl_media_ext,
+                                &dl_summary,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    media_id = %dl_media_ext,
+                                    error = %e,
+                                    "failed to download real-time media"
+                                );
+                            }
+                        });
+                    }
+                    Ok(MediaWorkerCreatePendingMediaReturn::Skipped) => {
+                        info!(media_id = %media_ext_id, "real-time media skipped by settings");
+                    }
+                    Ok(MediaWorkerCreatePendingMediaReturn::Exists) => {
+                        // already queued or stored — nothing to do
+                    }
+                    Err(e) => {
                         warn!(
-                            media_id = %dl_media_ext,
+                            media_id = %media_ext_id,
                             error = %e,
-                            "failed to download real-time media"
+                            "failed to create pending media for real-time message"
                         );
                     }
-                });
+                }
             }
         }
 

@@ -3,7 +3,11 @@ import { type Infer, v } from "convex/values";
 import { asyncMap } from "convex-helpers";
 import { humanMutation, humanQuery, workerMutation } from "../functions";
 import { err, ok, result } from "../helpers/result";
-import { mediaKind } from "../helpers/validators";
+import {
+	mediaKind,
+	mediaKindToSettingKey,
+	resolveMediaSetting,
+} from "../helpers/validators";
 
 // =============================================================================
 // Table-specific validators
@@ -60,31 +64,6 @@ export const messagesTable = defineTable(messageFields)
 	});
 
 const MAX_CHAT_IDS = 100;
-
-type MediaSettingsKey =
-	| "savePhotos"
-	| "saveVideos"
-	| "saveAudio"
-	| "saveVoice"
-	| "saveStickers"
-	| "saveDocuments"
-	| "saveAnimations"
-	| "saveVideoNotes";
-
-const MEDIA_KIND_TO_SETTING: Record<string, MediaSettingsKey> = {
-	Photo: "savePhotos",
-	Video: "saveVideos",
-	VideoNote: "saveVideoNotes",
-	Audio: "saveAudio",
-	Voice: "saveVoice",
-	Sticker: "saveStickers",
-	Animation: "saveAnimations",
-	Document: "saveDocuments",
-};
-
-function mediaKindToSettingKey(kind: string): MediaSettingsKey | undefined {
-	return MEDIA_KIND_TO_SETTING[kind];
-}
 
 /** Get the last message for each of the given chats (for chat-list previews). */
 export const getLastPerChat = humanQuery({
@@ -220,16 +199,11 @@ export const upsert = humanMutation({
 				const client = await ctx.db.get(args.clientId);
 
 				const settingKey = mediaKindToSettingKey(mk);
-				let shouldSave = true;
-				if (settingKey) {
-					const chatVal = chat?.mediaSettings?.[settingKey];
-					const clientVal = client?.mediaSettings?.[settingKey];
-					if (chatVal !== undefined) {
-						shouldSave = chatVal;
-					} else if (clientVal !== undefined) {
-						shouldSave = clientVal;
-					}
-				}
+				const shouldSave = resolveMediaSetting(
+					settingKey,
+					chat?.mediaSettings,
+					client?.mediaSettings,
+				);
 
 				await ctx.db.insert("media", {
 					telegramFileId: mid,
