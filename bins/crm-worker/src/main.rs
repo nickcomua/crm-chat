@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(DialogSyncJob),
         Arc::new(UpdateListenerJob),
         Arc::new(ChatScannerJob),
-        Arc::new(MediaDownloaderJob),
+        Arc::new(MediaDownloaderJob::new()),
         Arc::new(PhoneAuthJob),
         Arc::new(QrAuthJob),
     ];

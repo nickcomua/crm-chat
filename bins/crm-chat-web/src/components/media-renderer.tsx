@@ -482,7 +482,7 @@ function TgsSticker({
 
 	return (
 		<div
-			className="max-h-[180px] max-w-[180px]"
+			className="max-h-45 max-w-45"
 			ref={containerRef}
 			style={{ width, height }}
 		/>
@@ -498,7 +498,7 @@ function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
 		return (
 			<video
 				autoPlay
-				className="max-h-[180px] max-w-[180px]"
+				className="max-h-45 max-w-45"
 				height={h}
 				loop
 				muted
@@ -516,7 +516,7 @@ function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
 			return (
 				<img
 					alt="Sticker"
-					className="max-h-[180px] max-w-[180px]"
+					className="max-h-45 max-w-45"
 					height={h}
 					width={w}
 				/>
@@ -528,7 +528,7 @@ function StickerMedia({ media }: { media: MediaInfo }): React.ReactNode {
 	return (
 		<img
 			alt="Sticker"
-			className="max-h-[180px] max-w-[180px]"
+			className="max-h-45 max-w-45"
 			height={h}
 			loading="lazy"
 			src={media.url}
@@ -547,7 +547,7 @@ function StoredMedia({
 				<MediaLightbox media={media}>
 					<img
 						alt="Shared media"
-						className="max-h-[300px] max-w-full rounded-lg object-cover"
+						className="max-h-75 max-w-full rounded-lg object-cover"
 						height={media.height}
 						loading="lazy"
 						src={media.url}
@@ -564,7 +564,7 @@ function StoredMedia({
 				<MediaLightbox media={media}>
 					<video
 						autoPlay
-						className="max-h-[300px] max-w-full rounded-lg"
+						className="max-h-75 max-w-full rounded-lg"
 						loop
 						muted
 						playsInline
@@ -585,7 +585,7 @@ function StoredMedia({
 					<div className="relative">
 						<video
 							className={cn(
-								"max-h-[300px] max-w-full",
+								"max-h-75 max-w-full",
 								media.kind === "VideoNote" ? "rounded-full" : "rounded-lg",
 							)}
 							playsInline
@@ -609,7 +609,7 @@ function StoredMedia({
 		case "Audio":
 		case "Voice":
 			return (
-				<div className="flex min-w-[200px] items-center gap-2">
+				<div className="flex min-w-50 items-center gap-2">
 					<audio controls preload="metadata">
 						<source
 							src={media.url}

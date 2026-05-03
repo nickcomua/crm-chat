@@ -11,19 +11,30 @@ use convex_backend::{
     MediaStatus, MediaWorkerStoreMediaArgs,
 };
 use futures::{StreamExt, stream::BoxStream};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::error::WorkerError;
 use crate::job::{Job, JobCtx};
 use crate::ops::convex as cx;
 use crate::ops::convex::ConvexResultExt as _;
-use crate::ops::media::download_and_upload;
+use crate::ops::media::{download_and_upload, sanitize_content_type};
 use crate::ops::telegram::{
     default_mime_for_kind_str, parse_media_external_id, parse_profile_photo_external_id,
 };
 use crate::session_manager::SessionManager as _;
 
-pub struct MediaDownloaderJob;
+pub struct MediaDownloaderJob {
+    semaphore: Arc<Semaphore>,
+}
+
+impl MediaDownloaderJob {
+    pub fn new() -> Self {
+        Self {
+            semaphore: Arc::new(Semaphore::new(1)),
+        }
+    }
+}
 
 #[async_trait]
 impl Job for MediaDownloaderJob {
@@ -32,18 +43,11 @@ impl Job for MediaDownloaderJob {
     }
 
     async fn subscribe(&self, ctx: &JobCtx) -> anyhow::Result<BoxStream<'static, Vec<String>>> {
-        let max = ctx.config.max_media_workflows;
         let sub = ctx.convex.subscribe_media_pending_work().await?;
         Ok(sub
             .filter_map(move |res| async move {
                 match res {
-                    Ok(items) => {
-                        if max > 0 {
-                            Some(items.into_iter().take(max).collect())
-                        } else {
-                            Some(items)
-                        }
-                    }
+                    Ok(items) => Some(items),
                     Err(e) => {
                         warn!(error = %e, "media.pendingWork subscription error");
                         None
@@ -107,6 +111,12 @@ impl Job for MediaDownloaderJob {
             .get_for_telegram_id(&media.user_id, &client.telegram_id)
             .await?;
 
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| anyhow::anyhow!("download semaphore closed: {e}"))?;
+
         if media.telegram_file_id.starts_with("profile:") {
             // Profile-photo path (replaces the old ProfilePhotoSync job).
             let (chat_ext_id, _photo_id) =
@@ -156,10 +166,12 @@ impl Job for MediaDownloaderJob {
             }
         };
 
-        let content_type = media
-            .mime_type
-            .as_deref()
-            .unwrap_or_else(|| default_mime_for_kind_str(&kind_str));
+        let content_type = sanitize_content_type(
+            media
+                .mime_type
+                .as_deref()
+                .unwrap_or_else(|| default_mime_for_kind_str(&kind_str)),
+        );
 
         match download_and_upload(
             &ctx.convex,

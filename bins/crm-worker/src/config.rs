@@ -12,10 +12,6 @@ pub struct WorkerConfig {
     pub api_hash: String,
     pub convex_url: String,
     pub m2m_secret_key: String,
-    /// Maximum number of media downloads running in parallel.
-    /// Controls how many files can download simultaneously across all clients.
-    /// 0 = unlimited. (default: 2)
-    pub max_media_workflows: usize,
 }
 
 impl WorkerConfig {
@@ -38,18 +34,11 @@ impl WorkerConfig {
             .clerk_m2m_secret_key
             .expect("CLERK_M2M_SECRET_KEY is required");
 
-        let max_media_workflows: usize = spec
-            .secrets
-            .max_media_workflows
-            .and_then(|v: String| v.parse().ok())
-            .unwrap_or(2);
-
         Ok(Self {
             api_id,
             api_hash,
             convex_url,
             m2m_secret_key,
-            max_media_workflows,
         })
     }
 }

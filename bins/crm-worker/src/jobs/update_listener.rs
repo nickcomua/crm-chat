@@ -17,7 +17,7 @@ use convex_backend::{
 use futures::{StreamExt, stream::BoxStream};
 use messanger_interface::{MessengerClient, Update};
 use messanger_telegram::TelegramClient;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::error::WorkerError;
 use crate::job::{Job, JobCtx};
@@ -261,7 +261,7 @@ async fn process_update(
             }
         }
 
-        Update::Other { update_type, .. } => {
+        Update::Other { update_type: _, .. } => {
             // debug!(update_type, "ignoring non-message update");
         }
     }
