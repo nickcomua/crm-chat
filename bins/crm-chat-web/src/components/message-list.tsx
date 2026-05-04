@@ -204,7 +204,12 @@ export function MessageList({
 	const mediaMap = new Map<string, MediaInfo>();
 	if (mediaRecords) {
 		for (const record of mediaRecords) {
-			mediaMap.set(record.messageId, record);
+			if (record.messageId) {
+				mediaMap.set(record.messageId, {
+					...record,
+					messageId: record.messageId,
+				});
+			}
 		}
 	}
 

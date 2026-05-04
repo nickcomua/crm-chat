@@ -38,12 +38,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1706,7 +1700,6 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
- "zeroize",
 ]
 
 [[package]]
@@ -2094,55 +2087,71 @@ name = "hack"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "cc",
+ "bytes",
+ "chrono",
  "deranged",
+ "derive_more",
+ "derive_more-impl",
  "digest",
  "either",
  "flate2",
  "form_urlencoded",
+ "futures",
  "futures-channel",
+ "futures-executor",
+ "futures-io",
  "futures-sink",
  "futures-util",
- "generic-array",
- "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "hashbrown 0.16.1",
  "hmac",
  "hyper 1.9.0",
+ "hyper-rustls 0.27.7",
  "hyper-util",
  "libc",
  "log",
+ "memchr",
+ "miniz_oxide",
+ "mio",
+ "native-tls",
  "num-bigint",
+ "num-integer",
  "num-iter",
  "num-traits",
+ "objc2-core-foundation",
+ "openssl",
+ "openssl-sys",
  "os_info",
  "percent-encoding",
  "regex",
  "regex-automata",
  "regex-syntax",
+ "reqwest 0.12.28",
  "reqwest 0.13.2",
  "rustix",
  "rustls 0.23.37",
  "rustls-pki-types",
  "rustls-webpki 0.103.10",
+ "secretspec",
  "serde",
  "serde_core",
  "serde_json",
- "sha2",
+ "serde_with",
  "simd-adler32",
+ "slab",
  "smallvec",
- "subtle",
  "syn",
  "time",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tokio-stream",
  "tokio-util",
  "tower",
- "tracing",
  "tracing-core",
- "typenum",
+ "tracing-subscriber",
  "url",
+ "uuid",
  "winapi",
  "windows-sys 0.61.2",
  "zeroize",
@@ -2175,8 +2184,6 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
- "allocator-api2",
- "equivalent",
  "foldhash 0.2.0",
 ]
 

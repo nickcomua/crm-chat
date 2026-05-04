@@ -792,7 +792,7 @@ export const listMergedMessages = humanQuery({
 		contactId: v.id("contacts"),
 		paginationOpts: paginationOptsValidator,
 	},
-	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: TODO
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complex message merging logic
 	handler: async (ctx, { contactId, paginationOpts }) => {
 		const contact = await ctx.db.get(contactId);
 		if (!contact) {

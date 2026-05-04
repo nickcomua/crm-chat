@@ -8,8 +8,8 @@ import {
 } from "../functions";
 import {
 	mediaKind,
-	mediaStatus,
 	mediaKindToSettingKey,
+	mediaStatus,
 	resolveMediaSetting,
 } from "../helpers/validators";
 

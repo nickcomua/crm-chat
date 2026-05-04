@@ -261,10 +261,8 @@ async fn process_update(
                             }
                         });
                     }
-                    Ok(MediaWorkerCreatePendingMediaReturn::Skipped) => {
-                        info!(media_id = %media_ext_id, "real-time media skipped by settings");
-                    }
-                    Ok(MediaWorkerCreatePendingMediaReturn::Exists) => {
+                    Ok(MediaWorkerCreatePendingMediaReturn::Exists)
+                    | Ok(MediaWorkerCreatePendingMediaReturn::Skipped) => {
                         // already queued or stored — nothing to do
                     }
                     Err(e) => {

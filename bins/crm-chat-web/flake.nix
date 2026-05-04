@@ -40,43 +40,46 @@
     # Fetch biome binary from GitHub releases to match the exact version
     # in package.json. nixpkgs biome lags behind npm releases.
     biomeVersion = "2.4.8";
-    biomeFor = eachSystem (system: let
-      pkgs = pkgsFor.${system};
-      biomeBinSrc =
-        {
-          "aarch64-darwin" = pkgs.fetchurl {
-            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-arm64";
-            hash = "sha256-J3fWLS+ts0zYIgUKP4qssx9ToVQjlG+9jP0a/7DtZSw=";
+    biomeFor = eachSystem (
+      system: let
+        pkgs = pkgsFor.${system};
+        biomeBinSrc =
+          {
+            "aarch64-darwin" = pkgs.fetchurl {
+              url = "https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%40${biomeVersion}/biome-darwin-arm64";
+              hash = "sha256-J3fWLS+ts0zYIgUKP4qssx9ToVQjlG+9jP0a/7DtZSw=";
+            };
+            "x86_64-darwin" = pkgs.fetchurl {
+              url = "https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%40${biomeVersion}/biome-darwin-x64";
+              hash = "sha256-rBxeuTO+K7GGyK6kzIEkmTiFXgj+iPgHOWt8tB3+smQ=";
+            };
+            "x86_64-linux" = pkgs.fetchurl {
+              url = "https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%40${biomeVersion}/biome-linux-x64";
+              hash = "sha256-urIF3qLSQyY44B+0HRNtbMsm3QflQ9L0DSC3seVb4mM=";
+            };
+            "aarch64-linux" = pkgs.fetchurl {
+              url = "https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%40${biomeVersion}/biome-linux-arm64";
+              hash = "sha256-453zoJaX9D3I14mJ14GQKcSn3cRbyismhAOENXUVT4Y=";
+            };
+          }
+            .${
+            system
           };
-          "x86_64-darwin" = pkgs.fetchurl {
-            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-darwin-x64";
-            hash = "sha256-rBxeuTO+K7GGyK6kzIEkmTiFXgj+iPgHOWt8tB3+smQ=";
-          };
-          "x86_64-linux" = pkgs.fetchurl {
-            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-x64";
-            hash = "sha256-urIF3qLSQyY44B+0HRNtbMsm3QflQ9L0DSC3seVb4mM=";
-          };
-          "aarch64-linux" = pkgs.fetchurl {
-            url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/biome-linux-arm64";
-            hash = "sha256-453zoJaX9D3I14mJ14GQKcSn3cRbyismhAOENXUVT4Y=";
-          };
-        }.${
-          system
-        };
-    in
-      pkgs.stdenv.mkDerivation {
-        pname = "biome";
-        version = biomeVersion;
-        src = biomeBinSrc;
-        dontUnpack = true;
-        nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.autoPatchelfHook];
-        buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.stdenv.cc.cc.lib];
-        installPhase = ''
-          mkdir -p $out/bin
-          cp $src $out/bin/biome
-          chmod +x $out/bin/biome
-        '';
-      });
+      in
+        pkgs.stdenv.mkDerivation {
+          pname = "biome";
+          version = biomeVersion;
+          src = biomeBinSrc;
+          dontUnpack = true;
+          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.autoPatchelfHook];
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [pkgs.stdenv.cc.cc.lib];
+          installPhase = ''
+            mkdir -p $out/bin
+            cp $src $out/bin/biome
+            chmod +x $out/bin/biome
+          '';
+        }
+    );
   in {
     packages = eachSystem (
       system: let
@@ -88,6 +91,7 @@
           mkdir -p $out/crm-chat-web $out/convex-backend
           cp -r ${pkgs.lib.cleanSource ./.}/. $out/crm-chat-web/
           cp -r ${pkgs.lib.cleanSource ../convex-backend}/. $out/convex-backend/
+          cp ${pkgs.lib.cleanSource ../../biome.jsonc} $out/biome.jsonc
         '';
 
         # Build crm-chat-web static files using bun2nix
@@ -110,7 +114,10 @@
           # Use hoisted linker so node_modules/.bin works correctly
           bunInstallFlags =
             if pkgs.stdenv.hostPlatform.isDarwin
-            then ["--linker=hoisted" "--backend=copyfile"]
+            then [
+              "--linker=hoisted"
+              "--backend=copyfile"
+            ]
             else ["--linker=hoisted"];
 
           # Run vite build only; tsc type-checking is handled by the lint check
@@ -145,7 +152,7 @@
             VITE_CLERK_PUBLISHABLE_KEY: "''${VITE_CLERK_PUBLISHABLE_KEY:-}",
             VITE_CONVEX_URL: "''${VITE_CONVEX_URL:-}",
             VITE_SENTRY_DSN: "''${VITE_SENTRY_DSN:-}",
-            VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT:-production}"
+            VITE_SENTRY_ENVIRONMENT: "''${VITE_SENTRY_ENVIRONMENT=production}"
           };
           EOF
 
@@ -226,7 +233,58 @@
           mkdir -p $out/crm-chat-web $out/convex-backend
           cp -r ${pkgs.lib.cleanSource ./.}/. $out/crm-chat-web/
           cp -r ${pkgs.lib.cleanSource ../convex-backend}/. $out/convex-backend/
+          cp ${pkgs.lib.cleanSource ../../biome.jsonc} $out/biome.jsonc
         '';
+
+        # Minimal eslint.config.js for the convex-backend sandbox.
+        # The convex-backend eslint config only imports nodeTypeScriptConfig
+        # from this file, so we omit react-hooks/react-refresh imports that
+        # aren't available in convex-backend's node_modules.
+        rootEslintConfig = pkgs.writeText "eslint.config.js" ''
+          import js from "@eslint/js";
+          import globals from "globals";
+          import tseslint from "typescript-eslint";
+
+          const ecmaVersion = 2023;
+
+          export const typescriptConfig = ({
+            files = ["**/*.{ts,tsx}"],
+            globals: projectGlobals = {},
+          } = {}) => ({
+            files,
+            extends: [js.configs.recommended, tseslint.configs.recommended],
+            languageOptions: {
+              ecmaVersion,
+              globals: projectGlobals,
+            },
+            rules: {
+              "@typescript-eslint/no-unused-vars": [
+                "error",
+                {
+                  argsIgnorePattern: "^_",
+                  varsIgnorePattern: "^_",
+                  ignoreRestSiblings: true,
+                },
+              ],
+            },
+          });
+
+          export const nodeTypeScriptConfig = (options = {}) =>
+            typescriptConfig({
+              files: options.files,
+              globals: { ...globals.node, ...(options.globals ?? {}) },
+            });
+
+          export const browserTypeScriptConfig = (options = {}) =>
+            typescriptConfig({
+              files: options.files,
+              globals: { ...globals.browser, ...(options.globals ?? {}) },
+            });
+
+          export default [];
+        '';
+
+        rootWebEslintConfig = pkgs.writeText "eslint.config.js" (builtins.readFile ../../eslint.config.js);
       in {
         crm-chat-web-lint = pkgs.stdenv.mkDerivation {
           pname = "crm-chat-web-lint";
@@ -236,6 +294,7 @@
           nativeBuildInputs = [
             pkgs.bun2nix.hook
             biome
+            pkgs.git
           ];
 
           bunDeps = pkgs.bun2nix.fetchBunDeps {
@@ -247,19 +306,22 @@
 
           bunInstallFlags =
             if pkgs.stdenv.hostPlatform.isDarwin
-            then ["--linker=hoisted" "--backend=copyfile"]
+            then [
+              "--linker=hoisted"
+              "--backend=copyfile"
+            ]
             else ["--linker=hoisted"];
 
-          # Symlink node_modules into convex-backend so tsc can resolve
-          # "convex/server" etc. from the backend source files.
-          # Patch ultracite: its !!**/build exclusion matches the nix sandbox
-          # /build/ root on Linux, causing biome to ignore all files. Remove
-          # those patterns and create .git so VCS integration can find a root.
           buildPhase = ''
             cd crm-chat-web
+            cp ${rootWebEslintConfig} ../eslint.config.js
+            sed -i 's|\.\./\.\./eslint\.config\.js|../eslint.config.js|g' eslint.config.js
+            ln -s "$(pwd)/node_modules" ../node_modules
             ln -s "$(pwd)/node_modules" ../convex-backend/node_modules
+            sed -i 's|"../../biome.jsonc"|"../biome.jsonc"|g' biome.jsonc
             sed -i '/\/build/d' node_modules/ultracite/config/biome/core/biome.jsonc
-            mkdir -p .git
+            cd .. && git init && touch .gitignore
+            cd crm-chat-web
             node_modules/.bin/eslint .
             biome check
             node_modules/.bin/tsc -b
@@ -280,6 +342,7 @@
           nativeBuildInputs = [
             pkgs.bun2nix.hook
             biome
+            pkgs.git
           ];
 
           bunDeps = pkgs.bun2nix.fetchBunDeps {
@@ -291,15 +354,23 @@
 
           bunInstallFlags =
             if pkgs.stdenv.hostPlatform.isDarwin
-            then ["--linker=hoisted" "--backend=copyfile"]
+            then [
+              "--linker=hoisted"
+              "--backend=copyfile"
+            ]
             else ["--linker=hoisted"];
 
           buildPhase = ''
             cd convex-backend
+            cp ${rootEslintConfig} ../eslint.config.js
+            sed -i 's|\.\./\.\./eslint\.config\.js|../eslint.config.js|g' eslint.config.js
+            ln -s "$(pwd)/node_modules" ../node_modules
+            sed -i 's|"../../biome.jsonc"|"../biome.jsonc"|g' biome.jsonc
             sed -i '/\/build/d' node_modules/ultracite/config/biome/core/biome.jsonc
-            mkdir -p .git
+            cd .. && git init && touch .gitignore
+            cd convex-backend
             node_modules/.bin/eslint convex/
-            biome check
+            biome check convex
             node_modules/.bin/tsc -b
           '';
 
