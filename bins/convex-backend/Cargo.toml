@@ -18,8 +18,6 @@ convex-typegen = { git = "https://github.com/nickcomua/convex-typegen.git" }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 secrecy = "0.10"
-secretspec = { version = "0.8", default-features = false }
-secretspec-derive = "0.8"
 tempfile = "3"
 testcontainers = "0.27"
 tokio = { version = "1", features = ["full"] }

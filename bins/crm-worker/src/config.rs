@@ -3,8 +3,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::secrets;
-
 /// Telegram API credentials and worker configuration.
 #[derive(Clone)]
 pub struct WorkerConfig {
@@ -15,24 +13,16 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
-    /// Load configuration from secretspec profile `crm-worker`.
+    /// Load configuration from process environment variables.
     pub fn from_env() -> Result<Self> {
-        let spec = secrets::SecretSpec::builder()
-            .with_profile("crm_worker")
-            .load()?;
-
-        let api_id: i32 = spec
-            .secrets
-            .tg_id
+        let api_id: i32 = std::env::var("TG_ID")
             .expect("TG_ID is required")
             .parse()
             .expect("TG_ID must be a valid integer");
-        let api_hash = spec.secrets.tg_hash.expect("TG_HASH is required");
-        let convex_url = spec.secrets.convex_url.expect("CONVEX_URL is required");
-        let m2m_secret_key = spec
-            .secrets
-            .clerk_m2m_secret_key
-            .expect("CLERK_M2M_SECRET_KEY is required");
+        let api_hash = std::env::var("TG_HASH").expect("TG_HASH is required");
+        let convex_url = std::env::var("CONVEX_URL").expect("CONVEX_URL is required");
+        let m2m_secret_key =
+            std::env::var("CLERK_M2M_SECRET_KEY").expect("CLERK_M2M_SECRET_KEY is required");
 
         Ok(Self {
             api_id,
@@ -48,13 +38,7 @@ impl WorkerConfig {
 /// When `TG_SESSION_DIR` is set, uses that path directly.
 /// Otherwise uses the platform data directory (`~/Library/Application Support` on macOS).
 pub fn get_session_dir() -> PathBuf {
-    let dir = secrets::SecretSpec::builder()
-        .with_profile("crm_worker")
-        .load()
-        .ok()
-        .and_then(|spec| spec.secrets.tg_session_dir);
-
-    if let Some(dir) = dir {
+    if let Ok(dir) = std::env::var("TG_SESSION_DIR") {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).ok();
         return path;

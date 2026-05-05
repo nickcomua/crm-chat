@@ -24,8 +24,6 @@ reqwest = { version = "0.13.2", default-features = false, features = [
   "stream",
 ] }
 secrecy = "0.10"
-secretspec = { version = "0.8", default-features = false }
-secretspec-derive = "0.8"
 sentry = { version = "0.47", default-features = false, features = [
   "backtrace",
   "contexts",

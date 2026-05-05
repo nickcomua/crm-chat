@@ -14,7 +14,6 @@ mod job;
 mod jobs;
 mod ops;
 mod runner;
-pub mod secrets;
 pub mod session_manager;
 
 use std::sync::Arc;
@@ -105,12 +104,7 @@ fn init_tracing() {
 }
 
 fn init_sentry() -> Option<sentry::ClientInitGuard> {
-    let dsn = secrets::SecretSpec::builder()
-        .with_profile("crm_worker")
-        .load()
-        .ok()?
-        .secrets
-        .sentry_url?;
+    let dsn = std::env::var("SENTRY_URL").ok()?;
     Some(sentry::init((
         dsn,
         sentry::ClientOptions {

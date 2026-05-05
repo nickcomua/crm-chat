@@ -13,8 +13,6 @@ hack = { path = "../../libs/hack", version = "0.1" }
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
 secrecy = "0.10"
-secretspec = { version = "0.8", default-features = false }
-secretspec-derive = "0.8"
 serde = { version = "1", features = ["derive"] }
 serial_test = "3"
 tokio = { version = "1", features = ["full"] }
