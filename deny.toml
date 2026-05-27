@@ -19,8 +19,8 @@ allow = [
 
 [advisories]
 ignore = [
-  "RUSTSEC-2021-0065", # anymap unmaintained
-  "RUSTSEC-2024-0436", # paste unmaintained
-  "RUSTSEC-2024-0437", # protobuf vulnerability
-  "RUSTSEC-2023-0071", # rsa: Marvin Attack (no fix available, dev-dep only)
+  "RUSTSEC-2021-0065",  # anymap unmaintained
+  "RUSTSEC-2024-0436",  # paste unmaintained
+  "RUSTSEC-2024-0437",  # protobuf vulnerability
+  "RUSTSEC-2023-0071",  # rsa: Marvin Attack (no fix available, dev-dep only)
 ]

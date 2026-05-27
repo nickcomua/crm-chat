@@ -1,0 +1,3 @@
+[submodule "libs/convex-typegen"]
+	path = libs/convex-typegen
+	url = https://github.com/nickcomua/convex-typegen.git

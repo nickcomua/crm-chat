@@ -4,311 +4,314 @@
  */
 
 export interface paths {
-    "/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Health check endpoint
-         * @description Returns "OK" if the service is running. No authentication required.
-         */
-        get: operations["health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Search for documents in Elasticsearch with automatic user filtering
-         * @description Accepts standard Elasticsearch query DSL. The proxy automatically injects
-         *     a user_id filter to ensure users can only access their own documents.
-         */
-        post: operations["search"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/search/simple": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Simple search endpoint with convenient filtering options
-         * @description A simplified search API that handles common use cases:
-         *     - Full-text keyword search
-         *     - Semantic (vector) search using embeddings
-         *     - Filtering by chat_id or client_id
-         *
-         *     The user_id filter is automatically applied based on the JWT token.
-         */
-        post: operations["simple_search"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+	"/health": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * Health check endpoint
+		 * @description Returns "OK" if the service is running. No authentication required.
+		 */
+		get: operations["health"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/search": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/**
+		 * Search for documents in Elasticsearch with automatic user filtering
+		 * @description Accepts standard Elasticsearch query DSL. The proxy automatically injects
+		 *     a user_id filter to ensure users can only access their own documents.
+		 */
+		post: operations["search"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/search/simple": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/**
+		 * Simple search endpoint with convenient filtering options
+		 * @description A simplified search API that handles common use cases:
+		 *     - Full-text keyword search
+		 *     - Semantic (vector) search using embeddings
+		 *     - Filtering by chat_id or client_id
+		 *
+		 *     The user_id filter is automatically applied based on the JWT token.
+		 */
+		post: operations["simple_search"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: {
-        /** @description Error response */
-        ErrorResponse: {
-            /**
-             * @description Error message
-             * @example Unauthorized
-             */
-            error: string;
-        };
-        /** @description A single search hit */
-        SearchHit: {
-            /**
-             * @description Document ID
-             * @example abc123
-             */
-            _id: string;
-            /**
-             * @description Document index
-             * @example crm-chat-msgs
-             */
-            _index: string;
-            /**
-             * Format: double
-             * @description Relevance score
-             * @example 1.5
-             */
-            _score?: number | null;
-            /** @description Document source fields */
-            _source: Record<string, never>;
-        };
-        /** @description Search hits container */
-        SearchHits: {
-            /** @description Array of matching documents */
-            hits: components["schemas"]["SearchHit"][];
-            /**
-             * Format: double
-             * @description Maximum score across all hits
-             */
-            max_score?: number | null;
-            /** @description Total number of matching documents */
-            total: Record<string, never>;
-        };
-        /** @description Search request body - accepts standard Elasticsearch query DSL */
-        SearchRequest: {
-            /** @description Fields to return in the response */
-            _source?: unknown;
-            /**
-             * Format: int32
-             * @description Offset for pagination
-             * @example 0
-             */
-            from?: number | null;
-            /** @description KNN (semantic) search configuration */
-            knn?: Record<string, never>;
-            /** @description Standard Elasticsearch query object */
-            query?: Record<string, never>;
-            /**
-             * Format: int32
-             * @description Maximum number of results to return
-             * @example 10
-             */
-            size?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Elasticsearch search response */
-        SearchResponse: {
-            /** @description Shard statistics */
-            _shards: Record<string, never>;
-            /** @description Search results */
-            hits: components["schemas"]["SearchHits"];
-            /**
-             * @description Whether the search timed out
-             * @example false
-             */
-            timed_out: boolean;
-            /**
-             * Format: int64
-             * @description Time taken to execute the search in milliseconds
-             * @example 15
-             */
-            took: number;
-        };
-        /** @description Filter type for scoped searches */
-        SearchScope: "all" | {
-            /** @description Search within a specific chat */
-            chat: {
-                chat_id: string;
-            };
-        } | {
-            /** @description Search within a specific client's messages */
-            client: {
-                /** Format: int64 */
-                client_id: number;
-            };
-        };
-        /** @description Simplified search request for frontend use */
-        SimpleSearchRequest: {
-            /**
-             * Format: int32
-             * @description Offset for pagination
-             * @example 0
-             */
-            from?: number;
-            /**
-             * @description Text query to search for
-             * @example meeting tomorrow
-             */
-            q: string;
-            scope?: null | components["schemas"]["SearchScope"];
-            /**
-             * @description Use semantic (vector) search instead of keyword search
-             * @example false
-             */
-            semantic?: boolean;
-            /**
-             * Format: int32
-             * @description Maximum number of results to return
-             * @example 20
-             */
-            size?: number;
-        };
-    };
-    responses: never;
-    parameters: never;
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+	schemas: {
+		/** @description Error response */
+		ErrorResponse: {
+			/**
+			 * @description Error message
+			 * @example Unauthorized
+			 */
+			error: string;
+		};
+		/** @description A single search hit */
+		SearchHit: {
+			/**
+			 * @description Document ID
+			 * @example abc123
+			 */
+			_id: string;
+			/**
+			 * @description Document index
+			 * @example crm-chat-msgs
+			 */
+			_index: string;
+			/**
+			 * Format: double
+			 * @description Relevance score
+			 * @example 1.5
+			 */
+			_score?: number | null;
+			/** @description Document source fields */
+			_source: Record<string, never>;
+		};
+		/** @description Search hits container */
+		SearchHits: {
+			/** @description Array of matching documents */
+			hits: components["schemas"]["SearchHit"][];
+			/**
+			 * Format: double
+			 * @description Maximum score across all hits
+			 */
+			max_score?: number | null;
+			/** @description Total number of matching documents */
+			total: Record<string, never>;
+		};
+		/** @description Search request body - accepts standard Elasticsearch query DSL */
+		SearchRequest: {
+			/** @description Fields to return in the response */
+			_source?: unknown;
+			/**
+			 * Format: int32
+			 * @description Offset for pagination
+			 * @example 0
+			 */
+			from?: number | null;
+			/** @description KNN (semantic) search configuration */
+			knn?: Record<string, never>;
+			/** @description Standard Elasticsearch query object */
+			query?: Record<string, never>;
+			/**
+			 * Format: int32
+			 * @description Maximum number of results to return
+			 * @example 10
+			 */
+			size?: number | null;
+		} & {
+			[key: string]: unknown;
+		};
+		/** @description Elasticsearch search response */
+		SearchResponse: {
+			/** @description Shard statistics */
+			_shards: Record<string, never>;
+			/** @description Search results */
+			hits: components["schemas"]["SearchHits"];
+			/**
+			 * @description Whether the search timed out
+			 * @example false
+			 */
+			timed_out: boolean;
+			/**
+			 * Format: int64
+			 * @description Time taken to execute the search in milliseconds
+			 * @example 15
+			 */
+			took: number;
+		};
+		/** @description Filter type for scoped searches */
+		SearchScope:
+			| "all"
+			| {
+					/** @description Search within a specific chat */
+					chat: {
+						chat_id: string;
+					};
+			  }
+			| {
+					/** @description Search within a specific client's messages */
+					client: {
+						/** Format: int64 */
+						client_id: number;
+					};
+			  };
+		/** @description Simplified search request for frontend use */
+		SimpleSearchRequest: {
+			/**
+			 * Format: int32
+			 * @description Offset for pagination
+			 * @example 0
+			 */
+			from?: number;
+			/**
+			 * @description Text query to search for
+			 * @example meeting tomorrow
+			 */
+			q: string;
+			scope?: null | components["schemas"]["SearchScope"];
+			/**
+			 * @description Use semantic (vector) search instead of keyword search
+			 * @example false
+			 */
+			semantic?: boolean;
+			/**
+			 * Format: int32
+			 * @description Maximum number of results to return
+			 * @example 20
+			 */
+			size?: number;
+		};
+	};
+	responses: never;
+	parameters: never;
+	requestBodies: never;
+	headers: never;
+	pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    health: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Service is healthy */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /** @example OK */
-                    "text/plain": string;
-                };
-            };
-        };
-    };
-    search: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Elasticsearch query DSL. Both regular queries and KNN (semantic) searches are supported. */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Search results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
-                };
-            };
-            /** @description Unauthorized - missing or invalid JWT */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Elasticsearch error */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    simple_search: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Simple search parameters with optional scope filtering */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SimpleSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Search results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
-                };
-            };
-            /** @description Unauthorized - missing or invalid JWT */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Elasticsearch error */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
+	health: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Service is healthy */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					/** @example OK */
+					"text/plain": string;
+				};
+			};
+		};
+	};
+	search: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** @description Elasticsearch query DSL. Both regular queries and KNN (semantic) searches are supported. */
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["SearchRequest"];
+			};
+		};
+		responses: {
+			/** @description Search results */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SearchResponse"];
+				};
+			};
+			/** @description Unauthorized - missing or invalid JWT */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErrorResponse"];
+				};
+			};
+			/** @description Elasticsearch error */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErrorResponse"];
+				};
+			};
+		};
+	};
+	simple_search: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** @description Simple search parameters with optional scope filtering */
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["SimpleSearchRequest"];
+			};
+		};
+		responses: {
+			/** @description Search results */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SearchResponse"];
+				};
+			};
+			/** @description Unauthorized - missing or invalid JWT */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErrorResponse"];
+				};
+			};
+			/** @description Elasticsearch error */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErrorResponse"];
+				};
+			};
+		};
+	};
 }

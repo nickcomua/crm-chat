@@ -6,29 +6,31 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.100"
+async-trait = "0.1.89"
 convex = "0.10.2"
 convex-backend = { path = "../convex-backend" }
 dashmap = "6"
 dirs = "6"
 futures = "0.3"
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "b595a8c4fdfa5c3a8abcb5766c959ecfe30e9f6e", features = [
-    "impl-serde",
+  "impl-serde",
 ] }
+hack = { path = "../../libs/hack", version = "0.1" }
 messanger-interface = { path = "../../libs/messanger-interface" }
 messanger-telegram = { path = "../../libs/messanger-telegram" }
 reqwest = { version = "0.13.2", default-features = false, features = [
-    "rustls",
-    "json",
-    "stream",
+  "json",
+  "rustls",
+  "stream",
 ] }
-restate-sdk = "0.9.0"
+secrecy = "0.10"
 sentry = { version = "0.47", default-features = false, features = [
-    "backtrace",
-    "contexts",
-    "panic",
-    "tracing",
-    "reqwest",
-    "rustls",
+  "backtrace",
+  "contexts",
+  "panic",
+  "reqwest",
+  "rustls",
+  "tracing",
 ] }
 sentry-tracing = "0.47.0"
 serde = { version = "1", features = ["derive"] }
@@ -40,5 +42,3 @@ tokio-util = "0.7.18"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-hack = { version = "0.1", path = "../../libs/hack" }
-async-trait = "0.1.89"

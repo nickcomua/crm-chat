@@ -6,13 +6,13 @@ export const convex = new ConvexReactClient(env.VITE_CONVEX_URL);
 
 export { api } from "crm-chat-convex-backend/convex/_generated/api";
 export type {
-  Doc,
-  Id,
+	Doc,
+	Id,
 } from "crm-chat-convex-backend/convex/_generated/dataModel";
 
 /** Handle Result<T, E> errors from mutations. Usage: `myMutation(args).then(onResultError)` */
 export function onResultError(result: unknown): void {
-  if (result && typeof result === "object" && "Err" in result) {
-    console.error("[mutation error]", (result as { Err: unknown }).Err);
-  }
+	if (result && typeof result === "object" && "Err" in result) {
+		console.error("[mutation error]", (result as { Err: unknown }).Err);
+	}
 }

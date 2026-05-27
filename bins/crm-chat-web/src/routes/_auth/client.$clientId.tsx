@@ -3,17 +3,17 @@ import { ClientSettings } from "@/components/client-settings";
 import type { Id } from "@/lib/convex";
 
 export const Route = createFileRoute("/_auth/client/$clientId")({
-  component: ClientSettingsPage,
+	component: ClientSettingsPage,
 });
 
 function ClientSettingsPage(): React.ReactNode {
-  const { clientId } = Route.useParams();
+	const { clientId } = Route.useParams();
 
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="container px-4 py-8">
-        <ClientSettings clientId={clientId as Id<"clients">} />
-      </div>
-    </div>
-  );
+	return (
+		<div className="h-full overflow-y-auto">
+			<div className="container px-4 py-8">
+				<ClientSettings clientId={clientId as Id<"clients">} />
+			</div>
+		</div>
+	);
 }

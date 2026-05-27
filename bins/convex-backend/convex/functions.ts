@@ -20,14 +20,14 @@
 
 import type { UserIdentity } from "convex/server";
 import {
-  customMutation,
-  customQuery,
+	customMutation,
+	customQuery,
 } from "convex-helpers/server/customFunctions";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
-  internalMutation as rawInternalMutation,
-  mutation as rawMutation,
-  query as rawQuery,
+	internalMutation as rawInternalMutation,
+	mutation as rawMutation,
+	query as rawQuery,
 } from "./_generated/server";
 
 // =============================================================================
@@ -36,54 +36,54 @@ import {
 
 /** Extract and validate the caller's identity. Throws if not authenticated. */
 async function requireAuth(ctx: QueryCtx | MutationCtx): Promise<UserIdentity> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("Authentication required");
-  }
-  return identity;
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) {
+		throw new Error("Authentication required");
+	}
+	return identity;
 }
 
 /** Check if a caller is a worker (Clerk M2M JWT with "mch_" subject prefix). */
 function isWorkerCaller(caller: UserIdentity): boolean {
-  // Convex tokenIdentifier = "{issuer}|{subject}"
-  // Clerk M2M tokens have subject "mch_*", human tokens have "user_*"
-  return caller.tokenIdentifier.includes("|mch_");
+	// Convex tokenIdentifier = "{issuer}|{subject}"
+	// Clerk M2M tokens have subject "mch_*", human tokens have "user_*"
+	return caller.tokenIdentifier.includes("|mch_");
 }
 
 /** Require the caller to be a human (Clerk-authenticated). */
 async function requireHuman(
-  ctx: QueryCtx | MutationCtx
+	ctx: QueryCtx | MutationCtx,
 ): Promise<UserIdentity> {
-  const caller = await requireAuth(ctx);
-  if (isWorkerCaller(caller)) {
-    throw new Error("Unauthorized: this action is for human users only");
-  }
-  return caller;
+	const caller = await requireAuth(ctx);
+	if (isWorkerCaller(caller)) {
+		throw new Error("Unauthorized: this action is for human users only");
+	}
+	return caller;
 }
 
 /** Require the caller to be a worker (custom JWT). */
 async function requireWorker(
-  ctx: QueryCtx | MutationCtx
+	ctx: QueryCtx | MutationCtx,
 ): Promise<UserIdentity> {
-  const caller = await requireAuth(ctx);
-  if (!isWorkerCaller(caller)) {
-    throw new Error("Unauthorized: only workers can perform this action");
-  }
-  return caller;
+	const caller = await requireAuth(ctx);
+	if (!isWorkerCaller(caller)) {
+		throw new Error("Unauthorized: only workers can perform this action");
+	}
+	return caller;
 }
 
 /** Insert an error notification for a user. */
 export async function sendError(
-  ctx: MutationCtx,
-  userId: string,
-  message: string
+	ctx: MutationCtx,
+	userId: string,
+	message: string,
 ): Promise<void> {
-  await ctx.db.insert("notifications", {
-    userId,
-    severity: "Error" as const,
-    message,
-    dismissed: false,
-  });
+	await ctx.db.insert("notifications", {
+		userId,
+		severity: "Error" as const,
+		message,
+		dismissed: false,
+	});
 }
 
 // =============================================================================
@@ -102,20 +102,20 @@ export const internalMutation = rawInternalMutation;
 
 /** Mutation requiring a human caller. Injects `ctx.caller`. */
 export const humanMutation = customMutation(mutation, {
-  args: {},
-  input: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    return { ctx: { caller }, args: {} };
-  },
+	args: {},
+	input: async (ctx) => {
+		const caller = await requireHuman(ctx);
+		return { ctx: { caller }, args: {} };
+	},
 });
 
 /** Mutation requiring a worker caller. Injects `ctx.caller`. */
 export const workerMutation = customMutation(mutation, {
-  args: {},
-  input: async (ctx) => {
-    const caller = await requireWorker(ctx);
-    return { ctx: { caller }, args: {} };
-  },
+	args: {},
+	input: async (ctx) => {
+		const caller = await requireWorker(ctx);
+		return { ctx: { caller }, args: {} };
+	},
 });
 
 // =============================================================================
@@ -124,18 +124,18 @@ export const workerMutation = customMutation(mutation, {
 
 /** Query requiring a human caller. Injects `ctx.caller`. */
 export const humanQuery = customQuery(rawQuery, {
-  args: {},
-  input: async (ctx) => {
-    const caller = await requireHuman(ctx);
-    return { ctx: { caller }, args: {} };
-  },
+	args: {},
+	input: async (ctx) => {
+		const caller = await requireHuman(ctx);
+		return { ctx: { caller }, args: {} };
+	},
 });
 
 /** Query requiring a worker caller. Injects `ctx.caller`. */
 export const workerQuery = customQuery(rawQuery, {
-  args: {},
-  input: async (ctx) => {
-    const caller = await requireWorker(ctx);
-    return { ctx: { caller }, args: {} };
-  },
+	args: {},
+	input: async (ctx) => {
+		const caller = await requireWorker(ctx);
+		return { ctx: { caller }, args: {} };
+	},
 });

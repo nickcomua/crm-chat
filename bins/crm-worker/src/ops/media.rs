@@ -17,6 +17,29 @@ use crate::error::WorkerError;
 use crate::ops::convex::{self as cx};
 use crate::ops::telegram::default_mime_for_kind;
 
+/// Abort a tokio task when this guard is dropped.
+///
+/// Prevents spawned progress reporters (and other loops) from becoming
+/// "orphans" that keep running after their parent future is cancelled.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Sanitize a MIME type string before using it as an HTTP Content-Type header.
+/// Falls back to `application/octet-stream` if the value is empty or contains
+/// invalid characters (newlines, carriage returns).
+pub fn sanitize_content_type(ct: &str) -> &str {
+    if ct.is_empty() || ct.contains('\r') || ct.contains('\n') {
+        "application/octet-stream"
+    } else {
+        ct
+    }
+}
+
 /// Download and upload media for a single message (used in real-time updates).
 pub async fn download_and_upload_media(
     convex: &ConvexApiClient,
@@ -30,10 +53,12 @@ pub async fn download_and_upload_media(
         WorkerError::MutationFailed(format!("Invalid message ID: {msg_external_id}"))
     })?;
 
-    let content_type = summary
-        .mime_type
-        .as_deref()
-        .unwrap_or_else(|| default_mime_for_kind(summary.kind));
+    let content_type = sanitize_content_type(
+        summary
+            .mime_type
+            .as_deref()
+            .unwrap_or_else(|| default_mime_for_kind(summary.kind)),
+    );
 
     download_and_upload(
         convex,
@@ -104,7 +129,7 @@ pub async fn download_and_upload(
     let progress_convex = convex.clone();
     let progress_ext_id = external_id.to_string();
     let progress_bytes = bytes_counter.clone();
-    let progress_handle = tokio::spawn(async move {
+    let _progress_handle = AbortOnDrop(tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
         interval.tick().await;
         loop {
@@ -118,7 +143,7 @@ pub async fn download_and_upload(
             )
             .await;
         }
-    });
+    }));
 
     // Step 3: Upload to Convex storage
     let http_client = reqwest::Client::new();
@@ -129,7 +154,6 @@ pub async fn download_and_upload(
         .send()
         .await
         .map_err(|e| {
-            progress_handle.abort();
             WorkerError::MutationFailed(format!("Failed to upload to Convex storage: {e}"))
         })?;
 
@@ -137,16 +161,10 @@ pub async fn download_and_upload(
     let total_bytes = media_stream
         .download_handle
         .await
+        .map_err(|e| WorkerError::MutationFailed(format!("Download task panicked: {e}")))?
         .map_err(|e| {
-            progress_handle.abort();
-            WorkerError::MutationFailed(format!("Download task panicked: {e}"))
-        })?
-        .map_err(|e| {
-            progress_handle.abort();
             WorkerError::MutationFailed(format!("Failed to download from Telegram: {e}"))
         })?;
-
-    progress_handle.abort();
 
     if !response.status().is_success() {
         let status = response.status();

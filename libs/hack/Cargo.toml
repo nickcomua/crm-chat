@@ -7,9 +7,9 @@ name = "hack"
 version = "0.1.0"
 edition = "2021"
 description = "workspace-hack package, managed by hakari"
+license = "MIT"
 # You can choose to publish this crate: see https://docs.rs/cargo-hakari/latest/cargo_hakari/publishing.
 publish = false
-license = "MIT"
 
 # The parts of the file between the BEGIN HAKARI SECTION and END HAKARI SECTION comments
 # are managed by hakari.
@@ -17,25 +17,18 @@ license = "MIT"
 ### BEGIN HAKARI SECTION
 [dependencies]
 deranged = { version = "0.5", features = ["powerfmt", "serde"] }
-digest = { version = "0.10", features = ["mac", "oid", "std"] }
+digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
 flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-sink = { version = "0.3" }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
-generic-array = { version = "0.14", default-features = false, features = ["more_lengths", "zeroize"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
-getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
-hashbrown = { version = "0.16" }
-hmac = { version = "0.12", default-features = false, features = ["reset"] }
-hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "server-auto", "server-graceful", "service"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 num-bigint = { version = "0.4" }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
-num-traits = { version = "0.2", features = ["i128", "libm"] }
+num-traits = { version = "0.2", features = ["i128"] }
 percent-encoding = { version = "2" }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
@@ -44,122 +37,122 @@ reqwest = { version = "0.13", features = ["blocking", "json", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
-serde = { version = "1", features = ["alloc", "derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_core = { version = "1", features = ["alloc"] }
-serde_json = { version = "1", features = ["alloc", "float_roundtrip", "preserve_order", "raw_value"] }
-sha2 = { version = "0.10", features = ["oid"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 simd-adler32 = { version = "0.3", default-features = false, features = ["std"] }
+slab = { version = "0.4" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
-subtle = { version = "2", default-features = false, features = ["i128"] }
 time = { version = "0.3", features = ["serde-well-known"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["io-util", "net", "sync"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
-tracing = { version = "0.1" }
 tracing-core = { version = "0.1" }
 typenum = { version = "1", default-features = false, features = ["const-generics"] }
 url = { version = "2", features = ["serde"] }
-zeroize = { version = "1", features = ["zeroize_derive"] }
+zeroize = { version = "1" }
 
 [build-dependencies]
 cc = { version = "1", default-features = false, features = ["parallel"] }
-digest = { version = "0.10", features = ["mac", "oid", "std"] }
+digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
 flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-sink = { version = "0.3" }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
-generic-array = { version = "0.14", default-features = false, features = ["more_lengths", "zeroize"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
-hashbrown = { version = "0.16" }
-hmac = { version = "0.12", default-features = false, features = ["reset"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 percent-encoding = { version = "2" }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
 reqwest = { version = "0.13", features = ["blocking", "json", "stream"] }
-serde = { version = "1", features = ["alloc", "derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_core = { version = "1", features = ["alloc"] }
-serde_json = { version = "1", features = ["alloc", "float_roundtrip", "preserve_order", "raw_value"] }
-sha2 = { version = "0.10", features = ["oid"] }
+serde_derive = { version = "1" }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 simd-adler32 = { version = "0.3", default-features = false, features = ["std"] }
+slab = { version = "0.4" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
-subtle = { version = "2", default-features = false, features = ["i128"] }
 syn = { version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["io-util", "net", "sync"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
-tracing = { version = "0.1" }
 tracing-core = { version = "0.1" }
 typenum = { version = "1", default-features = false, features = ["const-generics"] }
 url = { version = "2", features = ["serde"] }
-zeroize = { version = "1", features = ["zeroize_derive"] }
+zeroize = { version = "1" }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
-hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 rustix = { version = "1", features = ["fs"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 deranged = { version = "0.5", features = ["powerfmt", "serde"] }
-getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "server-graceful", "service"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 rustix = { version = "1", features = ["fs"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs", "logging", "ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 time = { version = "0.3", features = ["serde-well-known"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 
 [target.aarch64-apple-darwin.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
-hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 
 [target.aarch64-apple-darwin.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 deranged = { version = "0.5", features = ["powerfmt", "serde"] }
-getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "server-graceful", "service"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs", "logging", "ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 time = { version = "0.3", features = ["serde-well-known"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 
 [target.x86_64-pc-windows-msvc.dependencies]
-hyper-util = { version = "0.1", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 os_info = { version = "3" }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 winapi = { version = "0.3", default-features = false, features = ["winerror", "winnls"] }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 deranged = { version = "0.5", features = ["powerfmt", "serde"] }
-getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "server-graceful", "service"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "client-proxy-system", "server-auto", "service"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "aws_lc_rs", "logging", "ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 time = { version = "0.3", features = ["serde-well-known"] }
 tower = { version = "0.5", default-features = false, features = ["balance", "buffer", "limit", "load-shed", "retry", "timeout"] }
+tracing = { version = "0.1" }
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 ### END HAKARI SECTION

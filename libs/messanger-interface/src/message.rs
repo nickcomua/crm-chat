@@ -26,4 +26,14 @@ pub struct MessageSummary {
     pub media_summary: Option<MediaSummary>,
     /// Platform-specific ID of the message this is replying to (if any).
     pub reply_to_message_id: Option<i32>,
+    /// Quoted fragment of the replied-to message. Populated only when the
+    /// sender used Telegram's "Quote this part" feature; `None` for plain
+    /// full-message replies (consumers should look up the parent by
+    /// `reply_to_message_id` if they need a preview).
+    pub reply_to_text: Option<String>,
+    /// Self-destruct timer period for this message (in seconds), if any.
+    pub ttl_period: Option<u32>,
+    /// TTL seconds for the media in this message (for view-once/self-destructing
+    /// photos/videos), if any.
+    pub ttl_seconds: Option<u32>,
 }

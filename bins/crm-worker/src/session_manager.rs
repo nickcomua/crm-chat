@@ -55,13 +55,20 @@ pub trait SessionManager: Send + Sync {
         telegram_id: &str,
     ) -> Result<Arc<TelegramClient>, WorkerError>;
 
+    /// Check whether a canonical session file exists on disk for a given client.
+    fn has_canonical_session(&self, owner_id: &str, telegram_id: &str) -> bool;
+
     /// Remove a specific temp session from cache.
     /// Scoped by `(owner_id, task_id)` — each QR auth flow only removes its own.
     fn remove_temp(&self, owner_id: &str, task_id: &str);
 
-    /// Discover all canonical sessions on disk. Returns `(owner_id, path)` pairs.
+    /// Discover all canonical sessions on disk. Returns `(owner_id, telegram_id)` pairs
+    /// where `telegram_id` is in the format `"telegram:+1234567890"`.
     /// Only finds `telegram_*.session`, ignores `temp_*` orphans.
-    fn discover_sessions(&self) -> Vec<(String, PathBuf)>;
+    fn discover_sessions(&self) -> Vec<(String, String)>;
+
+    /// Remove a canonical session file from disk and evict it from the client cache.
+    fn remove_session_file(&self, owner_id: &str, telegram_id: &str);
 
     /// Delete orphaned `temp_*.session` files from disk.
     /// Only called at startup before any auth flows begin.
@@ -133,6 +140,11 @@ impl TelegramSessionManager {
 
     fn session_path(owner_id: &str, stem: &str) -> PathBuf {
         Self::owner_dir(owner_id).join(format!("{stem}.session"))
+    }
+
+    fn stem_from_telegram_id(telegram_id: &str) -> String {
+        let suffix = telegram_id.strip_prefix("telegram:").unwrap_or(telegram_id);
+        format!("telegram_{suffix}")
     }
 
     // ── Internal client builder ────────────────────────────────
@@ -223,12 +235,19 @@ impl SessionManager for TelegramSessionManager {
             info!(from = ?temp_path, to = ?canonical_path, "Promoted QR session to canonical");
         }
 
-        // Remove temp cache entry
+        // Remove both temp and canonical cache entries so the next
+        // get_for_telegram_id builds a fresh client from the new session file.
         let temp_key = CacheKey {
             owner_id: owner_id.to_string(),
             session_stem: temp_stem,
         };
         self.clients.remove(&temp_key);
+
+        let canonical_key = CacheKey {
+            owner_id: owner_id.to_string(),
+            session_stem: canonical_stem,
+        };
+        self.clients.remove(&canonical_key);
     }
 
     #[instrument(skip(self), fields(owner_id = %owner_id, telegram_id = %telegram_id))]
@@ -237,15 +256,18 @@ impl SessionManager for TelegramSessionManager {
         owner_id: &str,
         telegram_id: &str,
     ) -> Result<Arc<TelegramClient>, WorkerError> {
-        // Parse "telegram:+1234567890" or "telegram:123456789" → stem "telegram_+1234567890"
-        let suffix = telegram_id.strip_prefix("telegram:").unwrap_or(telegram_id);
-        let stem = format!("telegram_{suffix}");
+        let stem = Self::stem_from_telegram_id(telegram_id);
         let key = CacheKey {
             owner_id: owner_id.to_string(),
             session_stem: stem.clone(),
         };
         self.get_or_create_inner(key, Self::session_path(owner_id, &stem))
             .await
+    }
+
+    fn has_canonical_session(&self, owner_id: &str, telegram_id: &str) -> bool {
+        let stem = Self::stem_from_telegram_id(telegram_id);
+        Self::session_path(owner_id, &stem).exists()
     }
 
     fn remove_temp(&self, owner_id: &str, task_id: &str) {
@@ -256,7 +278,7 @@ impl SessionManager for TelegramSessionManager {
         self.clients.remove(&key);
     }
 
-    fn discover_sessions(&self) -> Vec<(String, PathBuf)> {
+    fn discover_sessions(&self) -> Vec<(String, String)> {
         let session_dir = get_session_dir();
         let mut results = Vec::new();
 
@@ -293,12 +315,26 @@ impl SessionManager for TelegramSessionManager {
                 if session_path.extension().is_some_and(|ext| ext == "session")
                     && file_name.starts_with("telegram_")
                 {
-                    results.push((owner_id.clone(), session_path));
+                    // Convert stem "telegram_+380973781241" → "telegram:+380973781241"
+                    let suffix = file_name.strip_prefix("telegram_").unwrap_or("");
+                    let telegram_id = format!("telegram:{suffix}");
+                    results.push((owner_id.clone(), telegram_id));
                 }
             }
         }
 
         results
+    }
+
+    fn remove_session_file(&self, owner_id: &str, telegram_id: &str) {
+        let stem = Self::stem_from_telegram_id(telegram_id);
+        let key = CacheKey {
+            owner_id: owner_id.to_string(),
+            session_stem: stem.clone(),
+        };
+        self.clients.remove(&key);
+        let path = Self::session_path(owner_id, &stem);
+        std::fs::remove_file(&path).ok();
     }
 
     fn cleanup_temp_sessions(&self) {

@@ -15,4 +15,6 @@ pub struct ChatSummary {
     pub chat_type: Option<String>,
     /// Whether this chat is pinned in the messenger platform.
     pub is_pinned: bool,
+    /// Profile-photo identifier from the platform (e.g. Telegram photo_id).
+    pub photo_id: Option<String>,
 }

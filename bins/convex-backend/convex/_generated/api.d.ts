@@ -12,8 +12,11 @@ import type * as env from "../env.js";
 import type * as functions from "../functions.js";
 import type * as helpers_result from "../helpers/result.js";
 import type * as helpers_validators from "../helpers/validators.js";
+import type * as model_chatContactLinks from "../model/chatContactLinks.js";
 import type * as model_chats from "../model/chats.js";
 import type * as model_clients from "../model/clients.js";
+import type * as model_contactPins from "../model/contactPins.js";
+import type * as model_contacts from "../model/contacts.js";
 import type * as model_media from "../model/media.js";
 import type * as model_messages from "../model/messages.js";
 import type * as model_notifications from "../model/notifications.js";
@@ -33,8 +36,11 @@ declare const fullApi: ApiFromModules<{
   functions: typeof functions;
   "helpers/result": typeof helpers_result;
   "helpers/validators": typeof helpers_validators;
+  "model/chatContactLinks": typeof model_chatContactLinks;
   "model/chats": typeof model_chats;
   "model/clients": typeof model_clients;
+  "model/contactPins": typeof model_contactPins;
+  "model/contacts": typeof model_contacts;
   "model/media": typeof model_media;
   "model/messages": typeof model_messages;
   "model/notifications": typeof model_notifications;
@@ -71,66 +77,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  presence: {
-    public: {
-      disconnect: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionToken: string },
-        null
-      >;
-      heartbeat: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          interval?: number;
-          roomId: string;
-          sessionId: string;
-          userId: string;
-        },
-        { roomToken: string; sessionToken: string }
-      >;
-      list: FunctionReference<
-        "query",
-        "internal",
-        { limit?: number; roomToken: string },
-        Array<{
-          data?: any;
-          lastDisconnected: number;
-          online: boolean;
-          userId: string;
-        }>
-      >;
-      listRoom: FunctionReference<
-        "query",
-        "internal",
-        { limit?: number; onlineOnly?: boolean; roomId: string },
-        Array<{ lastDisconnected: number; online: boolean; userId: string }>
-      >;
-      listUser: FunctionReference<
-        "query",
-        "internal",
-        { limit?: number; onlineOnly?: boolean; userId: string },
-        Array<{ lastDisconnected: number; online: boolean; roomId: string }>
-      >;
-      removeRoom: FunctionReference<
-        "mutation",
-        "internal",
-        { roomId: string },
-        null
-      >;
-      removeRoomUser: FunctionReference<
-        "mutation",
-        "internal",
-        { roomId: string; userId: string },
-        null
-      >;
-      updateRoomUser: FunctionReference<
-        "mutation",
-        "internal",
-        { data?: any; roomId: string; userId: string },
-        null
-      >;
-    };
-  };
+  presence: import("@convex-dev/presence/_generated/component.js").ComponentApi<"presence">;
 };

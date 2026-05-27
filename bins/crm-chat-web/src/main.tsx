@@ -1,8 +1,8 @@
 import { ClerkProvider } from "@clerk/clerk-react";
 import {
-  createHashHistory,
-  createRouter,
-  RouterProvider,
+	createHashHistory,
+	createRouter,
+	RouterProvider,
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -19,32 +19,32 @@ const hashHistory = createHashHistory();
 
 // Create the router instance
 const router = createRouter({
-  routeTree,
-  history: hashHistory,
-  defaultPreload: "intent",
+	routeTree,
+	history: hashHistory,
+	defaultPreload: "intent",
 });
 
 // Register the router for type safety
 declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
+	interface Register {
+		router: typeof router;
+	}
 }
 
 const rootElement = document.getElementById("root");
 if (rootElement && !rootElement.innerHTML) {
-  const clerkPubKey = env.VITE_CLERK_PUBLISHABLE_KEY;
-  if (!clerkPubKey) {
-    console.error("Missing VITE_CLERK_PUBLISHABLE_KEY");
-  }
-  const root = createRoot(rootElement);
-  root.render(
-    <StrictMode>
-      <ClerkProvider publishableKey={clerkPubKey ?? ""}>
-        <ErrorBoundary fallback={<p>Something went wrong</p>}>
-          <RouterProvider router={router} />
-        </ErrorBoundary>
-      </ClerkProvider>
-    </StrictMode>
-  );
+	const clerkPubKey = env.VITE_CLERK_PUBLISHABLE_KEY;
+	if (!clerkPubKey) {
+		console.error("Missing VITE_CLERK_PUBLISHABLE_KEY");
+	}
+	const root = createRoot(rootElement);
+	root.render(
+		<StrictMode>
+			<ClerkProvider publishableKey={clerkPubKey ?? ""}>
+				<ErrorBoundary fallback={<p>Something went wrong</p>}>
+					<RouterProvider router={router} />
+				</ErrorBoundary>
+			</ClerkProvider>
+		</StrictMode>,
+	);
 }

@@ -15,7 +15,6 @@ use convex_backend::{
     ChatsScanEnabledChatIdsArgs, MediaWorkerMarkMediaFailedArgs, MediaWorkerStartMediaDownloadArgs,
     MediaWorkerUpdateMediaProgressArgs,
 };
-use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::error::WorkerError;
@@ -131,17 +130,6 @@ pub async fn mark_media_failed(client: &ConvexApiClient, telegram_file_id: &str,
     {
         warn!(error = %e, "Failed to mark media as failed");
     }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Shared request type
-// ────────────────────────────────────────────────────────────────────────────
-
-/// Request payload for domain-driven handlers. Contains only the entity ID.
-/// Each handler queries fresh domain state from Convex using this ID.
-#[derive(Serialize, Deserialize)]
-pub struct EntityRequest {
-    pub entity_id: String,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

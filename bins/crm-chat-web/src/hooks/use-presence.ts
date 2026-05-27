@@ -17,10 +17,10 @@ const ROOM = "global";
  * Mount this once inside the authenticated Convex provider tree.
  */
 export function useAppPresence(): void {
-  const { userId } = useAuth();
+	const { userId } = useAuth();
 
-  // The library hook handles everything: heartbeat, beforeunload, visibility.
-  // We pass api.model.presence which exposes heartbeat/disconnect/list wrappers
-  // matching the PresenceAPI shape the hook expects.
-  usePresence(api.model.presence, ROOM, userId ?? "");
+	// The library hook handles everything: heartbeat, beforeunload, visibility.
+	// We pass api.model.presence which exposes heartbeat/disconnect/list wrappers
+	// matching the PresenceAPI shape the hook expects.
+	usePresence(api.model.presence, ROOM, userId ?? "");
 }

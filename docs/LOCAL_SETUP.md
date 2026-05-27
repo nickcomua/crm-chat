@@ -5,7 +5,7 @@
 | Tool | Purpose |
 |------|---------|
 | **Nix** (recommended) | Reproducible dev environment with all tools |
-| **Docker + Compose** | Self-hosted Convex backend, Restate, dashboard |
+| **Docker + Compose** | Self-hosted Convex backend, dashboard |
 | **Clerk account** | User authentication (publishable key + secret) |
 | **Telegram API credentials** | `TG_ID` + `TG_HASH` from [my.telegram.org](https://my.telegram.org) |
 
@@ -63,13 +63,12 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=<from step 3>
 docker compose up -d
 ```
 
-This starts three containers:
+This starts two containers:
 
 | Service | Port | Health check |
 |---------|------|-------------|
 | **Convex backend** | 3210 (API), 3211 (site proxy) | `curl http://localhost:3210/version` |
 | **Convex dashboard** | 6791 | Depends on backend |
-| **Restate** (workflow engine) | 8080 (ingress), 9070 (admin) | — |
 
 Wait ~30s, then get the admin key:
 
@@ -143,10 +142,9 @@ cargo run -p crm-worker
 ```
 
 The worker:
-1. Registers itself with Restate (workflow orchestration)
-2. Connects to Convex and subscribes to auth queries
-3. Spawns Telegram client connections when users authenticate
-4. Runs chat sync, media download, profile photo sync services
+1. Connects to Convex and subscribes to each job's `pendingWork` query
+2. Spawns Telegram client connections when users authenticate
+3. Runs chat sync, media download, profile photo sync, and real-time update jobs as entities appear in their pending sets
 
 ---
 
@@ -156,8 +154,6 @@ The worker:
 |---------|------|-----|
 | Convex API | 3210 | http://localhost:3210 |
 | Convex Dashboard | 6791 | http://localhost:6791 |
-| Restate Ingress | 8080 | http://localhost:8080 |
-| Restate Admin | 9070 | http://localhost:9070 |
 | Frontend (Vite) | 5173 | http://localhost:5173 |
 
 ---
@@ -167,9 +163,6 @@ The worker:
 ```bash
 # Convex is up?
 curl -s http://localhost:3210/version
-
-# Restate is up?
-curl -s http://localhost:8080/
 
 # Frontend loads?
 open http://localhost:5173

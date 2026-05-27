@@ -12,7 +12,6 @@ graph TB
     subgraph Docker["Docker Compose"]
         Convex[Convex Backend<br/>port 3210/3211]
         Dashboard[Convex Dashboard<br/>port 6791]
-        Restate[Restate<br/>port 8080/9070]
         Worker[crm-worker<br/>Rust]
         Web[Web Server]
     end
@@ -29,10 +28,9 @@ graph TB
     ClerkUI -->|JWT| ClerkAPI
     React --> ClerkUI
 
-    Worker -->|queries + mutations| Convex
+    Worker -->|subscriptions + mutations| Convex
     Worker -->|M2M JWT| ClerkAPI
     Worker -->|connects via grammers| Telegram
-    Worker <-->|durable workflows| Restate
 
     Dashboard -->|admin API| Convex
     Web -->|serves| React
@@ -68,18 +66,16 @@ Self-hosted Convex instance serving as the database, function runtime, and file 
 
 Rust service that bridges Telegram and Convex.
 
-- Connects to Convex via the Rust SDK and subscribes to queries
+- Connects to Convex via the Rust SDK and runs one `Job` per kind of work
+- Each job subscribes to a Convex query that yields the current set of entity
+  IDs needing work (e.g. clients with `phase = NeedsSync`, chats with
+  `scanPhase = Queued`, media with `status = Pending`) and spawns a per-entity
+  tokio task; when the entity leaves the set the task is aborted
 - Uses **grammers** (Rust Telegram client library) for Telegram connections
-- Registers with **Restate** for durable workflow execution
-- Services: `DialogSync`, `ChatScanner`, `MediaDownloader`, `UpdateListener`, `ProfilePhotoSync`, `PhoneAuthWorkflow`, `QrAuthWorkflow`
-
-### Restate
-
-Durable workflow orchestration engine. The worker registers its services with Restate, which handles:
-
-- Reliable invocation with automatic retries
-- Workflow state persistence across restarts
-- Concurrency control (e.g., `MAX_MEDIA_WORKFLOWS`)
+- Jobs: `DialogSync`, `ChatScanner`, `MediaDownloader`, `UpdateListener`,
+  `ProfilePhotoSync`, `PhoneAuth`, `QrAuth`
+- Convex *is* the queue and the source of truth — there is no separate
+  durable-workflow runtime, no ingress, no HTTP endpoint
 
 ### Shared Libraries
 
@@ -98,17 +94,13 @@ Durable workflow orchestration engine. The worker registers its services with Re
 sequenceDiagram
     participant TG as Telegram
     participant W as Worker
-    participant R as Restate
     participant C as Convex
     participant UI as Browser
 
-    Note over W,C: Worker subscribes to client phases
+    Note over W,C: DialogSync job subscribed to clients.pendingWork
 
-    W->>C: Subscribe to clients.pendingWork
-    C-->>W: Client with phase=NeedsSync
-
-    W->>R: Register DialogSync workflow
-    R->>W: Invoke DialogSync.sync(clientId)
+    C-->>W: Client with phase=NeedsSync appears in the set
+    W->>W: Spawn DialogSync task for clientId
 
     W->>C: workerStartSync(clientId)
     W->>TG: Fetch dialog list
@@ -119,12 +111,10 @@ sequenceDiagram
     end
 
     W->>C: workerCompleteSync(clientId)
-    Note over C: phase → Listening
+    Note over C: phase → Listening (DialogSync set no longer contains this client; task ends)
 
-    C-->>W: Subscription fires: phase=Listening
-    W->>R: Register UpdateListener
-    R->>W: Invoke UpdateListener.listen(clientId)
-
+    C-->>W: UpdateListener set now contains this client
+    W->>W: Spawn UpdateListener task for clientId
     W->>TG: Subscribe to updates
     TG-->>W: New message
 
@@ -139,17 +129,13 @@ sequenceDiagram
     participant UI as Browser
     participant C as Convex
     participant W as Worker
-    participant R as Restate
     participant TG as Telegram
 
     UI->>C: updateScanEnabled(chatId, true)
     Note over C: scanPhase → Queued
 
-    W->>C: Subscribe to chats.pendingWork
-    C-->>W: Chat with scanPhase=Queued
-
-    W->>R: Register ChatScanner workflow
-    R->>W: Invoke ChatScanner.scan(chatId)
+    C-->>W: ChatScanner set contains chatId
+    W->>W: Spawn ChatScanner task for chatId
 
     W->>C: workerStartScan(chatId)
     Note over C: scanPhase → ScanningMessages
@@ -261,16 +247,12 @@ sequenceDiagram
 sequenceDiagram
     participant C as Convex
     participant W as Worker
-    participant R as Restate
     participant TG as Telegram
 
     Note over C: Media record created with status=Pending<br/>(by message upsert or chat scan)
 
-    W->>C: Subscribe to media.pendingWork
-    C-->>W: Media with status=Pending
-
-    W->>R: Register MediaDownloader workflow
-    R->>W: Invoke MediaDownloader.download(mediaId)
+    C-->>W: MediaDownloader set contains mediaId<br/>(capped by MAX_MEDIA_WORKFLOWS)
+    W->>W: Spawn MediaDownloader task for mediaId
 
     W->>C: workerStartMediaDownload(telegramFileId)
     Note over C: status → Downloading
@@ -410,27 +392,28 @@ erDiagram
 
 CRM Chat uses a **domain-driven dispatch** pattern instead of explicit task queues. The pattern works as follows:
 
-1. **State change**: A mutation updates a record's phase/status/step (e.g., `client.phase = "NeedsSync"`)
-2. **Reconciler query**: The worker subscribes to `pendingWork` queries that scan for records in actionable states
-3. **Workflow dispatch**: When the subscription fires, the worker registers a Restate workflow for the work item
-4. **Completion**: The workflow updates the record's state to its next phase, which may trigger further work
+1. **State change**: A mutation updates a record's phase/status/step (e.g., `client.phase = "NeedsSync"`).
+2. **pendingWork query**: Each worker `Job` subscribes to a `pendingWork` query that returns the current set of entity IDs in actionable states.
+3. **Per-entity task**: The runner diffs successive sets; new IDs get a tokio task running the job's `run_one`; IDs that drop out get their task aborted.
+4. **Completion**: The task writes a terminal state (e.g., `phase=Listening`, `scanPhase=Listening`, `status=Stored`) which drops the entity from the pending set — which in turn may add it to a different job's set.
 
 This pattern provides:
-- **Consistency**: The database is the single source of truth for what needs doing
-- **Idempotency**: Re-reading the query after a restart rediscovers incomplete work
-- **Cancellation**: Setting a terminal state (e.g., `Cancelled`, `Disconnected`) causes cancel-watcher subscriptions to fire, stopping active workflows
+- **Consistency**: The database is the single source of truth for what needs doing.
+- **Idempotency**: Re-reading the query after a restart re-emits every still-pending ID; each `run_one` guards with `if phase != NeedsSync { skip }` so re-entry is a no-op.
+- **Cancellation**: Setting a terminal state removes the entity from the pending set; the runner aborts the task on the next stream tick.
+- **Simplicity**: No durable-workflow runtime, no HTTP ingress, no dedup table — Convex's subscription primitive is the whole mechanism.
 
-### Reconciler Work Items
+### Job Catalog
 
-| Source | Service | Trigger State | Action |
-|--------|---------|---------------|--------|
+| Source | Job | Trigger State | Action |
+|--------|-----|---------------|--------|
 | `clients.pendingWork` | `DialogSync` | `phase=NeedsSync` | Sync Telegram dialog list |
 | `clients.pendingWork` | `UpdateListener` | `phase=Listening` | Subscribe to real-time updates |
 | `clients.pendingWork` | `ProfilePhotoSync` | `phase=Listening, photosSynced=false` | Download contact photos |
 | `chats.pendingWork` | `ChatScanner` | `scanPhase=Queued` | Download full chat history |
-| `media.pendingWork` | `MediaDownloader` | `status=Pending` | Download media file |
-| `phoneAuths.pendingWork` | `PhoneAuthWorkflow` | `step=SendingCode\|VerifyingCode\|VerifyingPassword` | Drive phone auth flow |
-| `qrAuths.pendingWork` | `QrAuthWorkflow` | `step=Pending` | Drive QR auth flow |
+| `media.pendingWork` | `MediaDownloader` | `status=Pending` (capped by `MAX_MEDIA_WORKFLOWS`) | Download media file |
+| `phoneAuths.pendingWork` | `PhoneAuth` | any non-terminal `step` | Drive phone auth flow |
+| `qrAuths.pendingWork` | `QrAuth` | any non-terminal `step` | Drive QR auth flow |
 
 ## CI/CD Pipeline
 

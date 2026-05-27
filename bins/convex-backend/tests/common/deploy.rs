@@ -25,8 +25,8 @@ pub async fn deploy_convex(convex_url: &str, admin_key: &str) -> anyhow::Result<
 
     // Set environment variables in Convex's env store.
     // auth.config.ts reads CLERK_JWT_ISSUER_DOMAIN via process.env at deploy time.
-    let clerk_issuer = std::env::var("CLERK_JWT_ISSUER_DOMAIN")
-        .expect("CLERK_JWT_ISSUER_DOMAIN must be set for integration tests");
+    let clerk_issuer =
+        std::env::var("CLERK_JWT_ISSUER_DOMAIN").expect("CLERK_JWT_ISSUER_DOMAIN must be set");
     let output = convex_cmd(&convex_backend_dir, convex_url, admin_key)
         .args(["env", "set", "CLERK_JWT_ISSUER_DOMAIN", &clerk_issuer])
         .output()

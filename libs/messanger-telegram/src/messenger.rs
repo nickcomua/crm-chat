@@ -21,12 +21,46 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::TelegramClient;
 
+/// Extract the quoted fragment from a grammers message's reply header.
+/// Populated only when the sender used Telegram's "Quote this part" feature;
+/// plain full-message replies have no quote text (callers can look up the
+/// parent by `reply_to_message_id` instead).
+fn extract_reply_quote(msg: &grammers_client::message::Message) -> Option<String> {
+    match msg.reply_header()? {
+        tl::enums::MessageReplyHeader::Header(h) => h.quote_text,
+        tl::enums::MessageReplyHeader::MessageReplyStoryHeader(_) => None,
+    }
+}
+
+/// Extract TTL (time-to-live) fields from a grammers message.
+/// `ttl_period` comes from the message itself; `ttl_seconds` comes from the media.
+fn extract_ttl(msg: &grammers_client::message::Message) -> (Option<u32>, Option<u32>) {
+    let ttl_period = match &msg.raw {
+        tl::enums::Message::Message(m) => m.ttl_period.map(|v| v as u32),
+        tl::enums::Message::Service(m) => m.ttl_period.map(|v| v as u32),
+        _ => None,
+    };
+
+    let ttl_seconds = msg.media().and_then(|m| match m {
+        Media::Photo(p) => p.ttl_seconds().map(|v| v as u32),
+        Media::Document(d) => d.raw.ttl_seconds.map(|v| v as u32),
+        _ => None,
+    });
+
+    (ttl_period, ttl_seconds)
+}
+
 /// Classify a grammers `Media` into our `MediaSummary` with type and metadata.
 fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSummary> {
     let external_id = format!("media:{}:{}", chat_id, msg_id);
 
     match media {
         Media::Photo(photo) => {
+            // Skip expired self-destructing photos (photo data already gone from Telegram)
+            if photo.raw.photo.is_none() && photo.raw.ttl_seconds.is_some() {
+                return None;
+            }
+
             let thumbs = photo.thumbs();
             let largest = thumbs.iter().max_by_key(|t| t.size());
             // Extract dimensions from the largest thumbnail via pattern matching.
@@ -72,6 +106,11 @@ fn classify_media(media: &Media, chat_id: i64, msg_id: i32) -> Option<MediaSumma
             })
         }
         Media::Document(doc) => {
+            // Skip expired self-destructing documents (document data already gone from Telegram)
+            if doc.raw.document.is_none() && doc.raw.ttl_seconds.is_some() {
+                return None;
+            }
+
             // Classify by top-level flags on MessageMediaDocument
             let kind = if doc.raw.voice {
                 MediaKind::Voice
@@ -463,6 +502,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
             let media_summary = message
                 .media()
                 .and_then(|m| classify_media(&m, chat_id, message.id()));
+            let (ttl_period, ttl_seconds) = extract_ttl(message);
             Update::NewMessage(MessageSummary {
                 external_id: message.id().to_string(),
                 chat_external_id: chat_id.to_string(),
@@ -470,11 +510,14 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                 text: Some(message.text().to_string()),
                 outgoing: message.outgoing(),
                 timestamp_ms: Some(message.date().timestamp_millis() as u64),
-                media_external_id: message
-                    .media()
+                media_external_id: media_summary
+                    .as_ref()
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
                 reply_to_message_id: message.reply_to_message_id(),
+                reply_to_text: extract_reply_quote(message),
+                ttl_period,
+                ttl_seconds,
             })
         }
         TgUpdate::MessageEdited(message) => {
@@ -494,6 +537,7 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
             let media_summary = message
                 .media()
                 .and_then(|m| classify_media(&m, chat_id, message.id()));
+            let (ttl_period, ttl_seconds) = extract_ttl(message);
             Update::MessageEdited(MessageSummary {
                 external_id: message.id().to_string(),
                 chat_external_id: chat_id.to_string(),
@@ -501,11 +545,14 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                 text: Some(message.text().to_string()),
                 outgoing: message.outgoing(),
                 timestamp_ms: Some(message.date().timestamp_millis() as u64),
-                media_external_id: message
-                    .media()
+                media_external_id: media_summary
+                    .as_ref()
                     .map(|_| format!("media:{}:{}", chat_id, message.id())),
                 media_summary,
                 reply_to_message_id: message.reply_to_message_id(),
+                reply_to_text: extract_reply_quote(message),
+                ttl_period,
+                ttl_seconds,
             })
         }
         TgUpdate::MessageDeleted(deleted) => {
@@ -612,6 +659,11 @@ impl MessengerClient for TelegramClient {
                     tl::enums::Dialog::Dialog(d) => d.pinned,
                     tl::enums::Dialog::Folder(d) => d.pinned,
                 };
+                let photo_id = match chat {
+                    Peer::User(user) => user.photo().map(|p| p.photo_id.to_string()),
+                    Peer::Group(group) => group.photo().map(|p| p.photo_id.to_string()),
+                    Peer::Channel(channel) => channel.photo().map(|p| p.photo_id.to_string()),
+                };
                 let summary = ChatSummary {
                     external_id: chat.id().bare_id().to_string(),
                     name: chat.name().map(|s| s.to_string()),
@@ -624,6 +676,7 @@ impl MessengerClient for TelegramClient {
                         .to_string(),
                     ),
                     is_pinned,
+                    photo_id,
                 };
                 count += 1;
                 // If receiver is dropped, stop producing to avoid unnecessary work
@@ -712,6 +765,7 @@ impl MessengerClient for TelegramClient {
                     let media_summary = msg
                         .media()
                         .and_then(|m| classify_media(&m, chat_bare_id, msg.id()));
+                    let (ttl_period, ttl_seconds) = extract_ttl(&msg);
                     let summary = MessageSummary {
                         external_id: msg.id().to_string(),
                         chat_external_id: chat_bare_id.to_string(),
@@ -719,11 +773,14 @@ impl MessengerClient for TelegramClient {
                         sender_id: sender_id.to_string(),
                         outgoing: msg.outgoing(),
                         timestamp_ms: Some(msg.date().timestamp_millis() as u64),
-                        media_external_id: msg
-                            .media()
+                        media_external_id: media_summary
+                            .as_ref()
                             .map(|_| format!("media:{}:{}", chat_bare_id, msg.id())),
                         media_summary,
                         reply_to_message_id: msg.reply_to_message_id(),
+                        reply_to_text: extract_reply_quote(&msg),
+                        ttl_period,
+                        ttl_seconds,
                     };
                     count += 1;
                     // If receiver is dropped, stop producing to avoid unnecessary work

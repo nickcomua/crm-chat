@@ -64,12 +64,14 @@ mod tests {
                 name: Some("Test Chat 1".to_string()),
                 chat_type: Some("user".to_string()),
                 is_pinned: true,
+                photo_id: None,
             };
             let chat2 = ChatSummary {
                 external_id: "chat:2".to_string(),
                 name: Some("Test Chat 2".to_string()),
                 chat_type: Some("group".to_string()),
                 is_pinned: false,
+                photo_id: None,
             };
 
             client
@@ -123,6 +125,9 @@ mod tests {
                 media_external_id: Some(media1.external_id.clone()),
                 media_summary: Some(media1.clone()),
                 reply_to_message_id: None,
+                reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             };
 
             let mut messages = HashMap::new();
@@ -341,12 +346,14 @@ mod tests {
                 name: Some("Chat 1".to_string()),
                 chat_type: Some("user".to_string()),
                 is_pinned: true,
+                photo_id: None,
             },
             ChatSummary {
                 external_id: "chat:2".to_string(),
                 name: Some("Chat 2".to_string()),
                 chat_type: Some("group".to_string()),
                 is_pinned: false,
+                photo_id: None,
             },
         ];
 
@@ -369,6 +376,9 @@ mod tests {
                 media_external_id: None,
                 media_summary: None,
                 reply_to_message_id: None,
+                reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             },
             MessageSummary {
                 external_id: "msg:2".to_string(),
@@ -380,6 +390,9 @@ mod tests {
                 media_external_id: None,
                 media_summary: None,
                 reply_to_message_id: None,
+                reply_to_text: None,
+                ttl_period: None,
+                ttl_seconds: None,
             },
         ];
 
@@ -506,6 +519,9 @@ mod tests {
             media_external_id: None,
             media_summary: None,
             reply_to_message_id: None,
+            reply_to_text: None,
+            ttl_period: None,
+            ttl_seconds: None,
         });
 
         let json = serde_json::to_string(&update).unwrap();
@@ -527,6 +543,7 @@ mod tests {
             name: Some("Test Chat".to_string()),
             chat_type: Some("user".to_string()),
             is_pinned: true,
+            photo_id: None,
         };
 
         let json = serde_json::to_string(&chat).unwrap();
@@ -542,11 +559,14 @@ mod tests {
             chat_external_id: "chat:1".to_string(),
             sender_id: "sender:1".to_string(),
             text: Some("Hello".to_string()),
+            ttl_period: None,
+            ttl_seconds: None,
             outgoing: false,
             timestamp_ms: Some(1000),
             media_external_id: Some("media:1".to_string()),
             media_summary: None,
             reply_to_message_id: None,
+            reply_to_text: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
