@@ -43,7 +43,7 @@
 		"react": "^19.2.5",
 		"react-dom": "^19.2.5",
 		"tailwind-merge": "^3.5.0",
-		"zod": "^4.3.6"
+		"zod": "^3.24.2"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.13",
@@ -55,7 +55,7 @@
 		"@types/pngjs": "^6.0.5",
 		"@types/react": "^19.2.14",
 		"@types/react-dom": "^19.2.3",
-		"@vitejs/plugin-react": "^6.0.1",
+		"@vitejs/plugin-react": "^6.0.2",
 		"babel-plugin-react-compiler": "^1.0.0",
 		"dotenv": "^17.4.2",
 		"eslint": "^9.39.4",
@@ -71,7 +71,7 @@
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.59.1",
 		"ultracite": "^7.6.2",
-		"vite": "^8.0.10",
+		"vite": "^8.0.0",
 		"zx": "^8.8.5"
 	},
 	"trustedDependencies": [
