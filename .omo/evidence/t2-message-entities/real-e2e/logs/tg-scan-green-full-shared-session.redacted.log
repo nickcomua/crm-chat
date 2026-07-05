@@ -1,0 +1,64 @@
+(node:61232) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+Running 12 tests using 1 worker
+
+[1A[2K(node:61233) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:61233) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:61233) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/12] [setup] › tests/auth.setup.ts:11:1 › authenticate
+[1A[2K[setup] › tests/auth.setup.ts:11:1 › authenticate
+[auth.setup] Cleaned up previous data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+
+[1A[2K(node:61243) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:61243) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:61243) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[2/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:104:2 › Client Settings & Chat Scanning › settings page shows connected client with settings button
+[1A[2K[3/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:120:2 › Client Settings & Chat Scanning › client settings page shows chats synced by subscriber
+[1A[2K[4/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:136:2 › Client Settings & Chat Scanning › can toggle scan enabled for a chat
+[1A[2K[5/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:165:2 › Client Settings & Chat Scanning › can edit pinned name inline
+[1A[2K[6/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:191:2 › Client Settings & Chat Scanning › chats page shows only scan-enabled chats
+[1A[2K[7/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:228:2 › Client Settings & Chat Scanning › Sync Dialogs button re-syncs and client returns to Listening
+[1A[2K[8/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:273:2 › Client Settings & Chat Scanning › at least 1 chat has scanned messages
+[1A[2K  1) [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:273:2 › Client Settings & Chat Scanning › at least 1 chat has scanned messages 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThanOrEqual[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: >= [32m1[39m
+    Received:    [31m0[39m
+
+      307 | 			}
+      308 | 		}
+    > 309 | 		expect(chatsWithMessages).toBeGreaterThanOrEqual(1);
+          | 		                          ^
+      310 | 	});
+      311 |
+      312 | 	test("real Telegram forwarded messages have forwardedFrom metadata", async () => {
+        at /Users/nick/Documents/crm-chat/bins/crm-chat-web/tests/e2e-telegram/scan-chats.spec.ts:309:29
+
+    Error Context: test-results/e2e-telegram-scan-chats-Cl-52825-1-chat-has-scanned-messages-tg-scan/error-context.md
+
+
+[1A[2K[9/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:312:2 › Client Settings & Chat Scanning › real Telegram forwarded messages have forwardedFrom metadata
+[1A[2K[10/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:367:2 › Client Settings & Chat Scanning › rescan button triggers new scan
+[1A[2K[11/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:404:2 › Client Settings & Chat Scanning › toggling scan off then on triggers fresh scan
+[1A[2K[12/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:444:2 › Client Settings & Chat Scanning › back button navigates to settings page
+[global-teardown] Cleaned up data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+[1A[2K  1 failed
+    [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:273:2 › Client Settings & Chat Scanning › at least 1 chat has scanned messages 
+  4 did not run
+  7 passed (15.3s)

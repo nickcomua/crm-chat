@@ -1,0 +1,23 @@
+surface: dirty worktree audit
+invocation: git status --short
+timestamp_utc: 2026-07-05T08:14:19Z
+ M TODO.md
+ M bins/convex-backend/convex/model/messages.ts
+ M bins/convex-backend/convex/testHelpers.ts
+ M bins/crm-chat-web/src/components/message-bubble.tsx
+ M bins/crm-chat-web/tests/helpers.ts
+ M bins/crm-worker/src/jobs/chat_scanner.rs
+ M bins/crm-worker/src/jobs/update_listener.rs
+ M bins/crm-worker/src/ops/telegram.rs
+ M flake.nix
+ M libs/messanger-interface/src/lib.rs
+ M libs/messanger-interface/src/message.rs
+ M libs/messanger-telegram/src/auth.rs
+ M libs/messanger-telegram/src/messenger.rs
+?? .omo/
+?? .tokensave/
+?? CONTEXT.md
+?? bins/convex-backend/convex/model/messages.test.ts
+?? bins/crm-chat-web/tests/message-entities.spec.ts
+?? docs/adr/
+exit_status=0

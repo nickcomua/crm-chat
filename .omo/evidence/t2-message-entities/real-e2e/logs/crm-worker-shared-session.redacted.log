@@ -1,0 +1,239 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running `target/debug/crm-worker`
+2026-07-05T08:28:11.870887Z  INFO crm_worker: starting crm-worker
+2026-07-05T08:28:12.246018Z  INFO crm_worker: no existing session files
+2026-07-05T08:28:12.246440Z  INFO crm_worker::runner: subscribing job="DialogSync"
+2026-07-05T08:28:12.246982Z  INFO crm_worker: crm-worker ready job_count=6
+2026-07-05T08:28:12.247121Z  INFO crm_worker::runner: subscribing job="ChatScanner"
+2026-07-05T08:28:12.247016Z  INFO crm_worker::runner: subscribing job="UpdateListener"
+2026-07-05T08:28:12.247312Z  INFO crm_worker::runner: subscribing job="MediaDownloader"
+2026-07-05T08:28:12.247313Z  INFO crm_worker::runner: subscribing job="PhoneAuth"
+2026-07-05T08:28:12.247457Z  INFO crm_worker::runner: subscribing job="QrAuth"
+2026-07-05T08:28:12.254265Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: starting
+2026-07-05T08:28:12.254785Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: starting
+2026-07-05T08:28:12.257491Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:28:12.258664Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR_OVERRIDE]/https___noted-rabbit-14_clerk_accounts_dev_user_37XCY4ilBFPHd4czdSF2KaHiqDs/telegram_[REDACTED:TG_USER_ID_1].session"
+2026-07-05T08:28:12.258848Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: Building TelegramClient
+2026-07-05T08:28:12.264281Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:28:12.264238Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:28:12.264682Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR_OVERRIDE]/https___noted-rabbit-14_clerk_accounts_dev_user_37XCY4ilBFPHd4czdSF2KaHiqDs/telegram_+31617339934.session"
+2026-07-05T08:28:12.264790Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: messanger_telegram: Building TelegramClient
+2026-07-05T08:28:12.267754Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:28:12.291338Z  INFO grammers_mtsender::sender: generating new authorization key...
+2026-07-05T08:28:12.292799Z  INFO grammers_mtsender::sender: generating new authorization key...
+2026-07-05T08:28:13.555665Z  INFO grammers_mtsender::sender: authorization key generated successfully
+2026-07-05T08:28:13.556336Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:28:13.582388Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:28:13.678424Z  WARN task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: messanger_telegram: TelegramClient built successfully (not authorized)
+2026-07-05T08:28:13.679260Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7cga1yp0qe0e69c77hyx2ds589z5hp
+2026-07-05T08:28:13.679675Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:iter_updates: messanger_telegram::messenger: Starting updates stream
+2026-07-05T08:28:14.467026Z  INFO grammers_mtsender::sender: authorization key generated successfully
+2026-07-05T08:28:14.467310Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:28:14.505288Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:28:14.573989Z  WARN task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: TelegramClient built successfully (not authorized)
+2026-07-05T08:28:14.574294Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd78fbjbvs80n3gxfrjxkerdxn89ys1f
+2026-07-05T08:28:14.574477Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:iter_updates: messanger_telegram::messenger: Starting updates stream
+2026-07-05T08:28:37.450891Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: starting
+2026-07-05T08:28:37.457793Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 0
+2026-07-05T08:28:37.572737Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:28:37.573028Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR_OVERRIDE]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_[REDACTED:TG_USER_ID_1].session"
+2026-07-05T08:28:37.573078Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: Building TelegramClient
+2026-07-05T08:28:37.573949Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:28:37.911053Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:28:37.911137Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957986395117632)
+2026-07-05T08:28:37.911161Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:28:38.080838Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:28:38.467507Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: TelegramClient built successfully (authorized)
+2026-07-05T08:28:38.468012Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:28:38.843759Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 1
+2026-07-05T08:28:38.860565Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 2
+2026-07-05T08:28:38.879250Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 3
+2026-07-05T08:28:38.891266Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 4
+2026-07-05T08:28:38.901944Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 5
+2026-07-05T08:28:38.911338Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 6
+2026-07-05T08:28:38.922123Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 7
+2026-07-05T08:28:38.930190Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 8
+2026-07-05T08:28:38.937828Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 9
+2026-07-05T08:28:38.944346Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::dialog_sync: dialogs synced count=6
+2026-07-05T08:28:38.944483Z  INFO convex::base_client: Starting mutation model/clients:workerCompleteSync with id 10
+2026-07-05T08:28:38.954481Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:28:38.954485Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: done
+2026-07-05T08:28:38.954590Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: starting
+2026-07-05T08:28:38.958506Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:28:38.958758Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:28:38.958839Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:iter_updates: messanger_telegram::messenger: Starting updates stream
+2026-07-05T08:28:39.224729Z  INFO convex::base_client: Starting mutation model/messages:workerMarkMessageDeleted with id 11
+2026-07-05T08:28:39.239156Z  INFO convex::base_client: Starting mutation model/messages:workerMarkMessageDeleted with id 12
+2026-07-05T08:28:39.492475Z  INFO task{job="ChatScanner" key=j97fs3051z42kb7b4fpe5wbvch89zd3h}: crm_worker::runner: starting
+2026-07-05T08:28:39.498514Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 13
+2026-07-05T08:28:39.606056Z  INFO task{job="ChatScanner" key=j97fs3051z42kb7b4fpe5wbvch89zd3h}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:7369755862
+2026-07-05T08:28:39.607190Z  INFO task{job="ChatScanner" key=j97fs3051z42kb7b4fpe5wbvch89zd3h}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:7369755862
+2026-07-05T08:28:39.632525Z  INFO task{job="ChatScanner" key=j971nrkmqtc83r43fewnb5ng4x89yvwv}: crm_worker::runner: starting
+2026-07-05T08:28:39.637382Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 14
+2026-07-05T08:28:39.648956Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j97fs3051z42kb7b4fpe5wbvch89zd3h
+2026-07-05T08:28:39.658430Z  INFO task{job="ChatScanner" key=j971nrkmqtc83r43fewnb5ng4x89yvwv}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:527580149
+2026-07-05T08:28:39.659897Z  INFO task{job="ChatScanner" key=j971nrkmqtc83r43fewnb5ng4x89yvwv}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:527580149
+2026-07-05T08:28:39.767988Z  INFO task{job="ChatScanner" key=j97939bktd25jmm9brvj2sfkhx89yr0y}: crm_worker::runner: starting
+2026-07-05T08:28:39.773973Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 15
+2026-07-05T08:28:39.787903Z  INFO task{job="ChatScanner" key=j97939bktd25jmm9brvj2sfkhx89yr0y}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:8295816105
+2026-07-05T08:28:39.789550Z  INFO task{job="ChatScanner" key=j97939bktd25jmm9brvj2sfkhx89yr0y}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd76pqkswvgpjpc50s7kgz20v589yggq:8295816105
+2026-07-05T08:28:39.952418Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j971nrkmqtc83r43fewnb5ng4x89yvwv
+2026-07-05T08:28:40.001692Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j97939bktd25jmm9brvj2sfkhx89yr0y
+2026-07-05T08:28:48.172037Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:28:48.172415Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: starting
+2026-07-05T08:28:48.176706Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 16
+2026-07-05T08:28:48.223969Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:28:48.224445Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:28:48.597237Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 17
+2026-07-05T08:28:48.612697Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 18
+2026-07-05T08:28:48.626347Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 19
+2026-07-05T08:28:48.639781Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 20
+2026-07-05T08:28:48.650510Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 21
+2026-07-05T08:28:48.659124Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 22
+2026-07-05T08:28:48.668992Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 23
+2026-07-05T08:28:48.676448Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 24
+2026-07-05T08:28:48.683098Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 25
+2026-07-05T08:28:48.691647Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::dialog_sync: dialogs synced count=6
+2026-07-05T08:28:48.691866Z  INFO convex::base_client: Starting mutation model/clients:workerCompleteSync with id 26
+2026-07-05T08:28:48.705131Z  INFO task{job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: done
+2026-07-05T08:28:48.705168Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:28:48.705245Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::runner: starting
+2026-07-05T08:28:48.709592Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:28:48.709874Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:28:48.709955Z  INFO task{job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:28:49.624374Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd76pqkswvgpjpc50s7kgz20v589yggq
+2026-07-05T08:30:03.261902Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp
+2026-07-05T08:30:03.264668Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: starting
+2026-07-05T08:30:03.276826Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 27
+2026-07-05T08:30:03.297161Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:03.297861Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:03.324366Z  WARN task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: failed error=Convex mutation error: iter_dialogs: Authentication failed: dont have auth
+2026-07-05T08:30:04.875770Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f
+2026-07-05T08:30:04.876341Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: starting
+2026-07-05T08:30:04.876390Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: starting
+2026-07-05T08:30:04.887199Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 28
+2026-07-05T08:30:04.890545Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 29
+2026-07-05T08:30:04.897252Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:04.897777Z  INFO task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:04.908569Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:04.909190Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:04.926307Z  WARN task{job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: failed error=Convex mutation error: iter_dialogs: Authentication failed: dont have auth
+2026-07-05T08:30:04.992839Z  WARN task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: failed error=Convex mutation error: iter_dialogs: Authentication failed: dont have auth
+2026-07-05T08:30:05.815775Z  INFO crm_worker::runner: entity left set — task already done job="DialogSync" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp
+2026-07-05T08:30:05.816387Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: starting
+2026-07-05T08:30:05.816435Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: starting
+2026-07-05T08:30:05.818884Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 30
+2026-07-05T08:30:05.820646Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:30:05.821422Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7cga1yp0qe0e69c77hyx2ds589z5hp
+2026-07-05T08:30:05.821784Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:30:05.827746Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:05.828438Z  INFO task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:05.863089Z  WARN task{job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: failed error=Convex mutation error: iter_dialogs: Authentication failed: dont have auth
+2026-07-05T08:30:06.095298Z  INFO crm_worker::runner: entity left set — task already done job="DialogSync" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f
+2026-07-05T08:30:06.095622Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: starting
+2026-07-05T08:30:06.099229Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:30:06.099650Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd78fbjbvs80n3gxfrjxkerdxn89ys1f
+2026-07-05T08:30:06.099834Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:30:19.337579Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:19.343245Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 31
+2026-07-05T08:30:19.367659Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:19.367905Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:19.749207Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 32
+2026-07-05T08:30:19.759872Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 33
+2026-07-05T08:30:19.774017Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 34
+2026-07-05T08:30:19.781977Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 35
+2026-07-05T08:30:19.791858Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 36
+2026-07-05T08:30:19.798864Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 37
+2026-07-05T08:30:19.805994Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 38
+2026-07-05T08:30:19.812954Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 39
+2026-07-05T08:30:19.823269Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 40
+2026-07-05T08:30:19.830423Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: dialogs synced count=6
+2026-07-05T08:30:19.830665Z  INFO convex::base_client: Starting mutation model/clients:workerCompleteSync with id 41
+2026-07-05T08:30:19.841924Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:19.841955Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: done
+2026-07-05T08:30:19.842045Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:19.845000Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:30:19.845278Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:19.845315Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:30:20.336604Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:20.336794Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:20.342954Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 42
+2026-07-05T08:30:20.356707Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:20.357231Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:20.394591Z  INFO task{job="ChatScanner" key=j97apmy607am7n9r0vnhvjgw1189zd8b}: crm_worker::runner: starting
+2026-07-05T08:30:20.401584Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 43
+2026-07-05T08:30:20.416439Z  INFO task{job="ChatScanner" key=j97apmy607am7n9r0vnhvjgw1189zd8b}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:7369755862
+2026-07-05T08:30:20.418090Z  INFO task{job="ChatScanner" key=j97apmy607am7n9r0vnhvjgw1189zd8b}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:7369755862
+2026-07-05T08:30:20.524924Z  INFO task{job="ChatScanner" key=j9773vckcves8hh5m9y0z8ea4x89zg9d}: crm_worker::runner: starting
+2026-07-05T08:30:20.529778Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 44
+2026-07-05T08:30:20.541790Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j97apmy607am7n9r0vnhvjgw1189zd8b
+2026-07-05T08:30:20.574637Z  INFO task{job="ChatScanner" key=j9773vckcves8hh5m9y0z8ea4x89zg9d}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:527580149
+2026-07-05T08:30:20.575494Z  INFO task{job="ChatScanner" key=j9773vckcves8hh5m9y0z8ea4x89zg9d}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:527580149
+2026-07-05T08:30:20.643912Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j9773vckcves8hh5m9y0z8ea4x89zg9d
+2026-07-05T08:30:20.659835Z  INFO task{job="ChatScanner" key=j97cmg1qfq5aadmyr24xz4var189zdb5}: crm_worker::runner: starting
+2026-07-05T08:30:20.663812Z  INFO convex::base_client: Starting mutation model/chats:workerStartScan with id 45
+2026-07-05T08:30:20.765708Z  INFO task{job="ChatScanner" key=j97cmg1qfq5aadmyr24xz4var189zdb5}: crm_worker::jobs::chat_scanner: starting scan chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:8295816105
+2026-07-05T08:30:20.767051Z  INFO task{job="ChatScanner" key=j97cmg1qfq5aadmyr24xz4var189zdb5}: crm_worker::jobs::chat_scanner: scanning messages chat_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap:8295816105
+2026-07-05T08:30:20.772933Z  INFO crm_worker::runner: entity left set — aborting task job="ChatScanner" key=j97cmg1qfq5aadmyr24xz4var189zdb5
+2026-07-05T08:30:20.918930Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 46
+2026-07-05T08:30:20.933268Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 47
+2026-07-05T08:30:20.950470Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 48
+2026-07-05T08:30:20.958660Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 49
+2026-07-05T08:30:20.964145Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 50
+2026-07-05T08:30:20.969010Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 51
+2026-07-05T08:30:20.973972Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 52
+2026-07-05T08:30:20.979108Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 53
+2026-07-05T08:30:20.986566Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 54
+2026-07-05T08:30:20.991444Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: dialogs synced count=6
+2026-07-05T08:30:20.991549Z  INFO convex::base_client: Starting mutation model/clients:workerCompleteSync with id 55
+2026-07-05T08:30:20.998759Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: done
+2026-07-05T08:30:20.998766Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:20.998831Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:21.000939Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:30:21.001081Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:21.001132Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:30:28.852159Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:28.852554Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:28.859745Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 56
+2026-07-05T08:30:28.881664Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:30:28.882016Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_dialogs: messanger_telegram::messenger: Starting dialog iteration
+2026-07-05T08:30:29.250966Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 57
+2026-07-05T08:30:29.266516Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 58
+2026-07-05T08:30:29.281425Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 59
+2026-07-05T08:30:29.293456Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 60
+2026-07-05T08:30:29.305602Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 61
+2026-07-05T08:30:29.313883Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 62
+2026-07-05T08:30:29.323669Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 63
+2026-07-05T08:30:29.335583Z  INFO convex::base_client: Starting mutation model/chats:workerUpsertChat with id 64
+2026-07-05T08:30:29.342496Z  INFO convex::base_client: Starting mutation model/media:workerCreatePendingMedia with id 65
+2026-07-05T08:30:29.348764Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::dialog_sync: dialogs synced count=6
+2026-07-05T08:30:29.348908Z  INFO convex::base_client: Starting mutation model/clients:workerCompleteSync with id 66
+2026-07-05T08:30:29.359727Z  INFO task{job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: done
+2026-07-05T08:30:29.359824Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:29.359888Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::runner: starting
+2026-07-05T08:30:29.367310Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:30:29.367638Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:30:29.367685Z  INFO task{job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap}:iter_updates: messanger_telegram::messenger: Subscribing to existing updates broadcast
+2026-07-05T08:31:31.453657Z  INFO crm_worker::runner: entity left set — aborting task job="UpdateListener" key=jd7e64939g6cnpmkm5vfwc4hdn89zeap
+2026-07-05T08:32:36.731333Z  INFO task{job="DialogSync" key=jd783tgwz710t9yhn656jzyrz189y0m3}: crm_worker::runner: starting
+2026-07-05T08:32:36.743245Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 67
+2026-07-05T08:32:36.845759Z  INFO task{job="DialogSync" key=jd783tgwz710t9yhn656jzyrz189y0m3}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:32:36.846029Z  INFO task{job="DialogSync" key=jd783tgwz710t9yhn656jzyrz189y0m3}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783240356699}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR_OVERRIDE]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_message-entities-1783240356699.session"
+2026-07-05T08:32:36.846096Z  INFO task{job="DialogSync" key=jd783tgwz710t9yhn656jzyrz189y0m3}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783240356699}: messanger_telegram: Building TelegramClient
+2026-07-05T08:32:36.847873Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:32:36.869909Z  INFO grammers_mtsender::sender: generating new authorization key...
+2026-07-05T08:32:38.243327Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd783tgwz710t9yhn656jzyrz189y0m3
+2026-07-05T08:32:39.186813Z  INFO grammers_mtsender::sender: authorization key generated successfully
+2026-07-05T08:32:39.187135Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:32:39.211540Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:32:52.508168Z  INFO task{job="DialogSync" key=jd71shbx2bqfz820q79p8w3qxs89zmh6}: crm_worker::runner: starting
+2026-07-05T08:32:52.519617Z  INFO convex::base_client: Starting mutation model/clients:workerStartSync with id 68
+2026-07-05T08:32:52.538155Z  INFO task{job="DialogSync" key=jd71shbx2bqfz820q79p8w3qxs89zmh6}: crm_worker::jobs::dialog_sync: syncing dialogs
+2026-07-05T08:32:52.538588Z  INFO task{job="DialogSync" key=jd71shbx2bqfz820q79p8w3qxs89zmh6}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783240372482}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR_OVERRIDE]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_visual-message-entities-1783240372482.session"
+2026-07-05T08:32:52.538720Z  INFO task{job="DialogSync" key=jd71shbx2bqfz820q79p8w3qxs89zmh6}:get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783240372482}: messanger_telegram: Building TelegramClient
+2026-07-05T08:32:52.541519Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:32:52.562957Z  INFO grammers_mtsender::sender: generating new authorization key...
+2026-07-05T08:32:52.704110Z  INFO crm_worker::runner: entity left set — aborting task job="DialogSync" key=jd71shbx2bqfz820q79p8w3qxs89zmh6
+2026-07-05T08:32:54.010320Z  INFO grammers_mtsender::sender: authorization key generated successfully
+2026-07-05T08:32:54.010637Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:32:54.036922Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts

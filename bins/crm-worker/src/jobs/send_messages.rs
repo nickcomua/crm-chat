@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use convex_backend::{
     ClientsGetForWorkerArgs, ConvexApi, MessagesWorkerUpsertMessageArgs,
-    OutgoingMessagesGetForWorkerArgs, OutgoingMessagesWorkerMarkFailedArgs,
+    OutgoingMessagesGetForWorkerArgs, OutgoingMessagesStatus, OutgoingMessagesWorkerMarkFailedArgs,
     OutgoingMessagesWorkerMarkSendingArgs, OutgoingMessagesWorkerMarkSentArgs,
 };
 use futures::{StreamExt, stream::BoxStream};
@@ -62,6 +62,18 @@ impl Job for SendMessagesJob {
             .await?
             .ok_or_else(|| anyhow::anyhow!("outgoing message {outgoing_message_id} not found"))?;
 
+        match outgoing_message_should_send(outgoing.status) {
+            true => {}
+            false => {
+                info!(
+                    outgoing_message_id = %outgoing.id,
+                    status = %outgoing.status,
+                    "skipping terminal outgoing message",
+                );
+                return Ok(());
+            }
+        }
+
         let chat_external_id = match outgoing.chat_id.split_once(':') {
             Some((_, external_chat_id)) => external_chat_id.to_string(),
             None => outgoing.chat_id.clone(),
@@ -98,23 +110,52 @@ impl Job for SendMessagesJob {
             return Ok(());
         }
 
+        match ctx
+            .convex
+            .outgoing_messages_worker_mark_sending(OutgoingMessagesWorkerMarkSendingArgs {
+                outgoingMessageId: outgoing.id.clone(),
+            })
+            .await
+            .map_err(|error| WorkerError::MutationFailed(error.to_string()))?
+        {
+            Ok(()) => {}
+            Err(error)
+                if error.to_string() == "Message already claimed"
+                    || error.to_string() == "Message is terminal" =>
+            {
+                info!(
+                    outgoing_message_id = %outgoing.id,
+                    %error,
+                    "skipping unclaimable outgoing message",
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(WorkerError::MutationFailed(error.to_string()).into());
+            }
+        }
+
         let tg = ctx
             .sessions
             .get_for_telegram_id(&outgoing.user_id, &client.telegram_id)
             .await
             .map_err(|error| WorkerError::ClientBuildFailed(error.to_string()))?;
 
-        ctx.convex
-            .outgoing_messages_worker_mark_sending(OutgoingMessagesWorkerMarkSendingArgs {
-                outgoingMessageId: outgoing.id.clone(),
-            })
-            .await
-            .check()?;
-
-        let external_message_id = tg
-            .send_message(&chat_external_id, &outgoing.text)
-            .await
-            .map_err(|error| WorkerError::MutationFailed(error.to_string()))?;
+        let external_message_id = match tg.send_message(&chat_external_id, &outgoing.text).await {
+            Ok(id) => id,
+            Err(error) => {
+                let error = error.to_string();
+                warn!(outgoing_message_id = %outgoing.id, %error, "failed to send outgoing message");
+                ctx.convex
+                    .outgoing_messages_worker_mark_failed(OutgoingMessagesWorkerMarkFailedArgs {
+                        outgoingMessageId: outgoing.id,
+                        error,
+                    })
+                    .await
+                    .check()?;
+                return Ok(());
+            }
+        };
 
         let normalized_external_message_id =
             normalize_sent_external_message_id(&chat_external_id, &external_message_id);
@@ -188,6 +229,13 @@ fn current_timestamp_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn outgoing_message_should_send(status: OutgoingMessagesStatus) -> bool {
+    match status {
+        OutgoingMessagesStatus::Queued | OutgoingMessagesStatus::Sending => true,
+        OutgoingMessagesStatus::Sent | OutgoingMessagesStatus::Failed => false,
+    }
+}
+
 fn normalize_sent_external_message_id(chat_external_id: &str, sent_external_id: &str) -> String {
     sent_external_id
         .strip_prefix(&format!("{chat_external_id}:"))
@@ -197,7 +245,9 @@ fn normalize_sent_external_message_id(chat_external_id: &str, sent_external_id: 
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_sent_external_message_id;
+    use convex_backend::OutgoingMessagesStatus;
+
+    use super::{normalize_sent_external_message_id, outgoing_message_should_send};
 
     #[test]
     fn normalize_sent_external_message_id_strips_chat_prefix() {
@@ -211,5 +261,21 @@ mod tests {
         let actual = normalize_sent_external_message_id("12345", "msg:12345:678");
 
         assert_eq!(actual, "msg:12345:678");
+    }
+
+    #[test]
+    fn outgoing_message_should_send_allows_active_statuses() {
+        assert!(outgoing_message_should_send(OutgoingMessagesStatus::Queued));
+        assert!(outgoing_message_should_send(
+            OutgoingMessagesStatus::Sending
+        ));
+    }
+
+    #[test]
+    fn outgoing_message_should_send_skips_terminal_statuses() {
+        assert!(!outgoing_message_should_send(OutgoingMessagesStatus::Sent));
+        assert!(!outgoing_message_should_send(
+            OutgoingMessagesStatus::Failed
+        ));
     }
 }

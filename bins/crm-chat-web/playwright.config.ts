@@ -29,6 +29,7 @@ export default defineConfig({
 				/e2e-telegram\/media-visual\.spec/,
 				/e2e-telegram\/qr-auth\.spec/,
 				/e2e-telegram\/qr-auth-real\.spec/,
+				/e2e-telegram\/messaging-real\.spec/,
 				/e2e-telegram\/replies-real\.spec/,
 			],
 		},
@@ -85,13 +86,22 @@ export default defineConfig({
 		// one "Quote this part" reply) in the test account scan, render a
 		// preview in the chat view, and navigate to the parent on click.
 		{
+			name: "tg-messaging-real",
+			testMatch: /e2e-telegram\/messaging-real\.spec\.ts/,
+			use: {
+				...devices["Desktop Chrome"],
+				storageState: "tests/.auth/user.json",
+			},
+			dependencies: ["tg-media-visual"],
+		},
+		{
 			name: "tg-replies-real",
 			testMatch: /e2e-telegram\/replies-real\.spec\.ts/,
 			use: {
 				...devices["Desktop Chrome"],
 				storageState: "tests/.auth/user.json",
 			},
-			dependencies: ["tg-media-visual"],
+			dependencies: ["tg-messaging-real"],
 		},
 	],
 });

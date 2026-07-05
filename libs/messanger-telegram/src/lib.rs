@@ -23,6 +23,7 @@ pub use auth::{
 /// Telegram client implementation of the MessengerClient trait.
 pub struct TelegramClient {
     pub client: Arc<Mutex<Client>>,
+    pub direct_client: Client,
     #[allow(dead_code)]
     pub session: Arc<SqliteSession>,
     pub api_id: i32,
@@ -90,7 +91,8 @@ impl TelegramClient {
         }
 
         Ok(TelegramClient {
-            client: Arc::new(Mutex::new(client)),
+            client: Arc::new(Mutex::new(client.clone())),
+            direct_client: client,
             session,
             api_id,
             api_hash,

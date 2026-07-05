@@ -1,0 +1,49 @@
+surface: Playwright browser E2E against isolated Vite server
+invocation: timeout 300s nix develop --command bash -lc source .env; export VITE_TEST_USERNAME/PASSWORD; export TEST_BASE_URL=http://127.0.0.1:5174; cd bins/crm-chat-web; bunx playwright test --project=chromium tests/message-entities.spec.ts
+timestamp_utc: 2026-07-05T08:08:04Z
+Using saved setting for 'extra-substituters = https://cache.nixos.org https://nix-community.cachix.org https://nickcomua.cachix.org https://devenv.cachix.org' from ~/.local/share/nix/trusted-settings.json.
+Using saved setting for 'extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs= nickcomua.cachix.org-1:stcsazuAJ0uhVu6i4yXinhDenHEwKngOtystEXf++so= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=' from ~/.local/share/nix/trusted-settings.json.
+Running tasks     devenv:enterShell
+
+Running           devenv:files:cleanup
+Succeeded         devenv:files:cleanup (15.38ms)
+Running           devenv:enterShell
+Succeeded         devenv:enterShell (16.21ms)
+Running           devenv:enterTest
+No command        devenv:enterTest
+1 Skipped, 2 Succeeded
+(node:54795) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+Running 4 tests using 1 worker
+
+[1A[2K(node:54796) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:54796) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:54796) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/4] [setup] › tests/auth.setup.ts:11:1 › authenticate
+[1A[2K[setup] › tests/auth.setup.ts:11:1 › authenticate
+[auth.setup] Cleaned up previous data for [REDACTED_CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+
+[1A[2K(node:54808) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:54808) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:54808) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[2/4] [chromium] › tests/message-entities.spec.ts:77:2 › Message entities › stores rich text entity ranges with the seeded message
+[1A[2K[3/4] [chromium] › tests/message-entities.spec.ts:99:2 › Message entities › rejects custom emoji entity ranges outside message text
+[1A[2K[4/4] [chromium] › tests/message-entities.spec.ts:128:2 › Message entities › renders native emoji as text and custom emoji as fallback
+[global-teardown] Cleaned up data for [REDACTED_CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+[1A[2K  4 passed (7.6s)
+exit_status=0

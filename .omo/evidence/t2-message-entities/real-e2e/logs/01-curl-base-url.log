@@ -1,0 +1,43 @@
+surface: HTTP app health
+invocation: curl -i --max-time 20 TEST_BASE_URL
+timestamp_utc: 2026-07-05T08:02:39Z
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100  1253  100  1253    0     0   349k      0 --:--:-- --:--:-- --:--:--  407k
+HTTP/1.1 200 OK
+Vary: Origin
+Content-Type: text/html
+Cache-Control: no-cache
+ETag: W/"4e5-DZvktMME1pcnfq+eQ8eiYImLXqE"
+Date: Sun, 05 Jul 2026 08:02:38 GMT
+Content-Length: 1253
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <script type="module">import { injectIntoGlobalHook } from "/@react-refresh";
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;</script>
+
+    <script type="module" src="/@vite/client"></script>
+
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="/vite.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="darkreader-lock">
+    <meta name="color-scheme" content="light dark">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.accounts.dev https://*.clerk.dev; connect-src * wss: ws:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: http: https:; media-src 'self' blob: http: https:; font-src 'self' data: https:; frame-src 'self' https://*.clerk.accounts.dev; worker-src 'self' blob:;"
+    >
+    <title>crm-chat-web</title>
+    <!-- Load runtime config BEFORE main app to ensure env vars are available -->
+    <script src="/env-config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+exit_status=0

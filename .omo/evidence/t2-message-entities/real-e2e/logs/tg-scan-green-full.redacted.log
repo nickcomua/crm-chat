@@ -1,0 +1,71 @@
+(node:60501) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+Running 12 tests using 1 worker
+
+[1A[2K(node:60502) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:60502) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:60502) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/12] [setup] › tests/auth.setup.ts:11:1 › authenticate
+[1A[2K[setup] › tests/auth.setup.ts:11:1 › authenticate
+[auth.setup] Cleaned up previous data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+
+[1A[2K(node:60515) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:60515) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:60515) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[2/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:91:2 › Client Settings & Chat Scanning › settings page shows connected client with settings button
+[1A[2K  1) [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:91:2 › Client Settings & Chat Scanning › settings page shows connected client with settings button 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('button[aria-label^="Toggle scanning for"]').first()
+    Expected: visible
+    Timeout: 10000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for locator('button[aria-label^="Toggle scanning for"]').first()[22m
+
+
+      73 | 		await expectSyncDialogsButton(page);
+      74 | 		const toggles = page.locator('button[aria-label^="Toggle scanning for"]');
+    > 75 | 		await expect(toggles.first()).toBeVisible({ timeout: 10_000 });
+         | 		                              ^
+      76 |
+      77 | 		const enableCount = Math.min(3, await toggles.count());
+      78 | 		for (let i = 0; i < enableCount; i++) {
+        at /Users/nick/Documents/crm-chat/bins/crm-chat-web/tests/e2e-telegram/scan-chats.spec.ts:75:33
+
+    Error Context: test-results/e2e-telegram-scan-chats-Cl-f7002-client-with-settings-button-tg-scan/error-context.md
+
+
+[1A[2K[3/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:107:2 › Client Settings & Chat Scanning › client settings page shows chats synced by subscriber
+[1A[2K[4/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:123:2 › Client Settings & Chat Scanning › can toggle scan enabled for a chat
+[1A[2K[5/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:152:2 › Client Settings & Chat Scanning › can edit pinned name inline
+[1A[2K[6/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:178:2 › Client Settings & Chat Scanning › chats page shows only scan-enabled chats
+[1A[2K[7/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:215:2 › Client Settings & Chat Scanning › Sync Dialogs button re-syncs and client returns to Listening
+[1A[2K[8/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:260:2 › Client Settings & Chat Scanning › at least 1 chat has scanned messages
+[1A[2K[9/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:299:2 › Client Settings & Chat Scanning › real Telegram forwarded messages have forwardedFrom metadata
+[1A[2K[10/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:354:2 › Client Settings & Chat Scanning › rescan button triggers new scan
+[1A[2K[11/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:391:2 › Client Settings & Chat Scanning › toggling scan off then on triggers fresh scan
+[1A[2K[12/12] [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:431:2 › Client Settings & Chat Scanning › back button navigates to settings page
+[global-teardown] Cleaned up data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+[1A[2K  1 failed
+    [tg-scan] › tests/e2e-telegram/scan-chats.spec.ts:91:2 › Client Settings & Chat Scanning › settings page shows connected client with settings button 
+  10 did not run
+  1 passed (15.4s)

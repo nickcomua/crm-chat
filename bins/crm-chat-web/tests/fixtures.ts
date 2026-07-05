@@ -4,6 +4,7 @@
 /** biome-ignore-all lint/correctness/noEmptyPattern: should be like this({}) its playwright rules */
 import { test as base } from "@playwright/test";
 import { env } from "./env";
+import { resolveWorkerSessionDir } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -27,7 +28,9 @@ export const test = base.extend<{}, WorkerFixtures>({
 			await use({
 				convexUrl: env.VITE_CONVEX_URL,
 				m2mSecretKey: env.CLERK_M2M_SECRET_KEY,
-				sessionDir: env.TG_SESSION_DIR ?? "./target/crm-worker-data",
+				sessionDir: resolveWorkerSessionDir(
+					env.TG_SESSION_DIR ?? "./target/crm-worker-data",
+				),
 				baseURL: env.TEST_BASE_URL,
 			});
 		},

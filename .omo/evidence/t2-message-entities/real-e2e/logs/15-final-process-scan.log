@@ -1,0 +1,6 @@
+surface: final process cleanup
+invocation: ps scan for lingering Vite/Playwright/Bun commands related to T2 run
+timestamp_utc: 2026-07-05T08:13:08Z
+56745 rtk proxy bash -lc set +x\012LOG=.omo/evidence/t2-message-entities/real-e2e/logs/15-final-process-scan.log\012{\012  echo "surface: final process cleanup"\012  echo "invocation: ps scan for lingering Vite/Playwright/Bun commands related to T2 run"\012  echo "timestamp_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"\012  ps -axo pid,command | rg "(vite --host 127.0.0.1 --port 5174|playwright test.*message-entities|playwright test.*scan-chats|capture-message-entities-screenshot|bunx vite)" | rg -v "rg \(" || true\012  echo "exit_status=0"\012} > "$LOG"\012
+56746 /nix/store/3zrx6av2d1141igkcn8477cvbfqpcmcf-bash-5.3p9/bin/bash -lc set +x\012LOG=.omo/evidence/t2-message-entities/real-e2e/logs/15-final-process-scan.log\012{\012  echo "surface: final process cleanup"\012  echo "invocation: ps scan for lingering Vite/Playwright/Bun commands related to T2 run"\012  echo "timestamp_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"\012  ps -axo pid,command | rg "(vite --host 127.0.0.1 --port 5174|playwright test.*message-entities|playwright test.*scan-chats|capture-message-entities-screenshot|bunx vite)" | rg -v "rg \(" || true\012  echo "exit_status=0"\012} > "$LOG"\012
+exit_status=0

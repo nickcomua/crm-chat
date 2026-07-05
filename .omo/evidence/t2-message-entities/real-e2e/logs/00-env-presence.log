@@ -1,0 +1,19 @@
+surface: shell env preflight
+invocation: set -a; source .env if present; presence-only check required T2 vars plus test infra vars
+timestamp_utc: 2026-07-05T08:01:59Z
+.env: present
+TG_SESSION_FILE_1=present
+CLERK_JWT_ISSUER_DOMAIN=present
+TEST_CLERK_PASSWORD=present
+TG_ID=present
+CLERK_M2M_SECRET_KEY=present
+VITE_CLERK_PUBLISHABLE_KEY=present
+TG_HASH=present
+TEST_CLERK_USERNAME=present
+TG_USER_ID_1=present
+TEST_BASE_URL=present
+VITE_CONVEX_URL=present
+CONVEX_URL=present
+TG_SESSION_DIR=missing
+TG_SESSION_FILE_1_file=present
+exit_status=0

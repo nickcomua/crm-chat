@@ -1,0 +1,97 @@
+[0mdirenv: loading ~/Documents/crm-chat/.envrc
+[0mdirenv: loading https://raw.githubusercontent.com/nix-community/nix-direnv/3.0.6/direnvrc (sha256-RYcUJaRMf8oF5LznDrlCXbkOQrywm0HDv1VjYGaJGdM=)
+[0mdirenv: using flake . --override-input devenv-root file+file:///Users/nick/Documents/crm-chat/.devenv/root
+[0mdirenv: nix-direnv: Using cached dev shell
+Running tasks     devenv:enterShell
+
+Running           devenv:files:cleanup
+Succeeded         devenv:files:cleanup (11.99ms)
+Running           devenv:enterShell
+Succeeded         devenv:enterShell (12.38ms)
+Running           devenv:enterTest
+No command        devenv:enterTest
+1 Skipped, 2 Succeeded
+❌ Invalid environment variables: [
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_CLERK_USERNAME' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_CLERK_PASSWORD' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'VITE_CLERK_PUBLISHABLE_KEY' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'CLERK_JWT_ISSUER_DOMAIN' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'CLERK_M2M_SECRET_KEY' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_ID' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_HASH' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_SESSION_FILE_1' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_USER_ID_1' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_BASE_URL' ],
+    message: 'Required'
+  }
+]
+Error: Invalid environment variables
+    at file:///Users/nick/Documents/crm-chat/node_modules/.bun/@t3-oss+env-core@0.13.11+e016764623ac6761/node_modules/@t3-oss/env-core/src/index.ts:365:13
+    at createEnv (file:///Users/nick/Documents/crm-chat/node_modules/.bun/@t3-oss+env-core@0.13.11+e016764623ac6761/node_modules/@t3-oss/env-core/src/index.ts:375:12)
+    at file:///Users/nick/Documents/crm-chat/bins/crm-chat-web/tests/env.ts:9:20
+    at ModuleJob.run (node:internal/modules/esm/module_job:413:25)
+    at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:660:26)
+    at requireOrImport (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/transform/transform.js:216:12)
+    at loadUserConfig (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:107:46)
+    at loadConfig (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:119:22)
+    at loadConfigFromFile (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:331:10)
+    at runTests (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/testActions.js:51:18)
+    at i.<anonymous> (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/program.js:56:7)

@@ -1,0 +1,18 @@
+surface: authenticated browser visual QA
+invocation: timeout 120s nix develop --command bash -lc source .env; export TEST_BASE_URL=http://127.0.0.1:5174; cd bins/crm-chat-web; bun ../../.omo/evidence/t2-message-entities/real-e2e/capture-message-entities-screenshot.ts
+timestamp_utc: 2026-07-05T08:11:23Z
+Using saved setting for 'extra-substituters = https://cache.nixos.org https://nix-community.cachix.org https://nickcomua.cachix.org https://devenv.cachix.org' from ~/.local/share/nix/trusted-settings.json.
+Using saved setting for 'extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs= nickcomua.cachix.org-1:stcsazuAJ0uhVu6i4yXinhDenHEwKngOtystEXf++so= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=' from ~/.local/share/nix/trusted-settings.json.
+Running tasks     devenv:enterShell
+
+Running           devenv:files:cleanup
+Succeeded         devenv:files:cleanup (14.33ms)
+Running           devenv:enterShell
+Succeeded         devenv:enterShell (16.99ms)
+Running           devenv:enterTest
+No command        devenv:enterTest
+1 Skipped, 2 Succeeded
+error: Cannot find module '../../../../bins/crm-chat-web/node_modules/playwright' from '/Users/nick/Documents/crm-chat/.omo/evidence/t2-message-entities/real-e2e/capture-message-entities-screenshot.ts'
+
+Bun v1.3.10 (macOS arm64)
+exit_status=1

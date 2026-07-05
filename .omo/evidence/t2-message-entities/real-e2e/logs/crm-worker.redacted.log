@@ -1,0 +1,70 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running `target/debug/crm-worker`
+2026-07-05T08:27:27.399444Z  INFO crm_worker: starting crm-worker
+2026-07-05T08:27:27.598824Z  INFO crm_worker: checking sessions count=5
+2026-07-05T08:27:27.599673Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR]/https___noted-rabbit-14_clerk_accounts_dev_user_37XCY4ilBFPHd4czdSF2KaHiqDs/telegram_+31617339934.session"
+2026-07-05T08:27:27.599984Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: messanger_telegram: Building TelegramClient
+2026-07-05T08:27:27.603451Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:27:27.657150Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:27:27.657339Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957685302222912)
+2026-07-05T08:27:27.657495Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:27:27.685528Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:27:27.762267Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:+31617339934}: messanger_telegram: TelegramClient built successfully (authorized)
+2026-07-05T08:27:27.903372Z  INFO convex::base_client: Starting mutation model/clients:workerRegisterConnected with id 0
+2026-07-05T08:27:27.924602Z  INFO crm_worker: registered session client_id="jd7cga1yp0qe0e69c77hyx2ds589z5hp" external_id=telegram:+31617339934 owner=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs
+2026-07-05T08:27:27.925261Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR]/https___noted-rabbit-14_clerk_accounts_dev_user_37XCY4ilBFPHd4czdSF2KaHiqDs/telegram_[REDACTED:TG_USER_ID_1].session"
+2026-07-05T08:27:27.925530Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: Building TelegramClient
+2026-07-05T08:27:27.928761Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:27:28.263992Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:27:28.264217Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957687454526208)
+2026-07-05T08:27:28.264347Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:27:28.433137Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:27:28.818414Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: TelegramClient built successfully (authorized)
+2026-07-05T08:27:29.520917Z  INFO convex::base_client: Starting mutation model/clients:workerRegisterConnected with id 1
+2026-07-05T08:27:29.543296Z  INFO crm_worker: registered session client_id="jd78fbjbvs80n3gxfrjxkerdxn89ys1f" external_id=telegram:[REDACTED:TG_USER_ID_1] owner=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_37XCY4ilBFPHd4czdSF2KaHiqDs
+2026-07-05T08:27:29.544293Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783239130654}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_visual-message-entities-1783239130654.session"
+2026-07-05T08:27:29.545008Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783239130654}: messanger_telegram: Building TelegramClient
+2026-07-05T08:27:29.550441Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:27:29.597526Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:27:29.597677Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957693671705504)
+2026-07-05T08:27:29.597746Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:27:29.622118Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:27:29.683096Z  WARN get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783239130654}: messanger_telegram: TelegramClient built successfully (not authorized)
+2026-07-05T08:27:29.712587Z  WARN crm_worker: session not authorized — marking client as error owner=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:visual-message-entities-1783239130654
+2026-07-05T08:27:29.712958Z  INFO convex::base_client: Starting mutation model/clients:workerMarkSessionError with id 2
+2026-07-05T08:27:29.728191Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783238894091}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_message-entities-1783238894091.session"
+2026-07-05T08:27:29.728442Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783238894091}: messanger_telegram: Building TelegramClient
+2026-07-05T08:27:29.730601Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:27:29.785072Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:27:29.785217Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957694398121504)
+2026-07-05T08:27:29.785292Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:27:29.814737Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:27:29.887054Z  WARN get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783238894091}: messanger_telegram: TelegramClient built successfully (not authorized)
+2026-07-05T08:27:29.921502Z  WARN crm_worker: session not authorized — marking client as error owner=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:message-entities-1783238894091
+2026-07-05T08:27:29.921890Z  INFO convex::base_client: Starting mutation model/clients:workerMarkSessionError with id 3
+2026-07-05T08:27:29.936543Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: crm_worker::session_manager: Building new Telegram client path="[REDACTED:TG_SESSION_DIR]/https___noted-rabbit-14_clerk_accounts_dev_user_38yVpuQZN11hAC80cZduwzW3suS/telegram_[REDACTED:TG_USER_ID_1].session"
+2026-07-05T08:27:29.936748Z  INFO get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: Building TelegramClient
+2026-07-05T08:27:29.938866Z  INFO grammers_mtsender::net::tcp: connecting...
+2026-07-05T08:27:29.991785Z  INFO grammers_mtproto::mtp::encrypted: got bad salt; salts have been reset down to a single one
+2026-07-05T08:27:29.991959Z  INFO grammers_mtsender::sender: incorrect server salt; re-sending request MsgId(7658957695232333504)
+2026-07-05T08:27:29.992061Z  INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+2026-07-05T08:27:30.021905Z  INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+2026-07-05T08:27:30.091910Z  WARN get_for_telegram_id{owner_id=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]}: messanger_telegram: TelegramClient built successfully (not authorized)
+2026-07-05T08:27:30.138689Z  WARN crm_worker: session not authorized — marking client as error owner=[REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS telegram_id=telegram:[REDACTED:TG_USER_ID_1]
+2026-07-05T08:27:30.138998Z  INFO convex::base_client: Starting mutation model/clients:workerMarkSessionError with id 4
+2026-07-05T08:27:30.152809Z  INFO crm_worker: session discovery complete registered=2 skipped=3 failed=0
+2026-07-05T08:27:30.153156Z  INFO crm_worker: crm-worker ready job_count=6
+2026-07-05T08:27:30.153267Z  INFO crm_worker::runner: subscribing job="MediaDownloader"
+2026-07-05T08:27:30.153221Z  INFO crm_worker::runner: subscribing job="DialogSync"
+2026-07-05T08:27:30.153375Z  INFO crm_worker::runner: subscribing job="PhoneAuth"
+2026-07-05T08:27:30.153226Z  INFO crm_worker::runner: subscribing job="ChatScanner"
+2026-07-05T08:27:30.153454Z  INFO crm_worker::runner: subscribing job="QrAuth"
+2026-07-05T08:27:30.153228Z  INFO crm_worker::runner: subscribing job="UpdateListener"
+2026-07-05T08:27:30.157309Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::runner: starting
+2026-07-05T08:27:30.157309Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::runner: starting
+2026-07-05T08:27:30.159144Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:27:30.159574Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd78fbjbvs80n3gxfrjxkerdxn89ys1f
+2026-07-05T08:27:30.159748Z  INFO task{job="UpdateListener" key=jd78fbjbvs80n3gxfrjxkerdxn89ys1f}:iter_updates: messanger_telegram::messenger: Starting updates stream
+2026-07-05T08:27:30.160668Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: starting
+2026-07-05T08:27:30.161018Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}: crm_worker::jobs::update_listener: real-time update listener running client_id=jd7cga1yp0qe0e69c77hyx2ds589z5hp
+2026-07-05T08:27:30.161121Z  INFO task{job="UpdateListener" key=jd7cga1yp0qe0e69c77hyx2ds589z5hp}:iter_updates: messanger_telegram::messenger: Starting updates stream

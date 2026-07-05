@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -93,7 +94,13 @@ struct CacheKey {
 pub struct TelegramSessionManager {
     api_id: i32,
     api_hash: String,
-    clients: DashMap<CacheKey, Arc<TelegramClient>>,
+    clients: DashMap<CacheKey, CachedTelegramClient>,
+}
+
+#[derive(Clone)]
+struct CachedTelegramClient {
+    client: Arc<TelegramClient>,
+    modified: Option<SystemTime>,
 }
 
 impl TelegramSessionManager {
@@ -154,8 +161,15 @@ impl TelegramSessionManager {
         key: CacheKey,
         path: PathBuf,
     ) -> Result<Arc<TelegramClient>, WorkerError> {
-        if let Some(client) = self.clients.get(&key) {
-            return Ok(client.clone());
+        let modified = std::fs::metadata(&path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        if let Some(cached) = self.clients.get(&key) {
+            if cached.modified == modified {
+                return Ok(cached.client.clone());
+            }
+            drop(cached);
+            self.clients.remove(&key);
         }
 
         info!(path = ?path, "Building new Telegram client");
@@ -169,7 +183,13 @@ impl TelegramSessionManager {
         .map_err(|e| WorkerError::ClientBuildFailed(e.to_string()))?;
 
         let client = Arc::new(client);
-        self.clients.insert(key, client.clone());
+        self.clients.insert(
+            key,
+            CachedTelegramClient {
+                client: client.clone(),
+                modified,
+            },
+        );
         Ok(client)
     }
 }

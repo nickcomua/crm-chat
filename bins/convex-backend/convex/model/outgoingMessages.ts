@@ -41,6 +41,8 @@ const pendingOutgoingMessageWorkItem = v.object({
 	handler: v.string(),
 });
 
+const sendingLeaseMs = 2 * 60 * 1000;
+
 /** Queue message worker-driven Telegram send. */
 export const send = humanMutation({
 	args: {
@@ -88,23 +90,24 @@ export const send = humanMutation({
 	},
 });
 
-/** Worker queue source: rows in Queued state. */
 export const pendingWork = workerQuery({
 	args: {},
 	returns: v.array(pendingOutgoingMessageWorkItem),
 	handler: async (ctx) => {
-		const rows = await ctx.db
+		const queuedRows = await ctx.db
 			.query("outgoingMessages")
 			.withIndex("by_status", (q) => q.eq("status", "Queued"))
 			.collect();
+		const sendingRows = await ctx.db
+			.query("outgoingMessages")
+			.withIndex("by_status", (q) => q.eq("status", "Sending"))
+			.collect();
 
-		return rows
-			.filter((row) => row.status === "Queued")
-			.map((row) => ({
-				service: "SendMessage" as const,
-				key: row._id,
-				handler: "send",
-			}));
+		return [...queuedRows, ...sendingRows].map((row) => ({
+			service: "SendMessage" as const,
+			key: row._id,
+			handler: "send",
+		}));
 	},
 });
 
@@ -122,18 +125,36 @@ export const workerMarkSending = workerMutation({
 	args: {
 		outgoingMessageId: v.id("outgoingMessages"),
 	},
-	returns: result(v.null(), v.literal("Message not found")),
+	returns: result(
+		v.null(),
+		v.union(
+			v.literal("Message not found"),
+			v.literal("Message is terminal"),
+			v.literal("Message already claimed"),
+		),
+	),
 	handler: async (ctx, { outgoingMessageId }) => {
 		const message = await ctx.db.get(outgoingMessageId);
 		if (!message) {
 			return err("Message not found");
 		}
+		if (message.status === "Sent" || message.status === "Failed") {
+			return err("Message is terminal");
+		}
+		const now = Date.now();
+		if (
+			message.status === "Sending" &&
+			message.lastAttemptedAt !== undefined &&
+			now - message.lastAttemptedAt < sendingLeaseMs
+		) {
+			return err("Message already claimed");
+		}
 
 		await ctx.db.patch(message._id, {
 			status: "Sending",
 			attempts: message.attempts + 1,
-			updatedAt: Date.now(),
-			lastAttemptedAt: Date.now(),
+			updatedAt: now,
+			lastAttemptedAt: now,
 			error: undefined,
 		});
 

@@ -369,7 +369,7 @@
                   cp ${
                     pkgs.fetchurl {
                       url = "https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/completions/bun.zsh";
-                      sha256 = "1avm6cvmvzd87s6kbgfagkrwjfa6341rz61fksiby3nr02j53wi4";
+                      sha256 = "sha256-TL04c0mxtJWY2AkyBZp/Wbpvq371brPFcPnXwaUpmwI=";
                     }
                   } $out/share/zsh/site-functions/_bun
                 '';
@@ -679,6 +679,7 @@
                   secretspec
                   openssl
                   dbus.dev
+                  flock
                   tombi
                   cargo-hakari
                   cargo-audit

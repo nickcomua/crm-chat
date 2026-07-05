@@ -24,6 +24,8 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::TelegramClient;
 
+const SEND_MESSAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Extract the quoted fragment from a grammers message's reply header.
 /// Populated only when the sender used Telegram's "Quote this part" feature;
 /// plain full-message replies have no quote text (callers can look up the
@@ -462,10 +464,21 @@ impl TelegramClient {
         chat_external_id: &ExternalId,
     ) -> Result<Dialog, MessengerError> {
         trace!(chat_external_id = %chat_external_id, "Searching for dialog");
+        let normalized_phone_id = chat_external_id
+            .strip_prefix('+')
+            .unwrap_or(chat_external_id);
         let mut dialogs = client.iter_dialogs();
         let mut found_dialog = None;
         while let Ok(Some(dialog)) = dialogs.next().await {
-            if &dialog.peer().id().bare_id().to_string() == chat_external_id {
+            let peer = dialog.peer();
+            let matches_bare_id = peer.id().bare_id().to_string() == *chat_external_id;
+            let matches_phone = match peer {
+                Peer::User(user) => user
+                    .phone()
+                    .is_some_and(|phone| phone == normalized_phone_id),
+                Peer::Group(_) | Peer::Channel(_) => false,
+            };
+            if matches_bare_id || matches_phone {
                 found_dialog = Some(dialog);
                 break;
             }
@@ -687,12 +700,11 @@ impl MessengerClient for TelegramClient {
         if !self.is_authorized().await? {
             return Err(MessengerError::Authentication("dont have auth".to_string()));
         }
-        let client_arc = self.client.clone();
+        let client = self.direct_client.clone();
         let (sender, receiver) = tokio::sync::mpsc::channel(10);
         let data_stream = tokio_stream_wrappers::wrappers::ReceiverStream::new(receiver);
 
         tokio::spawn(async move {
-            let client = client_arc.lock().await;
             let mut dialogs = client.iter_dialogs();
             let mut count = 0;
             while let Ok(Some(dialog)) = dialogs.next().await {
@@ -741,8 +753,7 @@ impl MessengerClient for TelegramClient {
         debug!("Getting messages count");
         let dialog = self.get_dialog(chat_external_id).await?;
         // Assign the lock to a variable so that the value lives long enough
-        let client = self.client.clone();
-        let client_lock = client.lock().await;
+        let client = self.direct_client.clone();
         let chat = dialog.peer();
         let chat_ref = chat.to_ref().ok_or_else(|| {
             error!(chat_id = %chat.id().bare_id(), "Could not get chat reference");
@@ -751,7 +762,7 @@ impl MessengerClient for TelegramClient {
                 chat.id().bare_id()
             ))
         })?;
-        let mut messages = client_lock.iter_messages(chat_ref);
+        let mut messages = client.iter_messages(chat_ref);
         let count = messages.total().await.map_err(|e| {
             error!(error = %e, "Failed to get messages count");
             MessengerError::Connection(format!("Failed to get messages count: {}", e))
@@ -766,14 +777,13 @@ impl MessengerClient for TelegramClient {
         chat_external_id: &ExternalId,
     ) -> Result<MessageStream, MessengerError> {
         info!("Starting message iteration");
-        let client_arc = self.client.clone();
+        let client = self.direct_client.clone();
         let chat_external_id = chat_external_id.clone();
 
         let (sender, receiver) = tokio::sync::mpsc::channel(10);
         let data_stream = tokio_stream_wrappers::wrappers::ReceiverStream::new(receiver);
 
         tokio::spawn(async move {
-            let client = client_arc.lock().await;
             let dialog = match Self::find_dialog_with_client(&client, &chat_external_id).await {
                 Ok(d) => d,
                 Err(e) => {
@@ -1119,31 +1129,53 @@ impl MessengerClient for TelegramClient {
         text: &str,
     ) -> Result<ExternalId, MessengerError> {
         info!("Sending message");
-        let client = self.client.lock().await;
-        let chat_id: i64 = chat_external_id.parse().map_err(|e| {
-            error!(error = %e, "Invalid chat ID");
-            MessengerError::Serialization(format!("Invalid chat ID: {}", e))
-        })?;
+        let client = self.direct_client.clone();
 
-        let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
-        let chat = dialog.peer();
+        let chat_ref = if chat_external_id.starts_with('+') {
+            let me = client.get_me().await.map_err(|e| {
+                error!(error = %e, "Failed to resolve Telegram Saved Messages peer");
+                MessengerError::Connection(format!(
+                    "Failed to resolve Telegram Saved Messages peer: {e}"
+                ))
+            })?;
+            info!("Resolved outgoing message target as Telegram Saved Messages");
+            me.to_ref().ok_or_else(|| {
+                error!("Could not get reference for Telegram Saved Messages peer");
+                MessengerError::NotFound(
+                    "Could not get reference for Telegram Saved Messages peer".to_string(),
+                )
+            })?
+        } else {
+            let dialog = Self::find_dialog_with_client(&client, chat_external_id).await?;
+            let chat = dialog.peer();
+            info!(
+                resolved_chat_id = %chat.id().bare_id(),
+                "Resolved outgoing message target"
+            );
 
-        // Send the message
-        let chat_ref = chat.to_ref().ok_or_else(|| {
-            error!(chat_id = %chat.id().bare_id(), "Could not get chat reference");
-            MessengerError::NotFound(format!(
-                "Could not get reference for chat: {}",
-                chat.id().bare_id()
-            ))
-        })?;
-        let message = client.send_message(chat_ref, text).await.map_err(|e| {
-            error!(error = %e, "Failed to send message");
-            MessengerError::Connection(format!("Failed to send message: {}", e))
-        })?;
+            chat.to_ref().ok_or_else(|| {
+                error!(chat_id = %chat.id().bare_id(), "Could not get chat reference");
+                MessengerError::NotFound(format!(
+                    "Could not get reference for chat: {}",
+                    chat.id().bare_id()
+                ))
+            })?
+        };
+        info!("Sending message to resolved Telegram peer");
+        let message =
+            tokio::time::timeout(SEND_MESSAGE_TIMEOUT, client.send_message(chat_ref, text))
+                .await
+                .map_err(|_| {
+                    error!("Timed out sending Telegram message");
+                    MessengerError::Connection("Timed out sending Telegram message".to_string())
+                })?
+                .map_err(|e| {
+                    error!(error = %e, "Failed to send message");
+                    MessengerError::Connection(format!("Failed to send message: {}", e))
+                })?;
 
-        let external_id = format!("{}:{}", chat_id, message.id());
         info!(message_id = message.id(), "Message sent successfully");
-        Ok(external_id)
+        Ok(message.id().to_string())
     }
 
     #[instrument(skip(self, new_text), fields(chat_id = %chat_external_id, message_id = %message_external_id))]

@@ -1,0 +1,53 @@
+surface: Playwright browser E2E
+invocation: timeout 300s nix develop --command bash -lc source .env; cd bins/crm-chat-web; bunx playwright test --project=chromium tests/message-entities.spec.ts
+timestamp_utc: 2026-07-05T08:05:45Z
+Using saved setting for 'extra-substituters = https://cache.nixos.org https://nix-community.cachix.org https://nickcomua.cachix.org https://devenv.cachix.org' from ~/.local/share/nix/trusted-settings.json.
+Using saved setting for 'extra-trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs= nickcomua.cachix.org-1:stcsazuAJ0uhVu6i4yXinhDenHEwKngOtystEXf++so= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=' from ~/.local/share/nix/trusted-settings.json.
+Running tasks     devenv:enterShell
+
+Running           devenv:files:cleanup
+Succeeded         devenv:files:cleanup (14.49ms)
+Running           devenv:enterShell
+Succeeded         devenv:enterShell (17.08ms)
+Running           devenv:enterTest
+No command        devenv:enterTest
+1 Skipped, 2 Succeeded
+(node:54529) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+Running 4 tests using 1 worker
+
+[1A[2K(node:54533) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:54533) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:54533) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/4] [setup] › tests/auth.setup.ts:11:1 › authenticate
+[1A[2K  1) [setup] › tests/auth.setup.ts:11:1 › authenticate ─────────────────────────────────────────────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForFunction: Test timeout of 30000ms exceeded.
+
+      17 |
+      18 | 	// Wait for Clerk SDK to fully initialize before saving storage state
+    > 19 | 	const clerkUserHandle = await page.waitForFunction(
+         | 	                                   ^
+      20 | 		() => {
+      21 | 			const w = globalThis as unknown as Record<
+      22 | 				string,
+        at /Users/nick/Documents/crm-chat/bins/crm-chat-web/tests/auth.setup.ts:19:37
+
+    Error Context: test-results/auth.setup.ts-authenticate-setup/error-context.md
+
+
+[global-teardown] No user-meta.json found — nothing to clean up
+[1A[2K  1 failed
+    [setup] › tests/auth.setup.ts:11:1 › authenticate ──────────────────────────────────────────────
+  3 did not run
+exit_status=1

@@ -7,6 +7,9 @@ import { api } from "crm-chat-convex-backend/convex/_generated/api";
 import type { Id } from "crm-chat-convex-backend/convex/_generated/dataModel";
 import { env } from "./env.ts";
 
+const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(TESTS_DIR, "../../..");
+
 /** Per-worker config passed via fixtures — avoids process.env race conditions. */
 export interface WorkerConfig {
 	convexUrl: string;
@@ -146,10 +149,7 @@ export async function getConvexUserId(page: Page): Promise<string> {
 	return `${env.CLERK_JWT_ISSUER_DOMAIN}|${id}`;
 }
 
-const USER_META_FILE = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	".auth/user-meta.json",
-);
+const USER_META_FILE = path.join(TESTS_DIR, ".auth/user-meta.json");
 
 /**
  * Read the Convex tokenIdentifier cached by auth.setup.ts. Prefer this over
@@ -347,6 +347,18 @@ export function sanitizeOwnerId(ownerId: string): string {
 
 const TELEGRAM_PREFIX_RE = /^telegram:/;
 
+export function resolveWorkerSessionDir(sessionDir?: string): string {
+	const configured = sessionDir ?? env.TG_SESSION_DIR;
+	if (!configured) {
+		throw new Error(
+			"TG_SESSION_DIR is not set — add it to the e2e_web secretspec profile",
+		);
+	}
+	return path.isAbsolute(configured)
+		? configured
+		: path.resolve(REPO_ROOT, configured);
+}
+
 /**
  * Compute session file path matching Rust session_manager's naming convention.
  *
@@ -363,13 +375,10 @@ export function getSessionPath(
 	ownerId: string,
 	sessionDir?: string,
 ): string {
-	const baseDir = sessionDir ?? env.TG_SESSION_DIR;
-	if (!baseDir) {
-		throw new Error(
-			"TG_SESSION_DIR not set — add it to the e2e_web secretspec profile",
-		);
-	}
-	const dir = path.join(baseDir, sanitizeOwnerId(ownerId));
+	const dir = path.join(
+		resolveWorkerSessionDir(sessionDir),
+		sanitizeOwnerId(ownerId),
+	);
 	// Strip "telegram:" scheme prefix, then use "telegram_" file prefix (matching Rust)
 	const suffix = identifier.replace(TELEGRAM_PREFIX_RE, "");
 	return path.join(dir, `telegram_${suffix}.session`);

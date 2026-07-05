@@ -1,0 +1,16 @@
+surface: final process cleanup
+invocation: pgrep -af for concrete lingering T2 run commands
+timestamp_utc: 2026-07-05T08:13:21Z
+pattern=vite --host 127.0.0.1 --port 5174
+56770
+56771
+pattern=playwright test --project=chromium tests/message-entities.spec.ts
+56770
+56771
+pattern=playwright test --project=tg-scan tests/e2e-telegram/scan-chats.spec.ts
+56770
+56771
+pattern=capture-message-entities-screenshot.ts
+56770
+56771
+exit_status=0

@@ -45,6 +45,10 @@ import { Textarea } from "./ui/textarea";
 
 const PAGE_SIZE = 8000;
 
+function isOkResult(result: unknown): result is { readonly Ok: unknown } {
+	return typeof result === "object" && result !== null && "Ok" in result;
+}
+
 function getScrollAlign(
 	index: number,
 	scrollEl: HTMLElement | null,
@@ -328,11 +332,7 @@ export function MessageList({
 				text,
 			});
 			onResultError(result);
-			if (
-				result &&
-				typeof result === "object" &&
-				!("Err" in (result as Record<string, unknown>))
-			) {
+			if (isOkResult(result)) {
 				setComposerText("");
 			}
 		} finally {

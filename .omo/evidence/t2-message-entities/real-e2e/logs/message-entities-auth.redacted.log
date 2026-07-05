@@ -1,0 +1,34 @@
+(node:61988) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+Running 4 tests using 1 worker
+
+[1A[2K(node:61989) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:61989) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:61989) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/4] [setup] › tests/auth.setup.ts:11:1 › authenticate
+[1A[2K[setup] › tests/auth.setup.ts:11:1 › authenticate
+[auth.setup] Cleaned up previous data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+
+[1A[2K(node:61999) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:61999) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+
+[1A[2K(node:61999) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[2/4] [chromium] › tests/message-entities.spec.ts:77:2 › Message entities › stores rich text entity ranges with the seeded message
+[1A[2K[3/4] [chromium] › tests/message-entities.spec.ts:99:2 › Message entities › rejects custom emoji entity ranges outside message text
+[1A[2K[4/4] [chromium] › tests/message-entities.spec.ts:128:2 › Message entities › renders native emoji as text and custom emoji as fallback
+[global-teardown] Cleaned up data for [REDACTED:CLERK_JWT_ISSUER_DOMAIN]|user_38yVpuQZN11hAC80cZduwzW3suS
+[1A[2K  4 passed (5.5s)

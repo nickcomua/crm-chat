@@ -1,0 +1,86 @@
+(node:59043) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+❌ Invalid environment variables: [
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_CLERK_USERNAME' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_CLERK_PASSWORD' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'VITE_CLERK_PUBLISHABLE_KEY' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'CLERK_JWT_ISSUER_DOMAIN' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'CLERK_M2M_SECRET_KEY' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_ID' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_HASH' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_SESSION_FILE_1' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TG_USER_ID_1' ],
+    message: 'Required'
+  },
+  {
+    code: 'invalid_type',
+    expected: 'string',
+    received: 'undefined',
+    path: [ 'TEST_BASE_URL' ],
+    message: 'Required'
+  }
+]
+Error: Invalid environment variables
+    at file:///Users/nick/Documents/crm-chat/node_modules/.bun/@t3-oss+env-core@0.13.11+e016764623ac6761/node_modules/@t3-oss/env-core/src/index.ts:365:13
+    at createEnv (file:///Users/nick/Documents/crm-chat/node_modules/.bun/@t3-oss+env-core@0.13.11+e016764623ac6761/node_modules/@t3-oss/env-core/src/index.ts:375:12)
+    at file:///Users/nick/Documents/crm-chat/bins/crm-chat-web/tests/env.ts:9:20
+    at ModuleJob.run (node:internal/modules/esm/module_job:447:25)
+    at node:internal/modules/esm/loader:646:26
+    at requireOrImport (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/transform/transform.js:216:12)
+    at loadUserConfig (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:107:46)
+    at loadConfig (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:119:22)
+    at loadConfigFromFile (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/common/configLoader.js:331:10)
+    at runTests (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/testActions.js:51:18)
+    at i.<anonymous> (/Users/nick/Documents/crm-chat/node_modules/.bun/playwright@1.59.1/node_modules/playwright/lib/program.js:56:7)
