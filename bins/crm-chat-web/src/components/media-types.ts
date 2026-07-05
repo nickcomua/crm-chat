@@ -6,6 +6,7 @@ export type MediaKind =
 	| "Voice"
 	| "Sticker"
 	| "Animation"
+	| "CustomEmoji"
 	| "Document";
 
 /** Label shown in chat list preview for a media-only message. */
@@ -25,6 +26,8 @@ export function mediaKindLabel(kind: MediaKind): string {
 			return "Sticker";
 		case "Animation":
 			return "GIF";
+		case "CustomEmoji":
+			return "Custom emoji";
 		default:
 			return "Document";
 	}

@@ -6,6 +6,16 @@ use serde_json::Value as JsonValue;
 use crate::message::MessageSummary;
 use crate::types::ExternalId;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum UserAvailability {
+    Empty,
+    Online { expires_at_ms: Option<u64> },
+    Offline { was_online_at_ms: Option<u64> },
+    Recently,
+    LastWeek,
+    LastMonth,
+}
+
 /// Universal update event from the messenger platform.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Update {
@@ -19,6 +29,10 @@ pub enum Update {
         message_external_ids: Vec<ExternalId>,
         /// External identifier of the chat.
         chat_external_id: Option<ExternalId>,
+    },
+    UserStatus {
+        sender_id: ExternalId,
+        availability: UserAvailability,
     },
     /// Other update types (platform-specific).
     Other {

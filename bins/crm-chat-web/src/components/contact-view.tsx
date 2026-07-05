@@ -15,7 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { api, type Id, onResultError } from "@/lib/convex";
 import { cn, getAvatarGradient, getInitials } from "../lib/utils";
-import { ContactCustomFields } from "./contact-custom-fields";
+import { ContactInformationPanel } from "./contact-information-panel";
 import { ContactMergedTimeline } from "./contact-merged-timeline";
 import { ContactPinnedMessages } from "./contact-pinned-messages";
 import { MergeContactsDialog } from "./merge-contacts-dialog";
@@ -272,7 +272,7 @@ export function ContactView({
 							<SheetTitle>Contact details</SheetTitle>
 						</SheetHeader>
 						<div className="flex-1 space-y-4 overflow-y-auto px-4 pb-4">
-							<ContactCustomFields contact={contact} />
+							<ContactInformationPanel contactId={contactId} />
 							<Separator />
 							<ContactPinnedMessages contactId={contactId} />
 						</div>

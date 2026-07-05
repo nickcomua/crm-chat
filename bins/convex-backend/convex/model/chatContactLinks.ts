@@ -30,4 +30,5 @@ const chatContactLinkFields = v.object({
 export const chatContactLinksTable = defineTable(chatContactLinkFields)
 	.index("by_userId_chatId", ["userId", "chatId"])
 	.index("by_userId_chatId_senderId", ["userId", "chatId", "senderId"])
+	.index("by_userId_senderId", ["userId", "senderId"])
 	.index("by_contactId", ["contactId"]);

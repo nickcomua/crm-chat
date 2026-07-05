@@ -11,10 +11,13 @@ use grammers_client::{
     update::Update as TgUpdate,
     Client,
 };
-use grammers_tl_types as tl;
+use grammers_tl_types::{
+    self as tl,
+    enums::{Update as RawUpdate, UserStatus},
+};
 use messanger_interface::{
     ChatSummary, DialogStream, ExternalId, MediaKind, MediaSummary, MessageStream, MessageSummary,
-    MessengerClient, MessengerError, NativePayload, Update, UpdateStream,
+    MessengerClient, MessengerError, NativePayload, Update, UpdateStream, UserAvailability,
 };
 use tokio_stream as tokio_stream_wrappers;
 use tracing::{debug, error, info, instrument, trace, warn};
@@ -566,6 +569,26 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                 chat_external_id: channel_id.map(|id| id.to_string()),
             }
         }
+        TgUpdate::Raw(raw) => match &raw.raw {
+            RawUpdate::UserStatus(status) => Update::UserStatus {
+                sender_id: status.user_id.to_string(),
+                availability: convert_user_status(&status.status),
+            },
+            _ => {
+                let update_type = format!("{:?}", std::mem::discriminant(&raw.raw));
+                trace!(update_type = %update_type, "Received other update type");
+                let payload = serde_json::to_value(&raw.raw).unwrap_or_else(|e| {
+                    serde_json::json!({
+                        "error": format!("Failed to serialize update: {}", e),
+                        "type": update_type.clone(),
+                    })
+                });
+                Update::Other {
+                    update_type,
+                    payload,
+                }
+            }
+        },
         other => {
             let update_type = format!("{:?}", std::mem::discriminant(other));
             trace!(update_type = %update_type, "Received other update type");
@@ -580,6 +603,25 @@ fn convert_tg_update(update: &TgUpdate) -> Update {
                 payload,
             }
         }
+    }
+}
+
+fn seconds_to_ms(seconds: i32) -> Option<u64> {
+    u64::try_from(seconds).ok().map(|value| value * 1000)
+}
+
+fn convert_user_status(status: &UserStatus) -> UserAvailability {
+    match status {
+        UserStatus::Empty => UserAvailability::Empty,
+        UserStatus::Online(value) => UserAvailability::Online {
+            expires_at_ms: seconds_to_ms(value.expires),
+        },
+        UserStatus::Offline(value) => UserAvailability::Offline {
+            was_online_at_ms: seconds_to_ms(value.was_online),
+        },
+        UserStatus::Recently(_) => UserAvailability::Recently,
+        UserStatus::LastWeek(_) => UserAvailability::LastWeek,
+        UserStatus::LastMonth(_) => UserAvailability::LastMonth,
     }
 }
 

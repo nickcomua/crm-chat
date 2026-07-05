@@ -20,7 +20,7 @@ pub use media::{MediaKind, MediaSummary};
 pub use message::MessageSummary;
 pub use native::NativePayload;
 pub use types::{DialogStream, ExternalId, MessageStream, UpdateStream};
-pub use update::Update;
+pub use update::{Update, UserAvailability};
 
 #[cfg(test)]
 mod tests {

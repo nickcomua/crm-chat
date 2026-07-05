@@ -8,6 +8,7 @@ export const mediaKind = v.union(
 	v.literal("Voice"),
 	v.literal("Sticker"),
 	v.literal("Animation"),
+	v.literal("CustomEmoji"),
 	v.literal("Document"),
 );
 

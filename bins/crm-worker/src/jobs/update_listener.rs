@@ -11,12 +11,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use convex_backend::{
-    ClientsGetForWorkerArgs, ConvexApi, ConvexApiClient, MediaWorkerCreatePendingMediaArgs,
-    MediaWorkerCreatePendingMediaReturn, MessagesWorkerMarkMessageDeletedArgs,
-    MessagesWorkerUpsertMessageArgs,
+    ClientsGetForWorkerArgs, ContactPresenceWorkerRecordStatusArgs,
+    ContactPresenceWorkerRecordStatusStatus, ConvexApi, ConvexApiClient,
+    MediaWorkerCreatePendingMediaArgs, MediaWorkerCreatePendingMediaReturn,
+    MessagesWorkerMarkMessageDeletedArgs, MessagesWorkerUpsertMessageArgs,
 };
 use futures::{StreamExt, stream::BoxStream};
-use messanger_interface::{MessengerClient, Update};
+use messanger_interface::{MessengerClient, Update, UserAvailability};
 use messanger_telegram::TelegramClient;
 use tracing::{info, warn};
 
@@ -292,9 +293,73 @@ async fn process_update(
             }
         }
 
+        Update::UserStatus {
+            sender_id,
+            availability,
+        } => {
+            let (status, expires_at, was_online_at) = map_availability(availability);
+            convex
+                .contact_presence_worker_record_status(ContactPresenceWorkerRecordStatusArgs {
+                    userId: req.user_id.clone(),
+                    clientId: req.client_id.clone(),
+                    senderId: sender_id.clone(),
+                    status,
+                    observedAt: current_timestamp_ms() as f64,
+                    expiresAt: expires_at.map(|value| value as f64),
+                    wasOnlineAt: was_online_at.map(|value| value as f64),
+                    raw: None,
+                })
+                .await
+                .warn_on_err("failed to record contact presence");
+        }
+
         Update::Other { update_type: _, .. } => {
             // debug!(update_type, "ignoring non-message update");
         }
     }
     Ok(())
+}
+
+fn current_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn map_availability(
+    availability: &UserAvailability,
+) -> (
+    ContactPresenceWorkerRecordStatusStatus,
+    Option<u64>,
+    Option<u64>,
+) {
+    match availability {
+        UserAvailability::Empty => (ContactPresenceWorkerRecordStatusStatus::Empty, None, None),
+        UserAvailability::Online { expires_at_ms } => (
+            ContactPresenceWorkerRecordStatusStatus::Online,
+            *expires_at_ms,
+            None,
+        ),
+        UserAvailability::Offline { was_online_at_ms } => (
+            ContactPresenceWorkerRecordStatusStatus::Offline,
+            None,
+            *was_online_at_ms,
+        ),
+        UserAvailability::Recently => (
+            ContactPresenceWorkerRecordStatusStatus::Recently,
+            None,
+            None,
+        ),
+        UserAvailability::LastWeek => (
+            ContactPresenceWorkerRecordStatusStatus::LastWeek,
+            None,
+            None,
+        ),
+        UserAvailability::LastMonth => (
+            ContactPresenceWorkerRecordStatusStatus::LastMonth,
+            None,
+            None,
+        ),
+    }
 }
