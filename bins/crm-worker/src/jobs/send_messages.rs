@@ -116,14 +116,16 @@ impl Job for SendMessagesJob {
             .await
             .map_err(|error| WorkerError::MutationFailed(error.to_string()))?;
 
-        let message_id = format!("{}:{}", outgoing.chat_id, external_message_id);
+        let normalized_external_message_id =
+            normalize_sent_external_message_id(&chat_external_id, &external_message_id);
+        let message_id = format!("{}:{}", outgoing.chat_id, normalized_external_message_id);
         let timestamp = current_timestamp_ms() as f64;
 
         let upsert_result = ctx
             .convex
             .messages_worker_upsert_message(MessagesWorkerUpsertMessageArgs {
                 messageId: message_id,
-                externalId: external_message_id.clone(),
+                externalId: normalized_external_message_id.clone(),
                 userId: outgoing.user_id.clone(),
                 clientId: outgoing.client_id.clone(),
                 chatId: outgoing.chat_id.clone(),
@@ -163,7 +165,7 @@ impl Job for SendMessagesJob {
         ctx.convex
             .outgoing_messages_worker_mark_sent(OutgoingMessagesWorkerMarkSentArgs {
                 outgoingMessageId: outgoing.id,
-                externalMessageId: external_message_id,
+                externalMessageId: normalized_external_message_id,
             })
             .await
             .check()?;
@@ -184,4 +186,30 @@ fn current_timestamp_ms() -> i64 {
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn normalize_sent_external_message_id(chat_external_id: &str, sent_external_id: &str) -> String {
+    sent_external_id
+        .strip_prefix(&format!("{chat_external_id}:"))
+        .unwrap_or(sent_external_id)
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_sent_external_message_id;
+
+    #[test]
+    fn normalize_sent_external_message_id_strips_chat_prefix() {
+        let actual = normalize_sent_external_message_id("12345", "12345:678");
+
+        assert_eq!(actual, "678");
+    }
+
+    #[test]
+    fn normalize_sent_external_message_id_keeps_opaque_ids() {
+        let actual = normalize_sent_external_message_id("12345", "msg:12345:678");
+
+        assert_eq!(actual, "msg:12345:678");
+    }
 }

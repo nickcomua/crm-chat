@@ -265,6 +265,16 @@ export const queryChats = workerQuery({
 	},
 });
 
+export const queryOutgoingMessages = workerQuery({
+	args: { userId: v.string() },
+	handler: async (ctx, { userId }) => {
+		return await ctx.db
+			.query("outgoingMessages")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+	},
+});
+
 /** Count media records by status for a user. Robot-accessible. */
 export const queryMediaCountByStatus = workerQuery({
 	args: { userId: v.string(), statuses: v.array(mediaStatus) },
@@ -420,6 +430,14 @@ export const deleteAllForUser = workerMutation({
 			.collect();
 		for (const contact of contacts) {
 			await ctx.db.delete(contact._id);
+		}
+
+		const outgoingMessages = await ctx.db
+			.query("outgoingMessages")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+		for (const outgoing of outgoingMessages) {
+			await ctx.db.delete(outgoing._id);
 		}
 
 		// Delete QR auth sessions
