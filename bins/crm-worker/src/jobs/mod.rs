@@ -12,4 +12,5 @@ pub mod dialog_sync;
 pub mod media_downloader;
 pub mod phone_auth;
 pub mod qr_auth;
+pub mod send_messages;
 pub mod update_listener;

@@ -743,6 +743,88 @@ export const workerMarkMediaFailed = workerMutation({
 // =============================================================================
 
 /** Media records needing download, with optional concurrency limit. */
+const customEmojiAsset = v.object({
+	telegramFileId: v.string(),
+	status: mediaStatus,
+	mimeType: v.optional(v.string()),
+	url: v.optional(v.string()),
+});
+
+/** Fetch custom emoji asset metadata for a specific message/entity pair. */
+export const getCustomEmojiAsset = humanQuery({
+	args: { messageId: v.string(), documentId: v.string() },
+	returns: v.union(customEmojiAsset, v.null()),
+	handler: async (ctx, { messageId, documentId }) => {
+		const message = await ctx.db
+			.query("messages")
+			.withIndex("by_messageId", (q) => q.eq("messageId", messageId))
+			.unique();
+		if (!message || message.userId !== ctx.caller.tokenIdentifier) {
+			return null;
+		}
+
+		const media = await ctx.db
+			.query("media")
+			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", documentId))
+			.unique();
+		if (!media || media.userId !== ctx.caller.tokenIdentifier) {
+			return null;
+		}
+		if (media.messageId !== undefined && media.messageId !== messageId) {
+			return null;
+		}
+
+		let url: string | undefined;
+		if (media.status === "Stored" && media.storageId) {
+			const storageUrl = await ctx.storage.getUrl(media.storageId);
+			url = storageUrl ?? undefined;
+		}
+
+		return {
+			telegramFileId: media.telegramFileId,
+			status: media.status,
+			mimeType: media.mimeType,
+			url,
+		};
+	},
+});
+
+/** Request pending download for a custom-emoji asset row. */
+export const requestCustomEmojiAsset = humanMutation({
+	args: { messageId: v.string(), documentId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, { messageId, documentId }) => {
+		const message = await ctx.db
+			.query("messages")
+			.withIndex("by_messageId", (q) => q.eq("messageId", messageId))
+			.unique();
+		if (!message || message.userId !== ctx.caller.tokenIdentifier) {
+			return null;
+		}
+
+		const media = await ctx.db
+			.query("media")
+			.withIndex("by_telegramFileId", (q) => q.eq("telegramFileId", documentId))
+			.unique();
+		if (!media || media.userId !== ctx.caller.tokenIdentifier) {
+			return null;
+		}
+		if (media.messageId !== undefined && media.messageId !== messageId) {
+			return null;
+		}
+
+		if (media.status === "Stored" || media.status === "Downloading") {
+			return null;
+		}
+
+		await ctx.db.patch(media._id, {
+			status: "Pending",
+			error: undefined,
+		});
+		return null;
+	},
+});
+
 export const pendingWork = workerQuery({
 	args: {},
 	returns: v.array(v.string()),

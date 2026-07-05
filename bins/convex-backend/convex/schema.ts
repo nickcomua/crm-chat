@@ -7,6 +7,7 @@ import { contactsTable } from "./model/contacts";
 import { mediaTable } from "./model/media";
 import { messagesTable } from "./model/messages";
 import { notificationsTable } from "./model/notifications";
+import { outgoingMessagesTable } from "./model/outgoingMessages";
 import { phoneAuthsTable } from "./model/phoneAuth";
 import { qrAuthsTable } from "./model/qrAuth";
 
@@ -22,4 +23,5 @@ export default defineSchema({
 	contacts: contactsTable,
 	contactPins: contactPinsTable,
 	chatContactLinks: chatContactLinksTable,
+	outgoingMessages: outgoingMessagesTable,
 });

@@ -8,8 +8,16 @@ import {
 } from "@tanstack/react-virtual";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { useQuery as useCachedQuery } from "convex-helpers/react/cache";
-import { ArrowLeft, Loader2, UserPlus } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Loader2, Send, UserPlus } from "lucide-react";
+import {
+	type FormEvent,
+	type KeyboardEvent,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useContactForChat } from "@/hooks/use-contact-for-chat";
 import { api, onResultError } from "@/lib/convex";
 import { displayChatName, displayClientName } from "@/utils/display";
@@ -33,6 +41,7 @@ import {
 	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { Textarea } from "./ui/textarea";
 
 const PAGE_SIZE = 8000;
 
@@ -172,6 +181,9 @@ export function MessageList({
 
 	const [openCreateContact, setOpenCreateContact] = useState(false);
 	const [openAttachContact, setOpenAttachContact] = useState(false);
+	const sendMessage = useMutation(api.model.outgoingMessages.send);
+	const [composerText, setComposerText] = useState("");
+	const [isSending, setIsSending] = useState(false);
 
 	// Contacts linked to this chat (0 for unlinked dialogs, 1 for linked
 	// 1:1s, 1+ for linked group chats).
@@ -303,6 +315,44 @@ export function MessageList({
 		}
 		p.lastCount = currCount;
 	});
+
+	const handleSendMessage = async (): Promise<void> => {
+		const text = composerText.trim();
+		if (!chat || !text || isSending) {
+			return;
+		}
+		setIsSending(true);
+		try {
+			const result = await sendMessage({
+				chatId: chat.chatId,
+				text,
+			});
+			onResultError(result);
+			if (
+				result &&
+				typeof result === "object" &&
+				!("Err" in (result as Record<string, unknown>))
+			) {
+				setComposerText("");
+			}
+		} finally {
+			setIsSending(false);
+		}
+	};
+
+	const handleComposerSubmit = (event: FormEvent<HTMLFormElement>): void => {
+		event.preventDefault();
+		void handleSendMessage();
+	};
+
+	const handleComposerKeyDown = (
+		event: KeyboardEvent<HTMLTextAreaElement>,
+	): void => {
+		if (event.key === "Enter" && !event.shiftKey) {
+			event.preventDefault();
+			void handleSendMessage();
+		}
+	};
 
 	if (status === "LoadingFirstPage") {
 		return (
@@ -506,6 +556,28 @@ export function MessageList({
 					</div>
 				)}
 			</div>
+			<form
+				className="border-border/50 border-t p-2"
+				onSubmit={handleComposerSubmit}
+			>
+				<div className="flex gap-2">
+					<Textarea
+						className="min-h-10 max-h-32 resize-none"
+						onChange={(event) => setComposerText(event.target.value)}
+						onKeyDown={handleComposerKeyDown}
+						placeholder="Write a message..."
+						value={composerText}
+					/>
+					<Button
+						aria-label="Send message"
+						disabled={!chat || !composerText.trim() || isSending}
+						size="icon"
+						type="submit"
+					>
+						<Send className="h-4 w-4" />
+					</Button>
+				</div>
+			</form>
 			{chat && (
 				<>
 					<CreateContactDialog

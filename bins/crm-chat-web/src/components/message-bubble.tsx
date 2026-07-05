@@ -1,5 +1,6 @@
 import { Ban, Forward, Pin, PinOff, Reply, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { type MessageEntityDoc, renderMessageText } from "./custom-emoji-text";
 import { type MediaInfo, MediaRenderer } from "./media-renderer";
 import { Badge } from "./ui/badge";
 
@@ -26,6 +27,7 @@ export interface MessageDoc {
 	reactions?: ReactionDoc[];
 	replyToMessageId?: string;
 	replyToText?: string;
+	entities?: MessageEntityDoc[];
 	text?: string;
 	timestamp: number;
 	// TTL fields for self-destructing/view-once media
@@ -289,7 +291,14 @@ export function MessageBubble({
 							hasMedia && "px-2.5 pt-1",
 						)}
 					>
-						{message.text}
+						{message.text &&
+							(message.entities
+								? renderMessageText(
+										message.messageId,
+										message.text,
+										message.entities,
+									)
+								: message.text)}
 					</p>
 				)}
 

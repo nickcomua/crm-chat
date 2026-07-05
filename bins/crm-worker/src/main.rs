@@ -33,6 +33,7 @@ use crate::jobs::dialog_sync::DialogSyncJob;
 use crate::jobs::media_downloader::MediaDownloaderJob;
 use crate::jobs::phone_auth::PhoneAuthJob;
 use crate::jobs::qr_auth::QrAuthJob;
+use crate::jobs::send_messages::SendMessagesJob;
 use crate::jobs::update_listener::UpdateListenerJob;
 use crate::ops::convex::ConvexApi;
 use crate::runner::run_job;
@@ -76,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(UpdateListenerJob),
         Arc::new(ChatScannerJob),
         Arc::new(MediaDownloaderJob::new()),
+        Arc::new(SendMessagesJob),
         Arc::new(PhoneAuthJob),
         Arc::new(QrAuthJob),
     ];

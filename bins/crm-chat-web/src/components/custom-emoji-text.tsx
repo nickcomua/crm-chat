@@ -15,7 +15,14 @@ export interface MessageEntityDoc {
 	offset: number;
 }
 
-const CUSTOM_EMOJI_RENDER_SIZE = "1.25em";
+const CUSTOM_EMOJI_RENDER_SIZE = "1rem";
+const CUSTOM_EMOJI_RENDER_STYLE = {
+	width: CUSTOM_EMOJI_RENDER_SIZE,
+	height: CUSTOM_EMOJI_RENDER_SIZE,
+	maxWidth: CUSTOM_EMOJI_RENDER_SIZE,
+	maxHeight: CUSTOM_EMOJI_RENDER_SIZE,
+	display: "inline-block",
+} as const;
 
 const supportedImageMimeType = (mimeType: string | undefined): boolean => {
 	if (mimeType === undefined) {
@@ -103,12 +110,9 @@ function TgsSticker({
 
 	return (
 		<div
-			className="inline-flex align-[-0.2em]"
+			className="inline-flex align-[-0.2em] overflow-hidden"
 			ref={containerRef}
-			style={{
-				width: CUSTOM_EMOJI_RENDER_SIZE,
-				height: CUSTOM_EMOJI_RENDER_SIZE,
-			}}
+			style={CUSTOM_EMOJI_RENDER_STYLE}
 		/>
 	);
 }
@@ -161,10 +165,7 @@ function CustomEmojiEntity({
 			<img
 				alt={fallbackText}
 				className="inline-block align-[-0.2em]"
-				style={{
-					width: CUSTOM_EMOJI_RENDER_SIZE,
-					height: CUSTOM_EMOJI_RENDER_SIZE,
-				}}
+				style={CUSTOM_EMOJI_RENDER_STYLE}
 				data-custom-emoji-document-id={documentId}
 				data-testid="custom-emoji-asset"
 				loading="lazy"
