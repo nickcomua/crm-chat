@@ -19,6 +19,8 @@ interface ContactListRow {
 	lastInteractionAt?: number;
 	lastMessagePreview?: string;
 	lastMessageChatDisplayName?: string;
+	isOnline: boolean;
+	latestPresenceStatus?: string;
 }
 
 function formatTimestamp(ts: number): string {
@@ -167,6 +169,15 @@ export function ContactList({
 										>
 											{getInitials(displayName)}
 										</div>
+										{contact.isOnline && (
+											<>
+												<span
+													aria-hidden="true"
+													className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-sidebar bg-emerald-500 shadow-sm"
+												/>
+												<span className="sr-only">{displayName} is online</span>
+											</>
+										)}
 									</div>
 
 									<div className="min-w-0 flex-1">
@@ -182,6 +193,11 @@ export function ContactList({
 													>
 														{contact.linkedChatCount}
 													</Badge>
+												)}
+												{contact.isOnline && (
+													<span className="shrink-0 text-[10px] text-emerald-600">
+														online
+													</span>
 												)}
 											</div>
 											{contact.lastInteractionAt && (

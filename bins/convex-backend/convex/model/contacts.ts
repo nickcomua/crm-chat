@@ -20,12 +20,19 @@
 import { defineTable, paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
+import type { QueryCtx } from "../_generated/server";
 import { humanMutation, humanQuery } from "../functions";
 import { err, ok, result } from "../helpers/result";
 import {
 	customFieldValidator,
 	senderLinkValidator,
 } from "../helpers/validators";
+
+type AuthenticatedQueryCtx = QueryCtx & {
+	readonly caller: {
+		readonly tokenIdentifier: string;
+	};
+};
 
 // =============================================================================
 // Table definition
@@ -58,6 +65,9 @@ export const contactListItem = contactDoc.extend({
 	lastMessagePreview: v.optional(v.string()),
 	lastMessageChatId: v.optional(v.string()),
 	lastMessageChatDisplayName: v.optional(v.string()),
+	isOnline: v.boolean(),
+	latestPresenceStatus: v.optional(v.string()),
+	latestPresenceObservedAt: v.optional(v.number()),
 });
 
 export const contactsTable = defineTable(contactFields)
@@ -91,6 +101,50 @@ function getChatDisplayName(chat: {
 	return `Chat ${chat.chatId.slice(0, 8)}`;
 }
 
+async function getLatestPresenceForSenders(
+	ctx: AuthenticatedQueryCtx,
+	userId: string,
+	senderIds: readonly string[],
+): Promise<{
+	isOnline: boolean;
+	status?: string;
+	observedAt?: number;
+}> {
+	let latest:
+		| {
+				status: string;
+				observedAt: number;
+				expiresAt?: number;
+		  }
+		| undefined;
+	for (const senderId of senderIds) {
+		const presence = await ctx.db
+			.query("contactPresence")
+			.withIndex("by_userId_senderId_observedAt", (q) =>
+				q.eq("userId", userId).eq("senderId", senderId),
+			)
+			.order("desc")
+			.first();
+		if (!presence) {
+			continue;
+		}
+		if (!latest || presence.observedAt > latest.observedAt) {
+			latest = {
+				status: presence.status,
+				observedAt: presence.observedAt,
+				expiresAt: presence.expiresAt,
+			};
+		}
+	}
+	return {
+		isOnline:
+			latest?.status === "online" &&
+			(latest.expiresAt === undefined || latest.expiresAt > Date.now()),
+		status: latest?.status,
+		observedAt: latest?.observedAt,
+	};
+}
+
 // =============================================================================
 // CRUD + link management (humanQuery / humanMutation)
 // =============================================================================
@@ -119,6 +173,12 @@ export const list = humanQuery({
 				.collect();
 
 			const chatIds = new Set(links.map((l) => l.chatId));
+			const senderIds = [...new Set(links.map((l) => l.senderId))];
+			const latestPresence = await getLatestPresenceForSenders(
+				ctx,
+				ctx.caller.tokenIdentifier,
+				senderIds,
+			);
 			let lastInteractionAt: number | undefined;
 			let lastMessagePreview: string | undefined;
 			let lastMessageChatId: string | undefined;
@@ -157,6 +217,9 @@ export const list = humanQuery({
 				lastMessagePreview,
 				lastMessageChatId,
 				lastMessageChatDisplayName,
+				isOnline: latestPresence.isOnline,
+				latestPresenceStatus: latestPresence.status,
+				latestPresenceObservedAt: latestPresence.observedAt,
 			});
 		}
 
@@ -178,6 +241,9 @@ export const get = humanQuery({
 		v.null(),
 		v.object({
 			contact: contactDoc,
+			isOnline: v.boolean(),
+			latestPresenceStatus: v.optional(v.string()),
+			latestPresenceObservedAt: v.optional(v.number()),
 			links: v.array(
 				v.object({
 					_id: v.id("chatContactLinks"),
@@ -200,8 +266,16 @@ export const get = humanQuery({
 			.query("chatContactLinks")
 			.withIndex("by_contactId", (q) => q.eq("contactId", contactId))
 			.collect();
+		const latestPresence = await getLatestPresenceForSenders(
+			ctx,
+			ctx.caller.tokenIdentifier,
+			[...new Set(links.map((l) => l.senderId))],
+		);
 		return {
 			contact,
+			isOnline: latestPresence.isOnline,
+			latestPresenceStatus: latestPresence.status,
+			latestPresenceObservedAt: latestPresence.observedAt,
 			links: links.map((l) => ({
 				_id: l._id,
 				chatId: l.chatId,

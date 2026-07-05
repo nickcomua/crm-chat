@@ -382,6 +382,46 @@ export const deleteAllForUser = workerMutation({
 			await ctx.db.delete(m._id);
 		}
 
+		const contactPresence = await ctx.db
+			.query("contactPresence")
+			.withIndex("by_userId_observedAt", (q) => q.eq("userId", userId))
+			.collect();
+		for (const p of contactPresence) {
+			await ctx.db.delete(p._id);
+		}
+
+		const contactFacts = await ctx.db
+			.query("contactFacts")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+		for (const f of contactFacts) {
+			await ctx.db.delete(f._id);
+		}
+
+		const contactPins = await ctx.db
+			.query("contactPins")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+		for (const p of contactPins) {
+			await ctx.db.delete(p._id);
+		}
+
+		const chatContactLinks = await ctx.db
+			.query("chatContactLinks")
+			.withIndex("by_userId_senderId", (q) => q.eq("userId", userId))
+			.collect();
+		for (const link of chatContactLinks) {
+			await ctx.db.delete(link._id);
+		}
+
+		const contacts = await ctx.db
+			.query("contacts")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.collect();
+		for (const contact of contacts) {
+			await ctx.db.delete(contact._id);
+		}
+
 		// Delete QR auth sessions
 		const qrAuths = await ctx.db
 			.query("qrAuths")
