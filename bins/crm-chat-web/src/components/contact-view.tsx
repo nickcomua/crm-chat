@@ -204,6 +204,7 @@ export function ContactView({
 							<span
 								aria-hidden="true"
 								className="absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full border-2 border-background bg-emerald-500 shadow-sm"
+								data-testid="contact-online-indicator"
 							/>
 							<span className="sr-only">{displayName} is online</span>
 						</>
