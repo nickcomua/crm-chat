@@ -2,6 +2,8 @@
 
 The web shell is `web/`. Read `web/FOLDKIT.md` and `web/AGENTS.md` before changing it.
 
+Before changing shells, the Rust core, or Telegram behavior, read `docs/project-context.md`.
+
 Effect and Foldkit skills are installed as real directories in `.agents/skills/`. Foldkit's optional source reference is ignored at `web/repos/foldkit`; the skill files themselves are available in a fresh clone.
 
 # Learning more about Effect
