@@ -19,6 +19,8 @@ export const Model = Schema.Struct({
   maybeOpenChatId: Schema.Option(Schema.String),
   query: Schema.String,
   draft: Schema.String,
+  menuOpen: Schema.Boolean,
+  moreOpen: Schema.Boolean,
 })
 export type Model = typeof Model.Type
 
@@ -27,6 +29,9 @@ export const Message = defineMessageUnion({
   ClickedBack: {},
   ChangedQuery: { value: Schema.String },
   ChangedDraft: { value: Schema.String },
+  ClickedMenu: {},
+  ClickedMore: {},
+  ClickedDismissMenu: {},
 })
 export type Message = typeof Message.Type
 
@@ -36,6 +41,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: modifyFields(model, {
         maybeOpenChatId: () => Option.some(id),
         draft: () => '',
+        menuOpen: () => false,
+        moreOpen: () => false,
       }),
     }),
     ClickedBack: () => ({
@@ -47,10 +54,22 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ChangedDraft: ({ value }) => ({
       model: modifyFields(model, { draft: () => value }),
     }),
+    ClickedMenu: () => ({
+      model: modifyFields(model, {
+        menuOpen: () => !model.menuOpen,
+        moreOpen: () => false,
+      }),
+    }),
+    ClickedMore: () => ({
+      model: modifyFields(model, { moreOpen: () => !model.moreOpen }),
+    }),
+    ClickedDismissMenu: () => ({
+      model: modifyFields(model, { menuOpen: () => false, moreOpen: () => false }),
+    }),
   })
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: { maybeOpenChatId: Option.none(), query: '', draft: '' },
+  model: { maybeOpenChatId: Option.none(), query: '', draft: '', menuOpen: false, moreOpen: false },
 })
 
 const openChat = (model: Model): Option.Option<Chat> =>
@@ -83,7 +102,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   return {
     title: '',
     body: h.div(
-      [h.Class('app-wallpaper flex h-screen gap-2 overflow-hidden px-2 py-5 text-white')],
+      [h.Class('app-wallpaper relative flex h-screen gap-2 overflow-hidden px-2 py-5 text-white')],
       [
         h.aside(
           [
@@ -93,8 +112,18 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
           ],
           [
             h.div(
-              [h.Class('px-3 pb-1 pt-3')],
+              [h.Class('flex items-center gap-2 px-3 pb-1 pt-3')],
               [
+                h.button(
+                  [
+                    h.Class(
+                      'flex size-10 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/5',
+                    ),
+                    h.AriaLabel('Menu'),
+                    h.OnClick(Message.ClickedMenu()),
+                  ],
+                  ['☰'],
+                ),
                 h.input([
                   h.Class(fieldClass),
                   h.Type('search'),
@@ -281,6 +310,137 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             }),
           ],
         ),
+        model.menuOpen
+          ? h.div([h.Class('absolute inset-0 z-20')], [
+              h.button(
+                [
+                  h.Class('absolute inset-0 cursor-default'),
+                  h.AriaLabel('Close menu'),
+                  h.OnClick(Message.ClickedDismissMenu()),
+                ],
+                [''],
+              ),
+              h.div(
+                [
+                  h.Class(
+                    'absolute left-3 top-16 z-30 w-72 rounded-2xl bg-[#21212b] py-2 shadow-2xl',
+                  ),
+                  h.Role('menu'),
+                  h.AriaLabel('Menu'),
+                ],
+                [
+                  h.div([h.Class('flex items-center gap-3 px-4 py-3')], [
+                    h.div(
+                      [
+                        h.Class(
+                          'flex size-10 items-center justify-center rounded-full bg-[#8774e1] text-sm font-medium',
+                        ),
+                      ],
+                      ['Y'],
+                    ),
+                    h.div([h.Class('text-[15px] font-medium')], ['You']),
+                  ]),
+                  h.button(
+                    [
+                      h.Class(
+                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                      ),
+                      h.OnClick(Message.ClickedDismissMenu()),
+                    ],
+                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['+']), 'Add account'],
+                  ),
+                  h.button(
+                    [
+                      h.Class(
+                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                      ),
+                      h.OnClick(Message.ClickedDismissMenu()),
+                    ],
+                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['✉']), 'Saved messages'],
+                  ),
+                  h.button(
+                    [
+                      h.Class(
+                        'flex w-full items-center justify-between px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                      ),
+                      h.OnClick(Message.ClickedDismissMenu()),
+                    ],
+                    [
+                      h.span([h.Class('flex items-center gap-3')], [
+                        h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['↓']),
+                        'Archived chats',
+                      ]),
+                      h.span(
+                        [
+                          h.Class(
+                            'flex h-5 min-w-5 items-center justify-center rounded-full bg-[#8774e1] px-1.5 text-[11px]',
+                          ),
+                        ],
+                        ['2'],
+                      ),
+                    ],
+                  ),
+                  h.button(
+                    [
+                      h.Class(
+                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                      ),
+                      h.OnClick(Message.ClickedDismissMenu()),
+                    ],
+                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['☺']), 'Contacts'],
+                  ),
+                  h.button(
+                    [
+                      h.Class(
+                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                      ),
+                      h.OnClick(Message.ClickedDismissMenu()),
+                    ],
+                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['⚙']), 'Settings'],
+                  ),
+                  h.div([h.Class('relative')], [
+                    h.button(
+                      [
+                        h.Class(
+                          'flex w-full items-center justify-between px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
+                        ),
+                        h.AriaLabel('More'),
+                        h.OnClick(Message.ClickedMore()),
+                      ],
+                      [
+                        h.span([h.Class('flex items-center gap-3')], [
+                          h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['…']),
+                          'More',
+                        ]),
+                        h.span([h.Class('text-[#9a9aa8]')], ['›']),
+                      ],
+                    ),
+                    model.moreOpen
+                      ? h.div(
+                          [
+                            h.Class(
+                              'absolute left-full top-0 z-30 ml-2 w-60 rounded-2xl bg-[#21212b] py-2 shadow-2xl',
+                            ),
+                            h.Role('menu'),
+                            h.AriaLabel('More menu'),
+                          ],
+                          [
+                            h.div(
+                              [h.Class('px-4 py-2.5 text-[15px] text-[#d7d7e0]')],
+                              ['About this build'],
+                            ),
+                            h.div(
+                              [h.Class('px-4 pb-2 text-xs text-[#9a9aa8]')],
+                              ['Fixture shell'],
+                            ),
+                          ],
+                        )
+                      : h.div([h.Class('hidden')], []),
+                  ]),
+                ],
+              ),
+            ])
+          : h.div([h.Class('hidden')], []),
       ],
     ),
   }
