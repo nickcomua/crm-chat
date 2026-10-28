@@ -162,6 +162,7 @@
           // {
             pname = "crm-chat-core-types";
             version = "0.1.0";
+            inherit cargoArtifacts;
             src = pkgs.lib.fileset.toSource {
               root = ./.;
               fileset = pkgs.lib.fileset.unions [
