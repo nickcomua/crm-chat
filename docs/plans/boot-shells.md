@@ -17,7 +17,7 @@ Interview record for [KAM-40](https://linear.app/kaminazuma/issue/KAM-40/boot-bo
 - The built Tauri artifacts include the website build, so running one opens the empty page. That run is not the acceptance test.
 - The agent may open pull requests. It must not merge to `main` and must not push `main`. You merge.
 - The new repo is created with this glossary, ADR, and plan. They are not committed to the legacy history.
-- The wasm32 crate is a flake-check placeholder. KAM-41 removes it and adds the real core. This ticket does not generate TypeScript types or render a fixture chat list. No Telegram.
+- The wasm32 crate is a flake-check placeholder. KAM-41 removes it and adds the real core. Confirmed design: [shared-core.md](shared-core.md). This ticket does not generate TypeScript types or render a fixture chat list. No Telegram.
 
 ## Still proposed
 
