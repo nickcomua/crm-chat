@@ -267,11 +267,11 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                     h.div([h.Class('px-3 py-2 text-[15px]')], ['About this build']),
                                   ],
                                 )
-                              : h.div([h.Class('hidden')], []),
+                              : h.div([h.Class('hidden')]),
                           ]),
                         ],
                       )
-                    : h.div([h.Class('hidden')], []),
+                    : h.div([h.Class('hidden')]),
                 ]),
                 h.input([
                   h.Class(fieldClass),
@@ -334,7 +334,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                   [h.Class('shrink-0 text-base font-semibold text-[#c8c8d0]')],
                                   ['✓'],
                                 )
-                              : h.div([h.Class('shrink-0')], []),
+                              : h.div([h.Class('shrink-0')]),
                       ]),
                     ]),
                   ],
@@ -436,7 +436,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                           ),
                                         ),
                                       )
-                                    : h.div([h.Class('hidden')], []),
+                                    : h.div([h.Class('hidden')]),
                                 ]),
                                 h.button(
                                   [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedMute())],
@@ -453,7 +453,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                 ),
                               ],
                             )
-                          : h.div([h.Class('hidden')], []),
+                          : h.div([h.Class('hidden')]),
                       ],
                     ),
                     h.div(
