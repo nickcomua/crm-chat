@@ -13,7 +13,7 @@ describe('view', () => {
       given(initialModel),
       expect(role('heading')).not.toExist(),
       expect(role('button')).not.toExist(),
-      expectAll(all.role('listitem')).toHaveCount(3),
+      expectAll(all.role('listitem')).toHaveCount(12),
       expect(nth(all.role('listitem'), 0)).toContainText('Ada'),
       expect(nth(all.role('listitem'), 0)).toContainText('Bring the notes.'),
       expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),

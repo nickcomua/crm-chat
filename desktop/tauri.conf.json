@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "app.crmchat.desktop",
   "build": {
+    "devUrl": "http://127.0.0.1:4173",
     "frontendDist": "../web/dist",
+    "beforeDevCommand": "npm --prefix web run dev -- --host 127.0.0.1 --port 4173 --strictPort",
     "beforeBuildCommand": "npm --prefix ../web run build"
   },
   "app": {

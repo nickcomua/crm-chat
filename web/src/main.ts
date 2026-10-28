@@ -6,16 +6,10 @@ import { Document, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 
-import { faceFor, fixtureChats, markFor } from './fixture'
-import type { Chat, ChatKind } from './generated/core'
+import { faceFor, fixtureChats, markFor, tintFor } from './fixture'
+import type { Chat } from './generated/core'
 
-const kindTint: Record<ChatKind, string> = {
-  Dialog: 'bg-[#5288c1]',
-  Group: 'bg-[#3e9e6a]',
-  Channel: 'bg-[#c47a2c]',
-}
-
-const kindStatus: Record<ChatKind, string> = {
+const kindStatus: Record<'Dialog' | 'Group' | 'Channel', string> = {
   Dialog: 'personal chat',
   Group: 'group',
   Channel: 'channel',
@@ -89,7 +83,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   return {
     title: '',
     body: h.div(
-      [h.Class('app-wallpaper flex h-screen gap-2 overflow-hidden p-2 text-white')],
+      [h.Class('app-wallpaper flex h-screen gap-2 overflow-hidden px-2 py-5 text-white')],
       [
         h.aside(
           [
@@ -131,7 +125,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                     h.div(
                       [
                         h.Class(
-                          `flex size-12 shrink-0 items-center justify-center rounded-full text-base font-medium text-white ${kindTint[chat.kind]}`,
+                          `flex size-12 shrink-0 items-center justify-center rounded-full text-base font-medium text-white ${tintFor(chat.kind)}`,
                         ),
                       ],
                       [markFor(chat.title)],
@@ -141,7 +135,29 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
                         h.div([h.Class('shrink-0 text-xs text-[#9a9aa8]')], [face.time]),
                       ]),
-                      h.div([h.Class('truncate text-[13px] text-[#9a9aa8]')], [face.preview]),
+                      h.div([h.Class('flex items-center justify-between gap-3')], [
+                        h.div([h.Class('truncate text-[13px] text-[#9a9aa8]')], [face.preview]),
+                        face.unread > 0
+                          ? h.div(
+                              [
+                                h.Class(
+                                  'flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#8774e1] px-1.5 text-[11px] font-medium text-white',
+                                ),
+                              ],
+                              [String(face.unread)],
+                            )
+                          : face.receipt === 'read'
+                            ? h.div(
+                                [h.Class('shrink-0 text-base font-semibold tracking-[-0.12em] text-[#4fc3f7]')],
+                                ['✓✓'],
+                              )
+                            : face.receipt === 'sent'
+                              ? h.div(
+                                  [h.Class('shrink-0 text-base font-semibold text-[#c8c8d0]')],
+                                  ['✓'],
+                                )
+                              : h.div([h.Class('shrink-0')], []),
+                      ]),
                     ]),
                   ],
                 )
@@ -151,7 +167,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
         ),
         h.section(
           [
-            h.Class(`${paneHidden(isOpen)} min-w-0 flex-1 flex-col items-start`),
+            h.Class(`${paneHidden(isOpen)} min-w-0 flex-1 flex-col items-center`),
             h.AriaLabel('Open chat'),
           ],
           [
@@ -164,7 +180,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
               onSome: (chat) => {
                 const face = faceFor(chat.id)
                 return h.div(
-                  [h.Class('flex h-full w-full max-w-[32rem] flex-col')],
+                  [h.Class('flex h-full w-full max-w-md flex-col')],
                   [
                     h.header(
                       [
@@ -183,7 +199,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.div(
                           [
                             h.Class(
-                              `flex size-10 items-center justify-center rounded-full text-sm font-medium ${kindTint[chat.kind]}`,
+                              `flex size-10 items-center justify-center rounded-full text-sm font-medium ${tintFor(chat.kind)}`,
                             ),
                           ],
                           [markFor(chat.title)],
@@ -213,13 +229,25 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                   }`,
                                 ),
                               ],
-                              [
-                                line.text,
-                                h.span(
-                                  [h.Class('ml-3 align-bottom text-[11px] text-white/70')],
-                                  [line.time],
-                                ),
-                              ],
+                              line.caption === undefined
+                                ? [line.text, h.span([h.Class('ml-3 align-bottom text-[11px] text-white/70')], [line.time])]
+                                : [
+                                    h.div([h.Class('mb-1.5 overflow-hidden rounded-xl')], [
+                                      h.div(
+                                        [
+                                          h.Class(
+                                            'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
+                                          ),
+                                        ],
+                                        [line.caption],
+                                      ),
+                                    ]),
+                                    h.div([h.Class('px-0.5')], [line.text]),
+                                    h.span(
+                                      [h.Class('ml-3 align-bottom text-[11px] text-white/70')],
+                                      [line.time],
+                                    ),
+                                  ],
                             ),
                           ],
                         ),
