@@ -46,7 +46,7 @@ Shared understanding accepted on 2026-10-28. Design approval is separate from ve
 Local x86_64-linux, 2026-10-28:
 
 - `cargo test -p crm-chat-core` passed. The committed types match the core. The manifest test finds no socket crates.
-- `cargo check -p crm-chat-core --target wasm32-unknown-unknown` passed. ts-rs 12.0.1 sits on that compile. No browser module is produced.
+- `cargo build -p crm-chat-core --target wasm32-unknown-unknown` passed and produced `libcrm_chat_core.rlib`, not a browser `.wasm`. The flake wasm32 check runs that build.
 - `npm test`, `npm run typecheck`, `npm run lint`, and `npm run lint:eslint` passed in `web/`. The scene test shows Ada, Book club, and Announcements, with kinds, and no button or heading.
 - `nix flake check --accept-flake-config --keep-going` passed the host checks: website, desktop, wasm32, coreTypes, clippy, typescript, nix-fmt, nix-lint.
 - `nix flake check --accept-flake-config --all-systems --no-build` evaluated aarch64-linux. It was not built.

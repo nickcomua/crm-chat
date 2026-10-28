@@ -55,10 +55,22 @@ mod generated_types {
     #[test]
     fn core_has_no_socket_crates() {
         let manifest = include_str!("../Cargo.toml");
-        for banned in ["tokio", "tungstenite", "grammers", "websocket", "mio"] {
+        let source = include_str!("lib.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or("");
+        for banned in [
+            "tokio",
+            "tungstenite",
+            "grammers",
+            "websocket",
+            "mio",
+            "std::net",
+            "TcpStream",
+        ] {
             assert!(
-                !manifest.contains(banned),
-                "core manifest must not depend on {banned}"
+                !manifest.contains(banned) && !source.contains(banned),
+                "core must not contain {banned}"
             );
         }
     }

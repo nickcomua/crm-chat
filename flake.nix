@@ -149,7 +149,7 @@
               }
             );
             buildPhaseCargoCommand = ''
-              cargo check -p crm-chat-core --locked --target wasm32-unknown-unknown
+              cargo build -p crm-chat-core --locked --target wasm32-unknown-unknown
             '';
             installPhaseCommand = ''
               mkdir -p $out
