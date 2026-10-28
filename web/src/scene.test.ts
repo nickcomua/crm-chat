@@ -1,68 +1,105 @@
-import * as Option from 'effect/Option'
-import { all, click, expect, expectAll, given, nth, role, scene } from 'foldkit/scene'
-import { describe, test } from 'vitest'
+import * as Redacted from 'effect/Redacted'
+import {
+  Command,
+  all,
+  click,
+  expect,
+  expectAll,
+  given,
+  role,
+  scene,
+  type,
+} from 'foldkit/scene'
+import { modifyFields } from 'foldkit/struct'
+import { test } from 'vitest'
 
-import { type Model, update, view } from './main'
+import {
+  BeginLogin,
+  Message,
+  Refresh,
+  SubmitAnswer,
+  initialModel,
+  update,
+  view,
+} from './main'
+import { AuthResult } from './telegram'
 
-const initialModel: Model = {
-  maybeOpenChatId: Option.none(),
-  query: '',
-  draft: '',
-  menuOpen: false,
-  moreOpen: false,
-  headerMenuOpen: false,
-  autoDeleteOpen: false,
-  autoDelete: 'Never',
-  hiddenChatIds: [],
-  mutedChatIds: [],
-}
+const account = {
+  id: 'one',
+  title: 'Ada',
+  chats: [
+    { id: 'one:1', title: 'Saved Messages', kind: 'Dialog' },
+    { id: 'one:2', title: 'Book club', kind: 'Group' },
+    { id: 'one:3', title: 'News', kind: 'Channel' },
+  ],
+} satisfies typeof import('./telegram').Account.Type
 
-describe('view', () => {
-  test('opens a chat from the list and returns with back', () => {
-    scene(
-      { update, view },
-      given(initialModel),
-      expect(role('heading')).not.toExist(),
-      expect(role('button', { name: 'Menu' })).toExist(),
-      expect(role('button', { name: 'Back' })).not.toExist(),
-      expectAll(all.role('listitem')).toHaveCount(12),
-      expect(nth(all.role('listitem'), 0)).toContainText('Ada'),
-      expect(nth(all.role('listitem'), 0)).toContainText('Bring the notes.'),
-      expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),
-      click(nth(all.role('listitem'), 0)),
-      expect(role('region', { name: 'Open chat' })).toContainText('See you at the station.'),
-      expect(role('button', { name: 'Back' })).toExist(),
-      click(role('button', { name: 'Back' })),
-      expect(role('button', { name: 'Back' })).not.toExist(),
-      expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),
-    )
-  })
+test('phone login requests 2FA then loads distinct chat types', () => {
+  scene(
+    { update, view },
+    given(initialModel),
+    type(role('textbox', { name: 'API ID' }), '12345'),
+    type(
+      role('textbox', { name: 'API hash' }),
+      '0123456789abcdef0123456789abcdef',
+    ),
+    type(role('textbox', { name: 'Phone number' }), '+31000000000'),
+    click(role('button', { name: 'Log in with phone' })),
+    Command.resolve(
+      BeginLogin,
+      Message.SucceededAuthenticate({
+        result: AuthResult.Code({ id: 'one' }),
+        sourceId: '',
+      }),
+    ),
+    type(role('textbox', { name: 'Login code' }), '12345'),
+    click(role('button', { name: 'Continue' })),
+    Command.resolve(
+      SubmitAnswer,
+      Message.SucceededAuthenticate({
+        result: AuthResult.Password({ id: 'one' }),
+        sourceId: 'one',
+      }),
+    ),
+    type(role('textbox', { name: '2FA password' }), 'test password'),
+    click(role('button', { name: 'Continue' })),
+    Command.resolve(
+      SubmitAnswer,
+      Message.SucceededAuthenticate({
+        result: AuthResult.Authorized({ account }),
+        sourceId: 'one',
+      }),
+    ),
+    Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    expect(role('region', { name: 'Telegram login' })).not.toExist(),
+    expectAll(all.role('listitem')).toHaveCount(3),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Dialog'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Group'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Channel'),
+  )
+})
 
-  test('opens the menu and the more flyout', () => {
-    scene(
-      { update, view },
-      given(initialModel),
-      expect(role('menu', { name: 'Menu' })).not.toExist(),
-      click(role('button', { name: 'Menu' })),
-      expect(role('menu', { name: 'Menu' })).toContainText('Saved messages'),
-      click(role('button', { name: 'More' })),
-      expect(role('menu', { name: 'More menu' })).toContainText('About this build'),
-    )
-  })
-
-  test('delete removes the open chat and auto-delete keeps the choice', () => {
-    scene(
-      { update, view },
-      given(initialModel),
-      click(nth(all.role('listitem'), 0)),
-      click(role('button', { name: 'Chat menu' })),
-      click(role('button', { name: 'Auto-delete' })),
-      click(role('button', { name: '1 week' })),
-      click(role('button', { name: 'Chat menu' })),
-      expect(role('menu', { name: 'Chat menu' })).toContainText('1 week'),
-      click(role('button', { name: 'Delete chat' })),
-      expectAll(all.role('listitem')).toHaveCount(11),
-      expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),
-    )
-  })
+test('QR login displays a scannable image', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        apiId: () => '12345',
+        apiHash: () => Redacted.make('0123456789abcdef0123456789abcdef'),
+      }),
+    ),
+    click(role('button', { name: 'Log in with QR' })),
+    Command.resolve(
+      BeginLogin,
+      Message.SucceededAuthenticate({
+        result: AuthResult.Qr({
+          id: 'one',
+          image: 'data:image/png;base64,AAAA',
+        }),
+        sourceId: '',
+      }),
+    ),
+    expect(role('img', { name: 'Telegram login QR code' })).toExist(),
+    expect(role('button', { name: 'Cancel' })).toExist(),
+  )
 })

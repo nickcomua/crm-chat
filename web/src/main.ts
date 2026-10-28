@@ -1,530 +1,630 @@
 import * as Array from 'effect/Array'
-import * as Option from 'effect/Option'
+import * as Crypto from 'effect/Crypto'
+import * as Effect from 'effect/Effect'
+import * as Redacted from 'effect/Redacted'
+import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
-import { Runtime, type Update } from 'foldkit'
+import * as Stream from 'effect/Stream'
+import { Command, Runtime, Subscription, type Update } from 'foldkit'
 import { Document, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
+import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 
-import { faceFor, fixtureChats, markFor, tintFor } from './fixture'
-import type { Chat } from './generated/core'
+import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
 
-const kindStatus: Record<'Dialog' | 'Group' | 'Channel', string> = {
-  Dialog: 'personal chat',
-  Group: 'group',
-  Channel: 'channel',
-}
+import {
+  Account,
+  AuthResult,
+  beginLogin,
+  loadAccount,
+  pollQr,
+  removeConnection,
+  submitCode,
+  submitPassword,
+} from './telegram'
 
+const Secret = Schema.Redacted(Schema.String)
+const Login = defineTaggedUnion({
+  Editing: {},
+  Closed: {},
+  Code: { id: Schema.String },
+  Password: { id: Schema.String },
+  Qr: { id: Schema.String, image: Schema.String },
+})
 export const Model = Schema.Struct({
-  maybeOpenChatId: Schema.Option(Schema.String),
+  login: Login,
+  apiId: Schema.String,
+  apiHash: Secret,
+  phone: Secret,
+  answer: Secret,
+  status: Schema.Literals(['Ready', 'Busy']),
+  error: Schema.String,
+  accounts: Schema.Array(Account),
+  selectedAccountId: Schema.String,
   query: Schema.String,
-  draft: Schema.String,
-  menuOpen: Schema.Boolean,
-  moreOpen: Schema.Boolean,
-  headerMenuOpen: Schema.Boolean,
-  autoDeleteOpen: Schema.Boolean,
-  autoDelete: Schema.String,
-  hiddenChatIds: Schema.Array(Schema.String),
-  mutedChatIds: Schema.Array(Schema.String),
 })
 export type Model = typeof Model.Type
-
 export const Message = defineMessageUnion({
-  ClickedChat: { id: Schema.String },
-  ClickedBack: {},
-  ChangedQuery: { value: Schema.String },
-  ChangedDraft: { value: Schema.String },
-  ClickedMenu: {},
-  ClickedMore: {},
-  ClickedHeaderMenu: {},
-  ClickedAutoDelete: {},
-  ClickedAutoDeleteChoice: { value: Schema.String },
-  ClickedMute: {},
-  ClickedDeleteChat: {},
-  ClickedDismissMenu: {},
+  UpdatedApiId: { value: Schema.String },
+  UpdatedApiHash: { value: Secret },
+  UpdatedPhone: { value: Secret },
+  UpdatedAnswer: { value: Secret },
+  UpdatedQuery: { value: Schema.String },
+  ClickedPhoneLogin: {},
+  ClickedQrLogin: {},
+  SubmittedAnswer: {},
+  ClickedAddAccount: {},
+  ClickedCancel: {},
+  SelectedAccount: { id: Schema.String },
+  ClickedRefresh: {},
+  SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
+  FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
+  SucceededRefresh: { account: Account },
+  FailedRefresh: {},
+  CompletedDisconnect: {},
 })
 export type Message = typeof Message.Type
 
-export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
-  Message.match(message, {
-    ClickedChat: ({ id }) => ({
-      model: modifyFields(model, {
-        maybeOpenChatId: () => Option.some(id),
-        draft: () => '',
-        menuOpen: () => false,
-        moreOpen: () => false,
-        headerMenuOpen: () => false,
-        autoDeleteOpen: () => false,
-      }),
-    }),
-    ClickedBack: () => ({
-      model: modifyFields(model, { maybeOpenChatId: () => Option.none() }),
-    }),
-    ChangedQuery: ({ value }) => ({
-      model: modifyFields(model, { query: () => value }),
-    }),
-    ChangedDraft: ({ value }) => ({
-      model: modifyFields(model, { draft: () => value }),
-    }),
-    ClickedMenu: () => ({
-      model: modifyFields(model, {
-        menuOpen: () => !model.menuOpen,
-        moreOpen: () => false,
-        headerMenuOpen: () => false,
-        autoDeleteOpen: () => false,
-      }),
-    }),
-    ClickedMore: () => ({
-      model: modifyFields(model, { moreOpen: () => !model.moreOpen }),
-    }),
-    ClickedHeaderMenu: () => ({
-      model: modifyFields(model, {
-        headerMenuOpen: () => !model.headerMenuOpen,
-        autoDeleteOpen: () => false,
-        menuOpen: () => false,
-        moreOpen: () => false,
-      }),
-    }),
-    ClickedAutoDelete: () => ({
-      model: modifyFields(model, { autoDeleteOpen: () => !model.autoDeleteOpen }),
-    }),
-    ClickedAutoDeleteChoice: ({ value }) => ({
-      model: modifyFields(model, {
-        autoDelete: () => value,
-        autoDeleteOpen: () => false,
-        headerMenuOpen: () => false,
-      }),
-    }),
-    ClickedMute: () => ({
-      model: modifyFields(model, {
-        mutedChatIds: () =>
-          Option.match(model.maybeOpenChatId, {
-            onNone: () => model.mutedChatIds,
-            onSome: (id) =>
-              model.mutedChatIds.includes(id)
-                ? model.mutedChatIds.filter((mutedId) => mutedId !== id)
-                : [...model.mutedChatIds, id],
-          }),
-        headerMenuOpen: () => false,
-      }),
-    }),
-    ClickedDeleteChat: () => ({
-      model: modifyFields(model, {
-        hiddenChatIds: () =>
-          Option.match(model.maybeOpenChatId, {
-            onNone: () => model.hiddenChatIds,
-            onSome: (id) =>
-              model.hiddenChatIds.includes(id) ? model.hiddenChatIds : [...model.hiddenChatIds, id],
-          }),
-        maybeOpenChatId: () => Option.none(),
-        headerMenuOpen: () => false,
-        autoDeleteOpen: () => false,
-      }),
-    }),
-    ClickedDismissMenu: () => ({
-      model: modifyFields(model, {
-        menuOpen: () => false,
-        moreOpen: () => false,
-        headerMenuOpen: () => false,
-        autoDeleteOpen: () => false,
-      }),
-    }),
-  })
-
-export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: {
-    maybeOpenChatId: Option.none(),
-    query: '',
-    draft: '',
-    menuOpen: false,
-    moreOpen: false,
-    headerMenuOpen: false,
-    autoDeleteOpen: false,
-    autoDelete: 'Never',
-    hiddenChatIds: [],
-    mutedChatIds: [],
-  },
-})
-
-const openChat = (model: Model): Option.Option<Chat> =>
-  Option.flatMap(model.maybeOpenChatId, (id) =>
-    Array.findFirst(fixtureChats, (chat) => chat.id === id),
-  )
-
-const shownChats = (model: Model): ReadonlyArray<Chat> => {
-  const needle = model.query.trim().toLowerCase()
-  return Array.filter(
-    fixtureChats,
-    (chat) =>
-      !model.hiddenChatIds.includes(chat.id) &&
-      (needle === '' || chat.title.toLowerCase().includes(needle)),
-  )
+const loginError = (error: unknown): string => {
+  if (error instanceof Error) {
+    if (error.message.includes('PHONE_CODE_INVALID')) {
+      return 'The code is incorrect. Try again.'
+    }
+    if (error.message.includes('PHONE_CODE_EXPIRED')) {
+      return 'The code expired. Cancel and start again.'
+    }
+    if (error.message.includes('PASSWORD_HASH_INVALID')) {
+      return 'The password is incorrect. Try again.'
+    }
+    if (error.message.includes('FLOOD_WAIT')) {
+      return 'Telegram requires a wait before trying again.'
+    }
+    if (error.message.includes('API_ID_INVALID')) {
+      return 'Check your Telegram API ID and hash.'
+    }
+    if (error.message.includes('PHONE_NUMBER_INVALID')) {
+      return 'Enter your phone number with its country code.'
+    }
+  }
+  return 'Telegram could not complete the request. Retry or cancel and start again.'
 }
-
-const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
-
-const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
-
-const fieldClass =
-  'w-full rounded-full border border-[#8774e1]/40 bg-[#1c1c22] px-4 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]'
-
-const panelClass = 'relative bg-[#1c1c22] md:rounded-2xl'
-
-export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
-  const opened = openChat(model)
-  const isOpen = Option.isSome(opened)
-  const chats = shownChats(model)
-
-  return {
-    title: '',
-    body: h.div(
-      [h.Class('app-wallpaper relative flex h-screen gap-2 px-2 py-5 text-white')],
-      [
-        h.aside(
-          [
-            h.Class(
-              `${listHidden(isOpen)} ${panelClass} w-full shrink-0 flex-col md:w-[26rem]`,
-            ),
-          ],
-          [
-            h.div(
-              [h.Class('flex items-center gap-2 px-3 pb-1 pt-3')],
-              [
-                h.div([h.Class('relative')], [
-                  h.button(
-                    [
-                      h.Class(
-                        'flex size-10 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/5',
-                      ),
-                      h.AriaLabel('Menu'),
-                      h.OnClick(Message.ClickedMenu()),
-                    ],
-                    ['☰'],
-                  ),
-                  model.menuOpen
-                    ? h.div(
-                        [
-                          h.Class(
-                            'absolute left-0 top-12 z-40 w-64 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
-                          ),
-                          h.Role('menu'),
-                          h.AriaLabel('Menu'),
-                        ],
-                        [
-                          h.div([h.Class('flex items-center gap-3 px-3 py-2')], [
-                            h.div(
-                              [
-                                h.Class(
-                                  'flex size-9 items-center justify-center rounded-full bg-[#8774e1] text-sm font-medium',
-                                ),
-                              ],
-                              ['Y'],
-                            ),
-                            h.div([h.Class('text-[15px] font-medium')], ['You']),
-                          ]),
-                          h.button(
-                            [
-                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                              h.OnClick(Message.ClickedDismissMenu()),
-                            ],
-                            ['Saved messages'],
-                          ),
-                          h.button(
-                            [
-                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                              h.OnClick(Message.ClickedDismissMenu()),
-                            ],
-                            ['Archived chats'],
-                          ),
-                          h.button(
-                            [
-                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                              h.OnClick(Message.ClickedDismissMenu()),
-                            ],
-                            ['Settings'],
-                          ),
-                          h.div([h.Class('relative')], [
-                            h.button(
-                              [
-                                h.Class(
-                                  'flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                                ),
-                                h.AriaLabel('More'),
-                                h.OnClick(Message.ClickedMore()),
-                              ],
-                              ['More', h.span([h.Class('text-[#9a9aa8]')], ['›'])],
-                            ),
-                            model.moreOpen
-                              ? h.div(
-                                  [
-                                    h.Class(
-                                      'absolute left-full top-0 z-40 ml-2 w-52 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
-                                    ),
-                                    h.Role('menu'),
-                                    h.AriaLabel('More menu'),
-                                  ],
-                                  [
-                                    h.div([h.Class('px-3 py-2 text-[15px]')], ['About this build']),
-                                  ],
-                                )
-                              : h.div([h.Class('hidden')]),
-                          ]),
-                        ],
-                      )
-                    : h.div([h.Class('hidden')]),
-                ]),
-                h.input([
-                  h.Class(fieldClass),
-                  h.Type('search'),
-                  h.Placeholder('Search'),
-                  h.AriaLabel('Search chats'),
-                  h.Value(model.query),
-                  h.OnInput((value) => Message.ChangedQuery({ value })),
-                ]),
-              ],
-            ),
-            h.ul(
-              [h.Class('m-0 min-h-0 flex-1 list-none overflow-y-auto px-2 py-2')],
-              chats.map((chat) => {
-                const face = faceFor(chat.id)
-                const selected = Option.match(model.maybeOpenChatId, {
-                  onNone: () => false,
-                  onSome: (id) => id === chat.id,
-                })
-                return h.keyed('li')(
-                  chat.id,
-                  [
-                    h.Class(
-                      `flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 ${selected ? 'bg-[#5c4d86]' : 'hover:bg-white/5'}`,
-                    ),
-                    h.OnClick(Message.ClickedChat({ id: chat.id })),
-                  ],
-                  [
-                    h.div(
-                      [
-                        h.Class(
-                          `flex size-12 shrink-0 items-center justify-center rounded-full text-base font-medium text-white ${tintFor(chat.kind)}`,
-                        ),
-                      ],
-                      [markFor(chat.title)],
-                    ),
-                    h.div([h.Class('min-w-0 flex-1')], [
-                      h.div([h.Class('flex items-baseline justify-between gap-3')], [
-                        h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
-                        h.div([h.Class('shrink-0 text-xs text-[#9a9aa8]')], [face.time]),
-                      ]),
-                      h.div([h.Class('flex items-center justify-between gap-3')], [
-                        h.div([h.Class('truncate text-[13px] text-[#9a9aa8]')], [face.preview]),
-                        face.unread > 0
-                          ? h.div(
-                              [
-                                h.Class(
-                                  'flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#8774e1] px-1.5 text-[11px] font-medium text-white',
-                                ),
-                              ],
-                              [String(face.unread)],
-                            )
-                          : face.receipt === 'read'
-                            ? h.div(
-                                [h.Class('shrink-0 text-base font-semibold tracking-[-0.12em] text-[#4fc3f7]')],
-                                ['✓✓'],
-                              )
-                            : face.receipt === 'sent'
-                              ? h.div(
-                                  [h.Class('shrink-0 text-base font-semibold text-[#c8c8d0]')],
-                                  ['✓'],
-                                )
-                              : h.div([h.Class('shrink-0')]),
-                      ]),
-                    ]),
-                  ],
-                )
-              }),
-            ),
-          ],
+export const BeginLogin = Command.define('BeginLogin', {
+  args: {
+    apiId: Schema.String,
+    apiHash: Secret,
+    phone: Secret,
+    qr: Schema.Boolean,
+  },
+  messages: [Message.SucceededAuthenticate, Message.FailedAuthenticate],
+  execute: ({ apiId, apiHash, phone, qr }) =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto
+      const id = yield* crypto.randomUUIDv4
+      return yield* Effect.tryPromise(() =>
+        beginLogin(
+          id,
+          Number(apiId),
+          Redacted.value(apiHash),
+          Redacted.value(phone),
+          qr,
         ),
-        h.section(
-          [
-            h.Class(`${paneHidden(isOpen)} min-w-0 flex-1 flex-col items-center`),
-            h.AriaLabel('Open chat'),
-          ],
-          [
-            Option.match(opened, {
-              onNone: () =>
-                h.div(
-                  [h.Class('flex flex-1 items-center justify-center text-sm text-[#9a9aa8]')],
-                  ['Select a chat'],
-                ),
-              onSome: (chat) => {
-                const face = faceFor(chat.id)
-                return h.div(
-                  [h.Class('flex h-full w-full max-w-md flex-col')],
-                  [
-                    h.header(
-                      [h.Class('relative z-30 flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-[#1c1c22] px-2')],
-                      [
-                        h.button(
-                          [
-                            h.Class('rounded-full px-3 py-2 text-sm text-[#8774e1] md:hidden'),
-                            h.OnClick(Message.ClickedBack()),
-                          ],
-                          ['Back'],
-                        ),
-                        h.div(
-                          [
-                            h.Class(
-                              `flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-medium ${tintFor(chat.kind)}`,
-                            ),
-                          ],
-                          [markFor(chat.title)],
-                        ),
-                        h.div([h.Class('min-w-0 flex-1')], [
-                          h.div([h.Class('truncate text-[15px] font-semibold')], [chat.title]),
-                          h.div(
-                            [h.Class('truncate text-[13px] text-[#8eb8d4]')],
-                            [chat.kind === 'Dialog' ? 'last seen recently' : kindStatus[chat.kind]],
-                          ),
-                        ]),
-                        h.span(
-                          [
-                            h.Class(
-                              'flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0]',
-                            ),
-                            h.AriaHidden(true),
-                          ],
-                          ['☎'],
-                        ),
-                        h.button(
-                          [
-                            h.Class('relative flex size-9 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/10'),
-                            h.AriaLabel('Chat menu'),
-                            h.OnClick(Message.ClickedHeaderMenu()),
-                          ],
-                          ['⋮'],
-                        ),
-                        model.headerMenuOpen
-                          ? h.div(
-                              [
-                                h.Class('absolute right-2 top-12 z-40 w-52 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl'),
-                                h.Role('menu'),
-                                h.AriaLabel('Chat menu'),
-                              ],
-                              [
-                                h.div([h.Class('relative')], [
-                                  h.button(
-                                    [
-                                      h.Class('flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                                      h.AriaLabel('Auto-delete'),
-                                      h.OnClick(Message.ClickedAutoDelete()),
-                                    ],
-                                    ['Auto-delete', h.span([h.Class('text-[#9a9aa8]')], [model.autoDelete])],
-                                  ),
-                                  model.autoDeleteOpen
-                                    ? h.div(
-                                        [
-                                          h.Class('absolute right-full top-0 z-40 mr-2 w-40 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl'),
-                                          h.Role('menu'),
-                                          h.AriaLabel('Auto-delete menu'),
-                                        ],
-                                        ['Never', '1 day', '1 week', '1 month', 'Other'].map((label) =>
-                                          h.button(
-                                            [
-                                              h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                                              h.OnClick(Message.ClickedAutoDeleteChoice({ value: label })),
-                                            ],
-                                            [label],
-                                          ),
-                                        ),
-                                      )
-                                    : h.div([h.Class('hidden')]),
-                                ]),
-                                h.button(
-                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedMute())],
-                                  [
-                                    Option.match(model.maybeOpenChatId, {
-                                      onNone: () => 'Mute',
-                                      onSome: (id) => (model.mutedChatIds.includes(id) ? 'Unmute' : 'Mute'),
-                                    }),
-                                  ],
-                                ),
-                                h.button(
-                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] text-[#e25c5c] hover:bg-white/10'), h.OnClick(Message.ClickedDeleteChat())],
-                                  ['Delete chat'],
-                                ),
-                              ],
-                            )
-                          : h.div([h.Class('hidden')]),
-                      ],
-                    ),
-                    h.div(
-                      [h.Class('flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-1 py-3')],
-                      face.lines.map((line) =>
-                        h.div(
-                          [h.Class(`flex ${line.mine ? 'justify-end' : 'justify-start'}`)],
-                          [
-                            h.div(
-                              [
-                                h.Class(
-                                  `w-fit max-w-[80%] rounded-2xl px-3 py-2 text-[15px] leading-5 ${
-                                    line.mine
-                                      ? 'rounded-br-md bg-[#8774e1]'
-                                      : 'rounded-bl-md bg-[#2a2a32]'
-                                  }`,
-                                ),
-                              ],
-                              line.caption === undefined
-                                ? [line.text, h.span([h.Class('ml-3 align-bottom text-[11px] text-white/70')], [line.time])]
-                                : [
-                                    h.div([h.Class('mb-1.5 overflow-hidden rounded-xl')], [
-                                      h.div(
-                                        [
-                                          h.Class(
-                                            'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
-                                          ),
-                                        ],
-                                        [line.caption],
-                                      ),
-                                    ]),
-                                    h.div([h.Class('px-0.5')], [line.text]),
-                                    h.span(
-                                      [h.Class('ml-3 align-bottom text-[11px] text-white/70')],
-                                      [line.time],
-                                    ),
-                                  ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    chat.kind === 'Channel'
-                      ? h.div(
-                          [
-                            h.Class(
-                              'flex h-12 shrink-0 items-center justify-center rounded-full bg-[#1c1c22] text-sm text-[#9a9aa8]',
-                            ),
-                          ],
-                          ['Replies are off'],
-                        )
-                      : h.div(
-                          [h.Class('shrink-0')],
-                          [
-                            h.input([
-                              h.Class(fieldClass),
-                              h.Type('text'),
-                              h.Placeholder('Message'),
-                              h.AriaLabel('Message'),
-                              h.Value(model.draft),
-                              h.OnInput((value) => Message.ChangedDraft({ value })),
-                            ]),
-                          ],
-                        ),
-                  ],
-                )
-              },
-            }),
-          ],
+      )
+    }).pipe(
+      Effect.provide(BrowserCrypto.layer),
+      Effect.map(result =>
+        Message.SucceededAuthenticate({ result, sourceId: '' }),
+      ),
+      Effect.catch(error =>
+        Effect.succeed(
+          Message.FailedAuthenticate({
+            error: loginError(error.cause),
+            sourceId: '',
+          }),
         ),
-      ],
+      ),
     ),
+})
+export const SubmitAnswer = Command.define('SubmitAnswer', {
+  args: { id: Schema.String, answer: Secret, password: Schema.Boolean },
+  messages: [Message.SucceededAuthenticate, Message.FailedAuthenticate],
+  execute: ({ id, answer, password }) =>
+    Effect.tryPromise(() =>
+      password
+        ? submitPassword(id, Redacted.value(answer))
+        : submitCode(id, Redacted.value(answer)),
+    ).pipe(
+      Effect.map(result =>
+        Message.SucceededAuthenticate({ result, sourceId: id }),
+      ),
+      Effect.catch(error =>
+        Effect.succeed(
+          Message.FailedAuthenticate({
+            error: loginError(error.cause),
+            sourceId: id,
+          }),
+        ),
+      ),
+    ),
+})
+export const Refresh = Command.define('Refresh', {
+  args: { id: Schema.String },
+  messages: [Message.SucceededRefresh, Message.FailedRefresh],
+  execute: ({ id }) =>
+    Effect.tryPromise(() => loadAccount(id)).pipe(
+      Effect.map(account => Message.SucceededRefresh({ account })),
+      Effect.catch(() => Effect.succeed(Message.FailedRefresh())),
+    ),
+})
+export const Disconnect = Command.define('Disconnect', {
+  args: { id: Schema.String },
+  messages: [Message.CompletedDisconnect],
+  execute: ({ id }) =>
+    Effect.tryPromise(() => removeConnection(id)).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedDisconnect(),
+        onFailure: () => Message.CompletedDisconnect(),
+      }),
+    ),
+})
+const startLogin = (
+  model: Model,
+  qr: boolean,
+): Update.Return<Model, Message> => {
+  if (model.status === 'Busy' || model.login._tag !== 'Editing') {
+    return { model }
+  }
+  if (
+    !/^[1-9]\d*$/.test(model.apiId) ||
+    !/^[a-f\d]{32}$/i.test(Redacted.value(model.apiHash))
+  ) {
+    return {
+      model: modifyFields(model, {
+        error: () => 'Enter a valid Telegram API ID and 32 character API hash.',
+      }),
+    }
+  }
+  return {
+    model: modifyFields(model, { status: () => 'Busy', error: () => '' }),
+    commands: [
+      BeginLogin({
+        apiId: model.apiId,
+        apiHash: model.apiHash,
+        phone: model.phone,
+        qr,
+      }),
+    ],
   }
 }
+export const update = (model: Model, message: Message) =>
+  Message.match<Update.Return<Model, Message>>(message, {
+    UpdatedApiId: ({ value }) => ({
+      model: modifyFields(model, { apiId: () => value }),
+    }),
+    UpdatedApiHash: ({ value }) => ({
+      model: modifyFields(model, { apiHash: () => value }),
+    }),
+    UpdatedPhone: ({ value }) => ({
+      model: modifyFields(model, { phone: () => value }),
+    }),
+    UpdatedAnswer: ({ value }) => ({
+      model: modifyFields(model, { answer: () => value }),
+    }),
+    UpdatedQuery: ({ value }) => ({
+      model: modifyFields(model, { query: () => value }),
+    }),
+    ClickedPhoneLogin: () => startLogin(model, false),
+    ClickedQrLogin: () => startLogin(model, true),
+    SubmittedAnswer: () => {
+      if (
+        model.status === 'Busy' ||
+        (model.login._tag !== 'Code' && model.login._tag !== 'Password')
+      ) {
+        return { model }
+      }
+      return {
+        model: modifyFields(model, {
+          status: () => 'Busy',
+          error: () => '',
+          answer: () => Redacted.make(''),
+        }),
+        commands: [
+          SubmitAnswer({
+            id: model.login.id,
+            answer: model.answer,
+            password: model.login._tag === 'Password',
+          }),
+        ],
+      }
+    },
+    ClickedAddAccount: () =>
+      model.status === 'Busy'
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              login: () => Login.Editing(),
+              error: () => '',
+            }),
+          },
+    ClickedCancel: () => {
+      if (model.status === 'Busy') {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        login: () =>
+          Array.isReadonlyArrayEmpty(model.accounts)
+            ? Login.Editing()
+            : Login.Closed(),
+        answer: () => Redacted.make(''),
+        error: () => '',
+      })
+      if (
+        model.login._tag === 'Code' ||
+        model.login._tag === 'Password' ||
+        model.login._tag === 'Qr'
+      ) {
+        return { model: next, commands: [Disconnect({ id: model.login.id })] }
+      }
+      return { model: next }
+    },
+    SelectedAccount: ({ id }) => ({
+      model: modifyFields(model, {
+        selectedAccountId: () => id,
+        query: () => '',
+      }),
+    }),
+    ClickedRefresh: () =>
+      model.status === 'Busy' || model.selectedAccountId === ''
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              status: () => 'Busy',
+              error: () => '',
+            }),
+            commands: [Refresh({ id: model.selectedAccountId })],
+          },
+    SucceededAuthenticate: ({ result, sourceId }) => {
+      if (
+        sourceId !== '' &&
+        (!('id' in model.login) || model.login.id !== sourceId)
+      ) {
+        return { model }
+      }
+      if (result._tag === 'Authorized') {
+        return {
+          model: modifyFields(model, {
+            login: () => Login.Closed(),
+            status: () => 'Busy',
+            error: () => '',
+            answer: () => Redacted.make(''),
+            phone: () => Redacted.make(''),
+            accounts: accounts => Array.append(accounts, result.account),
+            selectedAccountId: () => result.account.id,
+          }),
+          commands: [Refresh({ id: result.account.id })],
+        }
+      }
+      if (result._tag === 'Qr') {
+        if (model.login._tag === 'Closed') {
+          return { model }
+        }
+        return {
+          model: modifyFields(model, {
+            login: () => Login.Qr(result),
+            status: () => 'Ready',
+          }),
+        }
+      }
+      return {
+        model: modifyFields(model, {
+          login: () =>
+            result._tag === 'Code'
+              ? Login.Code(result)
+              : Login.Password(result),
+          status: () => 'Ready',
+          error: () => '',
+        }),
+      }
+    },
+    FailedAuthenticate: ({ error, sourceId }) =>
+      sourceId !== '' && (!('id' in model.login) || model.login.id !== sourceId)
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              status: () => 'Ready',
+              error: () => error,
+            }),
+          },
+    SucceededRefresh: ({ account }) => ({
+      model: modifyFields(model, {
+        accounts: Array.map(current =>
+          current.id === account.id ? account : current,
+        ),
+        status: () => 'Ready',
+      }),
+    }),
+    FailedRefresh: () => ({
+      model: modifyFields(model, {
+        status: () => 'Ready',
+        error: () => 'Could not load chats. Try refreshing again.',
+      }),
+    }),
+    CompletedDisconnect: () => ({ model }),
+  })
+export const initialModel: Model = {
+  login: Login.Editing(),
+  apiId: '',
+  apiHash: Redacted.make(''),
+  phone: Redacted.make(''),
+  answer: Redacted.make(''),
+  status: 'Ready',
+  error: '',
+  accounts: [],
+  selectedAccountId: '',
+  query: '',
+}
+export const init: Runtime.ApplicationInit<Model, Message> = () => ({
+  model: initialModel,
+})
+const fieldClass =
+  'w-full rounded-xl border border-white/20 bg-[#1c1c22] px-4 py-3 text-white'
+const buttonClass =
+  'rounded-xl bg-[#8774e1] px-4 py-3 text-white disabled:opacity-50'
+const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class('flex flex-col gap-4')],
+    [
+      h.p(
+        [],
+        [
+          password
+            ? 'Enter your Telegram two-step verification password.'
+            : 'Enter the login code Telegram sent to your app or phone.',
+        ],
+      ),
+      h.input([
+        h.Class(fieldClass),
+        h.Type('password'),
+        h.AriaLabel(password ? '2FA password' : 'Login code'),
+        h.Value(Redacted.value(model.answer)),
+        h.Disabled(model.status === 'Busy'),
+        h.OnInput(value =>
+          Message.UpdatedAnswer({ value: Redacted.make(value) }),
+        ),
+      ]),
+      h.button(
+        [
+          h.Class(buttonClass),
+          h.Disabled(model.status === 'Busy'),
+          h.OnClick(Message.SubmittedAnswer()),
+        ],
+        ['Continue'],
+      ),
+    ],
+  )
+const loginView = (model: Model, h: HtmlBuilder<Message>) => {
+  const disabled = model.status === 'Busy'
+  return h.section(
+    [
+      h.Class(
+        'flex w-full max-w-md flex-col gap-4 rounded-2xl bg-[#23232b] p-6',
+      ),
+      h.AriaLabel('Telegram login'),
+    ],
+    [
+      h.h1([h.Class('text-xl')], ['Attach Telegram account']),
+      Login.match(model.login, {
+        Closed: () => h.empty,
+        Editing: () =>
+          h.div(
+            [h.Class('flex flex-col gap-4')],
+            [
+              h.p(
+                [],
+                [
+                  'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
+                ],
+              ),
+              h.input([
+                h.Class(fieldClass),
+                h.AriaLabel('API ID'),
+                h.Placeholder('API ID'),
+                h.Value(model.apiId),
+                h.Disabled(disabled),
+                h.OnInput(value => Message.UpdatedApiId({ value })),
+              ]),
+              h.input([
+                h.Class(fieldClass),
+                h.Type('password'),
+                h.AriaLabel('API hash'),
+                h.Placeholder('API hash'),
+                h.Value(Redacted.value(model.apiHash)),
+                h.Disabled(disabled),
+                h.OnInput(value =>
+                  Message.UpdatedApiHash({ value: Redacted.make(value) }),
+                ),
+              ]),
+              h.input([
+                h.Class(fieldClass),
+                h.Type('tel'),
+                h.AriaLabel('Phone number'),
+                h.Placeholder('+31 …'),
+                h.Value(Redacted.value(model.phone)),
+                h.Disabled(disabled),
+                h.OnInput(value =>
+                  Message.UpdatedPhone({ value: Redacted.make(value) }),
+                ),
+              ]),
+              h.button(
+                [
+                  h.Class(buttonClass),
+                  h.Disabled(disabled),
+                  h.OnClick(Message.ClickedPhoneLogin()),
+                ],
+                ['Log in with phone'],
+              ),
+              h.button(
+                [
+                  h.Class(buttonClass),
+                  h.Disabled(disabled),
+                  h.OnClick(Message.ClickedQrLogin()),
+                ],
+                ['Log in with QR'],
+              ),
+            ],
+          ),
+        Code: () => answerView(model, false, h),
+        Password: () => answerView(model, true, h),
+        Qr: ({ image }) =>
+          h.div(
+            [],
+            [
+              h.p(
+                [],
+                [
+                  'In Telegram on your phone, open Settings → Devices → Link Desktop Device and scan this code.',
+                ],
+              ),
+              h.img([
+                h.Src(image),
+                h.Alt('Telegram login QR code'),
+                h.Class('mx-auto my-4 w-64'),
+              ]),
+            ],
+          ),
+      }),
+      model.login._tag !== 'Editing' ||
+      Array.isReadonlyArrayNonEmpty(model.accounts)
+        ? h.button(
+            [h.Disabled(disabled), h.OnClick(Message.ClickedCancel())],
+            ['Cancel'],
+          )
+        : h.empty,
+      disabled ? h.p([h.Role('status')], ['Connecting to Telegram…']) : h.empty,
+    ],
+  )
+}
+export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
+  title: '',
+  body: h.main(
+    [
+      h.Class(
+        'app-wallpaper flex min-h-screen flex-col items-center gap-4 p-6 text-white',
+      ),
+    ],
+    [
+      model.error === '' ? h.empty : h.p([h.Role('alert')], [model.error]),
+      model.login._tag === 'Closed' ? h.empty : loginView(model, h),
+      Array.isReadonlyArrayEmpty(model.accounts)
+        ? h.empty
+        : h.section(
+            [
+              h.Class('w-full max-w-2xl rounded-2xl bg-[#1c1c22] p-4'),
+              h.AriaLabel('Telegram chats'),
+            ],
+            [
+              h.nav(
+                [h.AriaLabel('Accounts'), h.Class('flex flex-wrap gap-3')],
+                model.accounts.map(account =>
+                  h.keyed('button')(
+                    account.id,
+                    [
+                      h.Class(buttonClass),
+                      h.AriaPressed(
+                        String(model.selectedAccountId === account.id),
+                      ),
+                      h.OnClick(Message.SelectedAccount({ id: account.id })),
+                    ],
+                    [account.title],
+                  ),
+                ),
+              ),
+              h.div(
+                [h.Class('my-4 flex gap-4')],
+                [
+                  h.button(
+                    [
+                      h.OnClick(Message.ClickedAddAccount()),
+                      h.Disabled(
+                        model.status === 'Busy' ||
+                          model.login._tag !== 'Closed',
+                      ),
+                    ],
+                    ['Add account'],
+                  ),
+                  h.button(
+                    [
+                      h.OnClick(Message.ClickedRefresh()),
+                      h.Disabled(
+                        model.status === 'Busy' ||
+                          model.login._tag !== 'Closed',
+                      ),
+                    ],
+                    ['Refresh chats'],
+                  ),
+                ],
+              ),
+              h.input([
+                h.Class(fieldClass),
+                h.Type('search'),
+                h.AriaLabel('Search chats'),
+                h.Value(model.query),
+                h.OnInput(value => Message.UpdatedQuery({ value })),
+              ]),
+              h.ul(
+                [h.Class('mt-4 divide-y divide-white/10')],
+                model.accounts
+                  .filter(account => account.id === model.selectedAccountId)
+                  .flatMap(account => account.chats)
+                  .filter(chat =>
+                    chat.title
+                      .toLowerCase()
+                      .includes(model.query.toLowerCase()),
+                  )
+                  .map(chat =>
+                    h.keyed('li')(
+                      chat.id,
+                      [h.Class('flex justify-between gap-4 py-4')],
+                      [
+                        h.span([], [chat.title]),
+                        h.span([h.Class('text-[#b8a8ff]')], [chat.kind]),
+                      ],
+                    ),
+                  ),
+              ),
+            ],
+          ),
+    ],
+  ),
+})
+
+export const subscriptions = Subscription.make<Model, Message>()(entry => ({
+  qr: entry(
+    { id: Schema.String },
+    {
+      modelToDependencies: model => ({
+        id: model.login._tag === 'Qr' ? model.login.id : '',
+      }),
+      dependenciesToStream: ({ id }) =>
+        id === ''
+          ? Stream.empty
+          : Stream.fromEffectSchedule(
+              Effect.sleep('2 seconds').pipe(
+                Effect.andThen(Effect.tryPromise(() => pollQr(id))),
+                Effect.map(result =>
+                  Message.SucceededAuthenticate({ result, sourceId: id }),
+                ),
+                Effect.catch(error =>
+                  Effect.succeed(
+                    Message.FailedAuthenticate({
+                      error: loginError(error.cause),
+                      sourceId: id,
+                    }),
+                  ),
+                ),
+              ),
+              Schedule.spaced('1 second'),
+            ),
+    },
+  ),
+}))
