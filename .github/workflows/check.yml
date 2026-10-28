@@ -1,0 +1,26 @@
+name: check
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v16
+        with:
+          name: nickcomua
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          extraPullNames: nix-community
+      - name: Build and check
+        run: |
+          nix flake check --accept-flake-config --print-build-logs
+          nix build .#website .#desktop --accept-flake-config --print-build-logs
+          nix develop --accept-flake-config -c true
