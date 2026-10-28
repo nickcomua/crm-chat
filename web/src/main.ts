@@ -6,38 +6,57 @@ import { Document, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 
-import { fixtureChats, linesFor, markFor } from './fixture'
+import { faceFor, fixtureChats, markFor } from './fixture'
 import type { Chat, ChatKind } from './generated/core'
 
 const kindTint: Record<ChatKind, string> = {
-  Dialog: 'bg-sky-700',
-  Group: 'bg-emerald-700',
-  Channel: 'bg-amber-700',
+  Dialog: 'bg-[#5288c1]',
+  Group: 'bg-[#3e9e6a]',
+  Channel: 'bg-[#c47a2c]',
+}
+
+const kindStatus: Record<ChatKind, string> = {
+  Dialog: 'personal chat',
+  Group: 'group',
+  Channel: 'channel',
 }
 
 export const Model = Schema.Struct({
   maybeOpenChatId: Schema.Option(Schema.String),
+  query: Schema.String,
+  draft: Schema.String,
 })
 export type Model = typeof Model.Type
 
 export const Message = defineMessageUnion({
   ClickedChat: { id: Schema.String },
   ClickedBack: {},
+  ChangedQuery: { value: Schema.String },
+  ChangedDraft: { value: Schema.String },
 })
 export type Message = typeof Message.Type
 
 export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
   Message.match(message, {
     ClickedChat: ({ id }) => ({
-      model: modifyFields(model, { maybeOpenChatId: () => Option.some(id) }),
+      model: modifyFields(model, {
+        maybeOpenChatId: () => Option.some(id),
+        draft: () => '',
+      }),
     }),
     ClickedBack: () => ({
       model: modifyFields(model, { maybeOpenChatId: () => Option.none() }),
     }),
+    ChangedQuery: ({ value }) => ({
+      model: modifyFields(model, { query: () => value }),
+    }),
+    ChangedDraft: ({ value }) => ({
+      model: modifyFields(model, { draft: () => value }),
+    }),
   })
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: { maybeOpenChatId: Option.none() },
+  model: { maybeOpenChatId: Option.none(), query: '', draft: '' },
 })
 
 const openChat = (model: Model): Option.Option<Chat> =>
@@ -45,13 +64,25 @@ const openChat = (model: Model): Option.Option<Chat> =>
     Array.findFirst(fixtureChats, (chat) => chat.id === id),
   )
 
+const shownChats = (query: string): ReadonlyArray<Chat> => {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') {
+    return fixtureChats
+  }
+  return Array.filter(fixtureChats, (chat) => chat.title.toLowerCase().includes(needle))
+}
+
 const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 
+const fieldClass =
+  'w-full rounded-full bg-[#242f3d] px-4 py-2.5 text-[15px] text-[#f5f5f5] outline-none placeholder:text-[#708499]'
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const opened = openChat(model)
   const isOpen = Option.isSome(opened)
+  const chats = shownChats(model.query)
 
   return {
     title: '',
@@ -59,15 +90,29 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
       [h.Class('flex h-screen overflow-hidden bg-[#0e1621] text-[#f5f5f5]')],
       [
         h.aside(
-          [h.Class(`${listHidden(isOpen)} w-full shrink-0 flex-col bg-[#17212b] md:w-[26rem] md:border-r md:border-[#101921]`)],
+          [
+            h.Class(
+              `${listHidden(isOpen)} w-full shrink-0 flex-col bg-[#17212b] md:w-[22rem] md:border-r md:border-black/40 xl:w-[26rem]`,
+            ),
+          ],
           [
             h.div(
-              [h.Class('px-4 py-3 text-sm font-medium text-[#708499]')],
-              ['Chats'],
+              [h.Class('px-3 py-3')],
+              [
+                h.input([
+                  h.Class(fieldClass),
+                  h.Type('search'),
+                  h.Placeholder('Search'),
+                  h.AriaLabel('Search chats'),
+                  h.Value(model.query),
+                  h.OnInput((value) => Message.ChangedQuery({ value })),
+                ]),
+              ],
             ),
             h.ul(
-              [h.Class('m-0 list-none overflow-y-auto')],
-              fixtureChats.map((chat) => {
+              [h.Class('m-0 min-h-0 flex-1 list-none overflow-y-auto')],
+              chats.map((chat) => {
+                const face = faceFor(chat.id)
                 const selected = Option.match(model.maybeOpenChatId, {
                   onNone: () => false,
                   onSome: (id) => id === chat.id,
@@ -82,12 +127,19 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                   ],
                   [
                     h.div(
-                      [h.Class(`flex size-12 shrink-0 items-center justify-center rounded-full text-sm font-medium ${kindTint[chat.kind]}`)],
+                      [
+                        h.Class(
+                          `flex size-14 shrink-0 items-center justify-center rounded-full text-lg font-medium text-white ${kindTint[chat.kind]}`,
+                        ),
+                      ],
                       [markFor(chat.title)],
                     ),
                     h.div([h.Class('min-w-0 flex-1')], [
-                      h.div([h.Class('truncate text-[15px]')], [chat.title]),
-                      h.div([h.Class('truncate text-sm text-[#708499]')], [chat.kind]),
+                      h.div([h.Class('flex items-baseline justify-between gap-3')], [
+                        h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
+                        h.div([h.Class('shrink-0 text-xs text-[#708499]')], [face.time]),
+                      ]),
+                      h.div([h.Class('truncate text-sm text-[#708499]')], [face.preview]),
                     ]),
                   ],
                 )
@@ -104,50 +156,100 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             Option.match(opened, {
               onNone: () =>
                 h.div(
-                  [h.Class('flex flex-1 items-center justify-center text-[#708499]')],
+                  [
+                    h.Class(
+                      'chat-wallpaper flex flex-1 items-center justify-center text-sm text-[#708499]',
+                    ),
+                  ],
                   ['Select a chat'],
                 ),
-              onSome: (chat) =>
-                h.div([h.Class('flex min-h-0 flex-1 flex-col')], [
-                  h.div(
-                    [h.Class('flex items-center gap-3 border-b border-[#101921] bg-[#17212b] px-2 py-2')],
+              onSome: (chat) => {
+                const face = faceFor(chat.id)
+                return h.div([h.Class('flex min-h-0 flex-1 flex-col')], [
+                  h.header(
+                    [
+                      h.Class(
+                        'flex h-14 shrink-0 items-center gap-3 border-b border-black/40 bg-[#17212b] px-2',
+                      ),
+                    ],
                     [
                       h.button(
                         [
-                          h.Class('rounded px-3 py-2 text-sm text-[#5288c1] md:hidden'),
+                          h.Class('rounded-full px-3 py-2 text-sm text-[#5288c1] md:hidden'),
                           h.OnClick(Message.ClickedBack()),
                         ],
                         ['Back'],
                       ),
                       h.div(
-                        [h.Class(`flex size-10 items-center justify-center rounded-full text-sm ${kindTint[chat.kind]}`)],
+                        [
+                          h.Class(
+                            `flex size-10 items-center justify-center rounded-full text-sm font-medium ${kindTint[chat.kind]}`,
+                          ),
+                        ],
                         [markFor(chat.title)],
                       ),
-                      h.div([], [
-                        h.div([h.Class('text-[15px]')], [chat.title]),
-                        h.div([h.Class('text-sm text-[#708499]')], [chat.kind]),
+                      h.div([h.Class('min-w-0')], [
+                        h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
+                        h.div([h.Class('truncate text-sm text-[#708499]')], [kindStatus[chat.kind]]),
                       ]),
                     ],
                   ),
                   h.div(
-                    [h.Class('flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-4 py-4')],
-                    linesFor(chat.id).map((line) =>
+                    [
+                      h.Class(
+                        'chat-wallpaper flex min-h-0 flex-1 flex-col justify-end gap-1.5 overflow-y-auto px-4 py-3',
+                      ),
+                    ],
+                    face.lines.map((line) =>
                       h.div(
-                        [h.Class('max-w-md rounded-lg bg-[#182533] px-3 py-2 text-[15px]')],
-                        [line],
+                        [h.Class(`flex ${line.mine ? 'justify-end' : 'justify-start'}`)],
+                        [
+                          h.div(
+                            [
+                              h.Class(
+                                `w-fit max-w-[75%] px-3 py-1.5 text-[15px] leading-5 shadow-sm ${
+                                  line.mine
+                                    ? 'rounded-2xl rounded-br-md bg-[#2b5278]'
+                                    : 'rounded-2xl rounded-bl-md bg-[#182533]'
+                                }`,
+                              ),
+                            ],
+                            [
+                              line.text,
+                              h.span(
+                                [h.Class('ml-3 align-bottom text-[11px] text-[#8aa4b8]')],
+                                [line.time],
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   ),
                   chat.kind === 'Channel'
                     ? h.div(
-                        [h.Class('border-t border-[#101921] px-4 py-3 text-sm text-[#708499]')],
+                        [
+                          h.Class(
+                            'flex h-14 shrink-0 items-center justify-center bg-[#17212b] text-sm text-[#708499]',
+                          ),
+                        ],
                         ['Replies are off'],
                       )
                     : h.div(
-                        [h.Class('border-t border-[#101921] bg-[#17212b] px-4 py-3 text-sm text-[#708499]')],
-                        ['Message'],
+                        [h.Class('flex h-14 shrink-0 items-center bg-[#17212b] px-3')],
+                        [
+                          h.input([
+                            h.Class(fieldClass),
+                            h.Type('text'),
+                            h.Placeholder('Message'),
+                            h.AriaLabel('Message'),
+                            h.Value(model.draft),
+                            h.OnInput((value) => Message.ChangedDraft({ value })),
+                          ]),
+                        ],
                       ),
-                ]),
+                ])
+              },
             }),
           ],
         ),

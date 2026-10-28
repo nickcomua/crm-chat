@@ -1,1 +1,11 @@
 @import 'tailwindcss';
+
+.chat-wallpaper {
+  background-color: #0e1621;
+  background-image:
+    radial-gradient(circle at 12px 12px, rgb(120 150 180 / 0.07) 1px, transparent 1.5px),
+    radial-gradient(ellipse at 80% 0%, rgb(42 74 110 / 0.28), transparent 55%);
+  background-size:
+    28px 28px,
+    100% 100%;
+}

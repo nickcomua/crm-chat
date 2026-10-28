@@ -4,7 +4,7 @@ import { describe, test } from 'vitest'
 
 import { type Model, update, view } from './main'
 
-const initialModel: Model = { maybeOpenChatId: Option.none() }
+const initialModel: Model = { maybeOpenChatId: Option.none(), query: '', draft: '' }
 
 describe('view', () => {
   test('opens a chat from the list and returns with back', () => {
@@ -15,7 +15,7 @@ describe('view', () => {
       expect(role('button')).not.toExist(),
       expectAll(all.role('listitem')).toHaveCount(3),
       expect(nth(all.role('listitem'), 0)).toContainText('Ada'),
-      expect(nth(all.role('listitem'), 0)).toContainText('Dialog'),
+      expect(nth(all.role('listitem'), 0)).toContainText('Bring the notes.'),
       expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),
       click(nth(all.role('listitem'), 0)),
       expect(role('region', { name: 'Open chat' })).toContainText('See you at the station.'),
