@@ -6,8 +6,14 @@
   "build": {
     "devUrl": "http://127.0.0.1:4173",
     "frontendDist": "../web/dist",
-    "beforeDevCommand": "npm --prefix web run dev -- --host 127.0.0.1 --port 4173 --strictPort",
-    "beforeBuildCommand": "npm --prefix ../web run build"
+    "beforeDevCommand": {
+      "script": "npm run dev -- --host 127.0.0.1 --port 4173 --strictPort",
+      "cwd": "../web"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../web"
+    }
   },
   "app": {
     "windows": [
