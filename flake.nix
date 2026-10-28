@@ -121,6 +121,8 @@
               ++ [
                 pkgs.cargo-tauri
                 pkgs.jq
+                pkgs.makeWrapper
+                pkgs.patchelf
               ];
             buildPhaseCargoCommand = ''
               mkdir -p web/dist
@@ -130,7 +132,24 @@
               cargo tauri build --no-bundle
             '';
             installPhaseCommand = ''
-              install -Dm755 target/release/crm-chat-desktop "$out/bin/crm-chat-desktop"
+              mkdir -p $out/bin
+              install -Dm755 target/release/crm-chat-desktop $out/bin/.crm-chat-desktop-unwrapped
+              patchelf --set-rpath "${
+                pkgs.lib.makeLibraryPath [
+                  pkgs.webkitgtk_4_1
+                  pkgs.gtk3
+                  pkgs.glib
+                  pkgs.cairo
+                  pkgs.gdk-pixbuf
+                  pkgs.pango
+                  pkgs.dbus
+                  pkgs.libsoup_3
+                  pkgs.librsvg
+                ]
+              }" $out/bin/.crm-chat-desktop-unwrapped
+              makeWrapper $out/bin/.crm-chat-desktop-unwrapped $out/bin/crm-chat-desktop \
+                --prefix XDG_DATA_DIRS : "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}" \
+                --prefix GIO_EXTRA_MODULES : "${pkgs.glib-networking}/lib/gio/modules"
             '';
           }
         );
@@ -206,6 +225,41 @@
             '';
           inherit website wasm32 coreTypes;
           inherit desktop;
+          desktop-starts =
+            pkgs.runCommand "crm-chat-desktop-starts" {
+              nativeBuildInputs = [
+                pkgs.xvfb-run
+                pkgs.glibc
+              ];
+            } ''
+              elf=${desktop}/bin/.crm-chat-desktop-unwrapped
+              if ldd "$elf" | grep -q 'not found'; then
+                echo "desktop binary is missing runtime libraries" >&2
+                ldd "$elf" >&2
+                exit 1
+              fi
+              export HOME=$TMPDIR/home
+              export XDG_RUNTIME_DIR=$TMPDIR/runtime
+              export XDG_CONFIG_HOME=$TMPDIR/config
+              export XDG_DATA_HOME=$TMPDIR/data
+              export XDG_CACHE_HOME=$TMPDIR/cache
+              mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME"
+              chmod 700 "$XDG_RUNTIME_DIR"
+              set +e
+              xvfb-run -a timeout 8s ${desktop}/bin/crm-chat-desktop >"$TMPDIR/desktop.log" 2>&1
+              code=$?
+              set -e
+              if grep -q 'error while loading shared libraries' "$TMPDIR/desktop.log"; then
+                cat "$TMPDIR/desktop.log" >&2
+                exit 1
+              fi
+              if [ "$code" != 0 ] && [ "$code" != 124 ]; then
+                echo "desktop exited $code" >&2
+                cat "$TMPDIR/desktop.log" >&2
+                exit 1
+              fi
+              touch $out
+            '';
           clippy = craneLib.cargoClippy (
             commonArgs
             // {
