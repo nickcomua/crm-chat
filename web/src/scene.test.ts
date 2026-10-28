@@ -12,6 +12,9 @@ const initialModel: Model = {
   moreOpen: false,
   headerMenuOpen: false,
   autoDeleteOpen: false,
+  autoDelete: 'Never',
+  hiddenChatIds: [],
+  mutedChatIds: [],
 }
 
 describe('view', () => {
@@ -44,6 +47,22 @@ describe('view', () => {
       expect(role('menu', { name: 'Menu' })).toContainText('Saved messages'),
       click(role('button', { name: 'More' })),
       expect(role('menu', { name: 'More menu' })).toContainText('About this build'),
+    )
+  })
+
+  test('delete removes the open chat and auto-delete keeps the choice', () => {
+    scene(
+      { update, view },
+      given(initialModel),
+      click(nth(all.role('listitem'), 0)),
+      click(role('button', { name: 'Chat menu' })),
+      click(role('button', { name: 'Auto-delete' })),
+      click(role('button', { name: '1 week' })),
+      click(role('button', { name: 'Chat menu' })),
+      expect(role('menu', { name: 'Chat menu' })).toContainText('1 week'),
+      click(role('button', { name: 'Delete chat' })),
+      expectAll(all.role('listitem')).toHaveCount(11),
+      expect(role('region', { name: 'Open chat' })).toContainText('Select a chat'),
     )
   })
 })

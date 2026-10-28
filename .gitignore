@@ -2,6 +2,6 @@ target/
 result
 result-*
 .direnv/
-node_modules/
+node_modules
 /web/repos/foldkit/
 desktop/gen/

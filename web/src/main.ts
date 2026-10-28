@@ -23,6 +23,9 @@ export const Model = Schema.Struct({
   moreOpen: Schema.Boolean,
   headerMenuOpen: Schema.Boolean,
   autoDeleteOpen: Schema.Boolean,
+  autoDelete: Schema.String,
+  hiddenChatIds: Schema.Array(Schema.String),
+  mutedChatIds: Schema.Array(Schema.String),
 })
 export type Model = typeof Model.Type
 
@@ -35,6 +38,9 @@ export const Message = defineMessageUnion({
   ClickedMore: {},
   ClickedHeaderMenu: {},
   ClickedAutoDelete: {},
+  ClickedAutoDeleteChoice: { value: Schema.String },
+  ClickedMute: {},
+  ClickedDeleteChat: {},
   ClickedDismissMenu: {},
 })
 export type Message = typeof Message.Type
@@ -82,6 +88,39 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ClickedAutoDelete: () => ({
       model: modifyFields(model, { autoDeleteOpen: () => !model.autoDeleteOpen }),
     }),
+    ClickedAutoDeleteChoice: ({ value }) => ({
+      model: modifyFields(model, {
+        autoDelete: () => value,
+        autoDeleteOpen: () => false,
+        headerMenuOpen: () => false,
+      }),
+    }),
+    ClickedMute: () => ({
+      model: modifyFields(model, {
+        mutedChatIds: () =>
+          Option.match(model.maybeOpenChatId, {
+            onNone: () => model.mutedChatIds,
+            onSome: (id) =>
+              model.mutedChatIds.includes(id)
+                ? model.mutedChatIds.filter((mutedId) => mutedId !== id)
+                : [...model.mutedChatIds, id],
+          }),
+        headerMenuOpen: () => false,
+      }),
+    }),
+    ClickedDeleteChat: () => ({
+      model: modifyFields(model, {
+        hiddenChatIds: () =>
+          Option.match(model.maybeOpenChatId, {
+            onNone: () => model.hiddenChatIds,
+            onSome: (id) =>
+              model.hiddenChatIds.includes(id) ? model.hiddenChatIds : [...model.hiddenChatIds, id],
+          }),
+        maybeOpenChatId: () => Option.none(),
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
+      }),
+    }),
     ClickedDismissMenu: () => ({
       model: modifyFields(model, {
         menuOpen: () => false,
@@ -101,6 +140,9 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     moreOpen: false,
     headerMenuOpen: false,
     autoDeleteOpen: false,
+    autoDelete: 'Never',
+    hiddenChatIds: [],
+    mutedChatIds: [],
   },
 })
 
@@ -109,12 +151,14 @@ const openChat = (model: Model): Option.Option<Chat> =>
     Array.findFirst(fixtureChats, (chat) => chat.id === id),
   )
 
-const shownChats = (query: string): ReadonlyArray<Chat> => {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') {
-    return fixtureChats
-  }
-  return Array.filter(fixtureChats, (chat) => chat.title.toLowerCase().includes(needle))
+const shownChats = (model: Model): ReadonlyArray<Chat> => {
+  const needle = model.query.trim().toLowerCase()
+  return Array.filter(
+    fixtureChats,
+    (chat) =>
+      !model.hiddenChatIds.includes(chat.id) &&
+      (needle === '' || chat.title.toLowerCase().includes(needle)),
+  )
 }
 
 const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
@@ -129,7 +173,7 @@ const panelClass = 'relative bg-[#1c1c22] md:rounded-2xl'
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const opened = openChat(model)
   const isOpen = Option.isSome(opened)
-  const chats = shownChats(model.query)
+  const chats = shownChats(model)
 
   return {
     title: '',
@@ -341,11 +385,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                             [chat.kind === 'Dialog' ? 'last seen recently' : kindStatus[chat.kind]],
                           ),
                         ]),
-                        h.button(
+                        h.span(
                           [
-                            h.Class('flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10'),
-                            h.AriaLabel('Call'),
-                            h.OnClick(Message.ClickedHeaderMenu()),
+                            h.Class(
+                              'flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0]',
+                            ),
+                            h.AriaHidden(true),
                           ],
                           ['☎'],
                         ),
@@ -372,7 +417,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                       h.AriaLabel('Auto-delete'),
                                       h.OnClick(Message.ClickedAutoDelete()),
                                     ],
-                                    ['Auto-delete', h.span([h.Class('text-[#9a9aa8]')], ['›'])],
+                                    ['Auto-delete', h.span([h.Class('text-[#9a9aa8]')], [model.autoDelete])],
                                   ),
                                   model.autoDeleteOpen
                                     ? h.div(
@@ -385,7 +430,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                           h.button(
                                             [
                                               h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'),
-                                              h.OnClick(Message.ClickedDismissMenu()),
+                                              h.OnClick(Message.ClickedAutoDeleteChoice({ value: label })),
                                             ],
                                             [label],
                                           ),
@@ -394,15 +439,16 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                                     : h.div([h.Class('hidden')], []),
                                 ]),
                                 h.button(
-                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
-                                  ['Mute'],
+                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedMute())],
+                                  [
+                                    Option.match(model.maybeOpenChatId, {
+                                      onNone: () => 'Mute',
+                                      onSome: (id) => (model.mutedChatIds.includes(id) ? 'Unmute' : 'Mute'),
+                                    }),
+                                  ],
                                 ),
                                 h.button(
-                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
-                                  ['Call'],
-                                ),
-                                h.button(
-                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] text-[#e25c5c] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
+                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] text-[#e25c5c] hover:bg-white/10'), h.OnClick(Message.ClickedDeleteChat())],
                                   ['Delete chat'],
                                 ),
                               ],
