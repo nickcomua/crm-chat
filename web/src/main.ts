@@ -77,7 +77,9 @@ const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 
 const fieldClass =
-  'w-full rounded-full bg-[#242f3d] px-4 py-2.5 text-[15px] text-[#f5f5f5] outline-none placeholder:text-[#708499]'
+  'w-full rounded-full border border-[#8774e1]/40 bg-[#1c1c22] px-4 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]'
+
+const panelClass = 'overflow-hidden bg-[#1c1c22] md:rounded-2xl'
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const opened = openChat(model)
@@ -87,17 +89,17 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   return {
     title: '',
     body: h.div(
-      [h.Class('flex h-screen overflow-hidden bg-[#0e1621] text-[#f5f5f5]')],
+      [h.Class('app-wallpaper flex h-screen gap-2 overflow-hidden p-2 text-white')],
       [
         h.aside(
           [
             h.Class(
-              `${listHidden(isOpen)} w-full shrink-0 flex-col bg-[#17212b] md:w-[22rem] md:border-r md:border-black/40 xl:w-[26rem]`,
+              `${listHidden(isOpen)} ${panelClass} w-full shrink-0 flex-col md:w-[26rem]`,
             ),
           ],
           [
             h.div(
-              [h.Class('px-3 py-3')],
+              [h.Class('px-3 pb-1 pt-3')],
               [
                 h.input([
                   h.Class(fieldClass),
@@ -110,7 +112,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
               ],
             ),
             h.ul(
-              [h.Class('m-0 min-h-0 flex-1 list-none overflow-y-auto')],
+              [h.Class('m-0 min-h-0 flex-1 list-none overflow-y-auto px-2 py-2')],
               chats.map((chat) => {
                 const face = faceFor(chat.id)
                 const selected = Option.match(model.maybeOpenChatId, {
@@ -121,7 +123,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                   chat.id,
                   [
                     h.Class(
-                      `flex cursor-pointer items-center gap-3 px-3 py-2 ${selected ? 'bg-[#2b5278]' : 'hover:bg-[#202b36]'}`,
+                      `flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 ${selected ? 'bg-[#5c4d86]' : 'hover:bg-white/5'}`,
                     ),
                     h.OnClick(Message.ClickedChat({ id: chat.id })),
                   ],
@@ -129,7 +131,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                     h.div(
                       [
                         h.Class(
-                          `flex size-14 shrink-0 items-center justify-center rounded-full text-lg font-medium text-white ${kindTint[chat.kind]}`,
+                          `flex size-12 shrink-0 items-center justify-center rounded-full text-base font-medium text-white ${kindTint[chat.kind]}`,
                         ),
                       ],
                       [markFor(chat.title)],
@@ -137,9 +139,9 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                     h.div([h.Class('min-w-0 flex-1')], [
                       h.div([h.Class('flex items-baseline justify-between gap-3')], [
                         h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
-                        h.div([h.Class('shrink-0 text-xs text-[#708499]')], [face.time]),
+                        h.div([h.Class('shrink-0 text-xs text-[#9a9aa8]')], [face.time]),
                       ]),
-                      h.div([h.Class('truncate text-sm text-[#708499]')], [face.preview]),
+                      h.div([h.Class('truncate text-[13px] text-[#9a9aa8]')], [face.preview]),
                     ]),
                   ],
                 )
@@ -149,106 +151,104 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
         ),
         h.section(
           [
-            h.Class(`${paneHidden(isOpen)} min-w-0 flex-1 flex-col`),
+            h.Class(`${paneHidden(isOpen)} min-w-0 flex-1 flex-col items-start`),
             h.AriaLabel('Open chat'),
           ],
           [
             Option.match(opened, {
               onNone: () =>
                 h.div(
-                  [
-                    h.Class(
-                      'chat-wallpaper flex flex-1 items-center justify-center text-sm text-[#708499]',
-                    ),
-                  ],
+                  [h.Class('flex flex-1 items-center justify-center text-sm text-[#9a9aa8]')],
                   ['Select a chat'],
                 ),
               onSome: (chat) => {
                 const face = faceFor(chat.id)
-                return h.div([h.Class('flex min-h-0 flex-1 flex-col')], [
-                  h.header(
-                    [
-                      h.Class(
-                        'flex h-14 shrink-0 items-center gap-3 border-b border-black/40 bg-[#17212b] px-2',
-                      ),
-                    ],
-                    [
-                      h.button(
-                        [
-                          h.Class('rounded-full px-3 py-2 text-sm text-[#5288c1] md:hidden'),
-                          h.OnClick(Message.ClickedBack()),
-                        ],
-                        ['Back'],
-                      ),
-                      h.div(
-                        [
-                          h.Class(
-                            `flex size-10 items-center justify-center rounded-full text-sm font-medium ${kindTint[chat.kind]}`,
-                          ),
-                        ],
-                        [markFor(chat.title)],
-                      ),
-                      h.div([h.Class('min-w-0')], [
-                        h.div([h.Class('truncate text-[15px] font-medium')], [chat.title]),
-                        h.div([h.Class('truncate text-sm text-[#708499]')], [kindStatus[chat.kind]]),
-                      ]),
-                    ],
-                  ),
-                  h.div(
-                    [
-                      h.Class(
-                        'chat-wallpaper flex min-h-0 flex-1 flex-col justify-end gap-1.5 overflow-y-auto px-4 py-3',
-                      ),
-                    ],
-                    face.lines.map((line) =>
-                      h.div(
-                        [h.Class(`flex ${line.mine ? 'justify-end' : 'justify-start'}`)],
-                        [
+                return h.div(
+                  [h.Class('flex h-full w-full max-w-[32rem] flex-col')],
+                  [
+                    h.header(
+                      [
+                        h.Class(
+                          'flex h-14 shrink-0 items-center gap-3 rounded-2xl bg-[#1c1c22] px-3',
+                        ),
+                      ],
+                      [
+                        h.button(
+                          [
+                            h.Class('rounded-full px-3 py-2 text-sm text-[#8774e1] md:hidden'),
+                            h.OnClick(Message.ClickedBack()),
+                          ],
+                          ['Back'],
+                        ),
+                        h.div(
+                          [
+                            h.Class(
+                              `flex size-10 items-center justify-center rounded-full text-sm font-medium ${kindTint[chat.kind]}`,
+                            ),
+                          ],
+                          [markFor(chat.title)],
+                        ),
+                        h.div([h.Class('min-w-0 flex-1')], [
+                          h.div([h.Class('truncate text-[15px] font-semibold')], [chat.title]),
                           h.div(
-                            [
-                              h.Class(
-                                `w-fit max-w-[75%] px-3 py-1.5 text-[15px] leading-5 shadow-sm ${
-                                  line.mine
-                                    ? 'rounded-2xl rounded-br-md bg-[#2b5278]'
-                                    : 'rounded-2xl rounded-bl-md bg-[#182533]'
-                                }`,
-                              ),
-                            ],
-                            [
-                              line.text,
-                              h.span(
-                                [h.Class('ml-3 align-bottom text-[11px] text-[#8aa4b8]')],
-                                [line.time],
-                              ),
-                            ],
+                            [h.Class('truncate text-[13px] text-[#9a9aa8]')],
+                            [kindStatus[chat.kind]],
                           ),
-                        ],
+                        ]),
+                      ],
+                    ),
+                    h.div(
+                      [h.Class('flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-1 py-3')],
+                      face.lines.map((line) =>
+                        h.div(
+                          [h.Class(`flex ${line.mine ? 'justify-end' : 'justify-start'}`)],
+                          [
+                            h.div(
+                              [
+                                h.Class(
+                                  `w-fit max-w-[80%] rounded-2xl px-3 py-2 text-[15px] leading-5 ${
+                                    line.mine
+                                      ? 'rounded-br-md bg-[#8774e1]'
+                                      : 'rounded-bl-md bg-[#2a2a32]'
+                                  }`,
+                                ),
+                              ],
+                              [
+                                line.text,
+                                h.span(
+                                  [h.Class('ml-3 align-bottom text-[11px] text-white/70')],
+                                  [line.time],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  chat.kind === 'Channel'
-                    ? h.div(
-                        [
-                          h.Class(
-                            'flex h-14 shrink-0 items-center justify-center bg-[#17212b] text-sm text-[#708499]',
-                          ),
-                        ],
-                        ['Replies are off'],
-                      )
-                    : h.div(
-                        [h.Class('flex h-14 shrink-0 items-center bg-[#17212b] px-3')],
-                        [
-                          h.input([
-                            h.Class(fieldClass),
-                            h.Type('text'),
-                            h.Placeholder('Message'),
-                            h.AriaLabel('Message'),
-                            h.Value(model.draft),
-                            h.OnInput((value) => Message.ChangedDraft({ value })),
-                          ]),
-                        ],
-                      ),
-                ])
+                    chat.kind === 'Channel'
+                      ? h.div(
+                          [
+                            h.Class(
+                              'flex h-12 shrink-0 items-center justify-center rounded-full bg-[#1c1c22] text-sm text-[#9a9aa8]',
+                            ),
+                          ],
+                          ['Replies are off'],
+                        )
+                      : h.div(
+                          [h.Class('shrink-0')],
+                          [
+                            h.input([
+                              h.Class(fieldClass),
+                              h.Type('text'),
+                              h.Placeholder('Message'),
+                              h.AriaLabel('Message'),
+                              h.Value(model.draft),
+                              h.OnInput((value) => Message.ChangedDraft({ value })),
+                            ]),
+                          ],
+                        ),
+                  ],
+                )
               },
             }),
           ],
