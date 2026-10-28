@@ -4,4 +4,5 @@ result-*
 .direnv/
 node_modules
 /web/repos/foldkit/
+.lalph/
 desktop/gen/
