@@ -23,7 +23,7 @@ Interview record for [KAM-41](https://linear.app/kaminazuma/issue/KAM-41/share-o
 
 ## Unresolved technical parameter
 
-ts-rs is the default generator. If it cannot emit the types without a WASM bind, or cannot sit on the wasm32 compile, implementation picks another generator and records the swap. That swap is not a new product decision.
+None. ts-rs 12.0.1 emits the committed types and `cargo check -p crm-chat-core --target wasm32-unknown-unknown` succeeded on the host. No generator swap.
 
 ## Inherited, not re-opened
 

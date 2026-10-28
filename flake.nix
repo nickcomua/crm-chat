@@ -138,23 +138,44 @@
         wasm32 = craneLib.mkCargoDerivation (
           commonArgs
           // {
-            pname = "wasm-check";
+            pname = "crm-chat-core-wasm32";
             version = "0.1.0";
             doInstallCargoArtifacts = false;
             cargoArtifacts = craneLib.buildDepsOnly (
               commonArgs
               // {
                 CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-                cargoExtraArgs = "-p wasm-check";
+                cargoExtraArgs = "-p crm-chat-core";
               }
             );
-            nativeBuildInputs = commonArgs.nativeBuildInputs ++ [pkgs.lld];
             buildPhaseCargoCommand = ''
-              cargo build -p wasm-check --release --target wasm32-unknown-unknown
+              cargo check -p crm-chat-core --locked --target wasm32-unknown-unknown
             '';
             installPhaseCommand = ''
               mkdir -p $out
-              cp target/wasm32-unknown-unknown/release/wasm_check.wasm $out/
+              touch $out/checked
+            '';
+          }
+        );
+        coreTypes = craneLib.mkCargoDerivation (
+          commonArgs
+          // {
+            pname = "crm-chat-core-types";
+            version = "0.1.0";
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [
+                (craneLib.fileset.commonCargoSources ./.)
+                ./web/src/generated/core.ts
+              ];
+            };
+            doInstallCargoArtifacts = false;
+            buildPhaseCargoCommand = ''
+              cargo test -p crm-chat-core --locked
+            '';
+            installPhaseCommand = ''
+              mkdir -p $out
+              touch $out/checked
             '';
           }
         );
@@ -182,7 +203,7 @@
               statix check $src
               touch $out
             '';
-          inherit website wasm32;
+          inherit website wasm32 coreTypes;
           inherit desktop;
           clippy = craneLib.cargoClippy (
             commonArgs
