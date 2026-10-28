@@ -103,3 +103,36 @@ test('QR login displays a scannable image', () => {
     expect(role('button', { name: 'Cancel' })).toExist(),
   )
 })
+
+test('invalid 2FA answers announce the error and allow another attempt', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        login: () => ({ _tag: 'Password', id: 'one' }),
+      }),
+    ),
+    type(role('textbox', { name: '2FA password' }), 'incorrect'),
+    click(role('button', { name: 'Continue' })),
+    Command.resolve(
+      SubmitAnswer,
+      Message.FailedAuthenticate({
+        sourceId: 'one',
+        error: 'The password is incorrect. Try again.',
+      }),
+    ),
+    expect(role('alert')).toContainText('The password is incorrect'),
+    type(role('textbox', { name: '2FA password' }), 'correct'),
+    click(role('button', { name: 'Continue' })),
+    Command.resolve(
+      SubmitAnswer,
+      Message.SucceededAuthenticate({
+        sourceId: 'one',
+        result: AuthResult.Authorized({ account }),
+      }),
+    ),
+    Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    expect(role('alert')).not.toExist(),
+    expect(role('heading', { name: 'Telegram chats' })).toExist(),
+  )
+})

@@ -1,5 +1,8 @@
 import bigInt from 'big-integer'
+import { Buffer as BrowserBuffer } from 'buffer/'
+import QRCode from 'qrcode'
 import { Api, TelegramClient } from 'telegram'
+import { getDialogs as collectDialogs } from 'telegram/client/dialogs'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
@@ -17,7 +20,11 @@ vi.mock('telegram/Password', () => ({
   computeCheck: vi.fn(async () => new Api.InputCheckPasswordEmpty()),
 }))
 
-const user = new Api.User({ id: bigInt(1), firstName: 'Ada' })
+const user = new Api.User({
+  id: bigInt(1),
+  firstName: 'Ada',
+  accessHash: bigInt(2),
+})
 const codeSent = { phoneCodeHash: 'hash', isCodeViaApp: true }
 const me = vi.spyOn(TelegramClient.prototype, 'getMe').mockResolvedValue(user)
 const connect = vi
@@ -83,8 +90,17 @@ describe('browser adapter', () => {
   })
 
   test('QR refresh, migration, and password challenge', async () => {
+    const token = Buffer.from([251, 255])
+    // Exercise the actual browser polyfill rather than Node's richer Buffer API.
+    vi.spyOn(token, 'toString').mockImplementation(encoding =>
+      BrowserBuffer.from([251, 255]).toString(encoding),
+    )
+    const renderQr = vi.spyOn(QRCode, 'toDataURL')
     invoke.mockResolvedValueOnce(
-      new Api.auth.LoginToken({ token: Buffer.from('token'), expires: 123 }),
+      new Api.auth.LoginToken({
+        token,
+        expires: 123,
+      }),
     )
     await expect(
       beginLogin('qr', 123, 'hash', '', true),
@@ -92,6 +108,7 @@ describe('browser adapter', () => {
       _tag: 'Qr',
       image: expect.stringContaining('data:image/png;base64,'),
     })
+    expect(renderQr).toHaveBeenCalledWith('tg://login?token=-_8')
     invoke.mockResolvedValueOnce(
       new Api.auth.LoginTokenMigrateTo({
         dcId: 4,
@@ -124,11 +141,53 @@ describe('browser adapter', () => {
     })
   })
 
-  test('loads all dialogs with no artificial limit and namespaces peer IDs', async () => {
+  test('loads ordinary dialogs through GramJS and excludes migrated basic groups', async () => {
     await beginLogin('one', 123, 'hash', '+310001', false)
-    getDialogs.mockResolvedValueOnce(Object.assign([], { total: 0 }))
-    await expect(loadAccount('one')).resolves.toMatchObject({ chats: [] })
-    expect(getDialogs).toHaveBeenCalledWith({ ignoreMigrated: true })
+    getDialogs.mockImplementationOnce(function (this: TelegramClient, params) {
+      return collectDialogs(this, params ?? {})
+    })
+    const peer = new Api.PeerUser({ userId: user.id })
+    const oldGroupPeer = new Api.PeerChat({ chatId: bigInt(3) })
+    invoke.mockResolvedValueOnce(
+      new Api.messages.Dialogs({
+        dialogs: [peer, oldGroupPeer].map(
+          dialogPeer =>
+            new Api.Dialog({
+              peer: dialogPeer,
+              topMessage: 1,
+              readInboxMaxId: 0,
+              readOutboxMaxId: 0,
+              unreadCount: 0,
+              unreadMentionsCount: 0,
+              unreadReactionsCount: 0,
+              notifySettings: new Api.PeerNotifySettings({}),
+            }),
+        ),
+        messages: [peer, oldGroupPeer].map(
+          peerId => new Api.Message({ id: 1, peerId, date: 0, message: '' }),
+        ),
+        chats: [
+          new Api.Chat({
+            id: bigInt(3),
+            title: 'Migrated group',
+            photo: new Api.ChatPhotoEmpty(),
+            participantsCount: 0,
+            date: 0,
+            version: 0,
+            migratedTo: new Api.InputChannel({
+              channelId: bigInt(4),
+              accessHash: bigInt(5),
+            }),
+          }),
+        ],
+        users: [user],
+      }),
+    )
+    const account = await loadAccount('one')
+    expect(Array.from(account.chats)).toEqual([
+      { id: '1:1', title: 'Ada', kind: 'Dialog' },
+    ])
+    expect(getDialogs).toHaveBeenCalledWith({})
   })
 })
 

@@ -104,3 +104,59 @@ test('a chat-list failure keeps the authenticated account available for retry', 
     }),
   )
 })
+
+test('a failed login can be retried without losing application credentials', () => {
+  story(
+    update,
+    given(modifyFields(signedIn, { login: () => ({ _tag: 'Editing' }) })),
+    message(Message.ClickedPhoneLogin()),
+    Command.resolve(
+      BeginLogin,
+      Message.FailedAuthenticate({ sourceId: '', error: 'Try again' }),
+    ),
+    model(current => {
+      expect(current.status).toBe('Ready')
+      expect(current.error).toBe('Try again')
+      expect(current.apiId).toBe('12345')
+    }),
+    message(Message.ClickedPhoneLogin()),
+    Command.resolve(
+      BeginLogin,
+      Message.SucceededAuthenticate({
+        sourceId: '',
+        result: AuthResult.Code({ id: 'retry' }),
+      }),
+    ),
+    model(current => {
+      expect(current.login).toEqual({ _tag: 'Code', id: 'retry' })
+      expect(current.error).toBe('')
+    }),
+  )
+})
+
+test('a successful QR poll clears a transient authentication error', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        login: () => ({ _tag: 'Qr', id: 'qr', image: 'old' }),
+      }),
+    ),
+    message(
+      Message.FailedAuthenticate({
+        sourceId: 'qr',
+        error: 'Temporary failure',
+      }),
+    ),
+    message(
+      Message.SucceededAuthenticate({
+        sourceId: 'qr',
+        result: AuthResult.Qr({ id: 'qr', image: 'new' }),
+      }),
+    ),
+    model(current => {
+      expect(current.error).toBe('')
+      expect(current.login).toEqual({ _tag: 'Qr', id: 'qr', image: 'new' })
+    }),
+  )
+})

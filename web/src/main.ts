@@ -12,6 +12,8 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 
 import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
+import * as Button from '@foldkit/ui/button'
+import * as Input from '@foldkit/ui/input'
 
 import {
   Account,
@@ -312,6 +314,7 @@ export const update = (model: Model, message: Message) =>
           model: modifyFields(model, {
             login: () => Login.Qr(result),
             status: () => 'Ready',
+            error: () => '',
           }),
         }
       }
@@ -370,6 +373,187 @@ const fieldClass =
   'w-full rounded-xl border border-white/20 bg-[#1c1c22] px-4 py-3 text-white'
 const buttonClass =
   'rounded-xl bg-[#8774e1] px-4 py-3 text-white disabled:opacity-50'
+const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class('flex flex-col gap-4')],
+    [
+      h.p(
+        [],
+        [
+          'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
+        ],
+      ),
+      Input.view(
+        {
+          id: 'telegram-api-id',
+          onInput: value => Message.UpdatedApiId({ value }),
+          isDisabled: model.status === 'Busy',
+          value: model.apiId,
+          placeholder: 'API ID',
+          toView: attributes =>
+            h.input([
+              ...attributes.input,
+              h.Class(fieldClass),
+              h.AriaLabel('API ID'),
+            ]),
+        },
+        h,
+      ),
+      Input.view(
+        {
+          id: 'telegram-api-hash',
+          onInput: value =>
+            Message.UpdatedApiHash({ value: Redacted.make(value) }),
+          isDisabled: model.status === 'Busy',
+          value: Redacted.value(model.apiHash),
+          type: 'password',
+          placeholder: 'API hash',
+          toView: attributes =>
+            h.input([
+              ...attributes.input,
+              h.Class(fieldClass),
+              h.AriaLabel('API hash'),
+            ]),
+        },
+        h,
+      ),
+      Input.view(
+        {
+          id: 'telegram-phone',
+          onInput: value =>
+            Message.UpdatedPhone({ value: Redacted.make(value) }),
+          isDisabled: model.status === 'Busy',
+          value: Redacted.value(model.phone),
+          type: 'tel',
+          placeholder: '+31 …',
+          toView: attributes =>
+            h.input([
+              ...attributes.input,
+              h.Class(fieldClass),
+              h.AriaLabel('Phone number'),
+            ]),
+        },
+        h,
+      ),
+      Button.view(
+        {
+          onClick: Message.ClickedPhoneLogin(),
+          isDisabled: model.status === 'Busy',
+          toView: attributes =>
+            h.button(
+              [...attributes.button, h.Class(buttonClass)],
+              ['Log in with phone'],
+            ),
+        },
+        h,
+      ),
+      Button.view(
+        {
+          onClick: Message.ClickedQrLogin(),
+          isDisabled: model.status === 'Busy',
+          toView: attributes =>
+            h.button(
+              [...attributes.button, h.Class(buttonClass)],
+              ['Log in with QR'],
+            ),
+        },
+        h,
+      ),
+    ],
+  )
+const accountsView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.nav(
+    [h.AriaLabel('Accounts'), h.Class('flex flex-wrap gap-3')],
+    model.accounts.map(account =>
+      Button.view(
+        {
+          onClick: Message.SelectedAccount({ id: account.id }),
+          toView: attributes =>
+            h.keyed('button')(
+              account.id,
+              [
+                ...attributes.button,
+                h.Class(buttonClass),
+                h.AriaPressed(String(model.selectedAccountId === account.id)),
+              ],
+              [account.title],
+            ),
+        },
+        h,
+      ),
+    ),
+  )
+const chatListView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.ul(
+    [h.Class('mt-4 divide-y divide-white/10')],
+    model.accounts
+      .filter(account => account.id === model.selectedAccountId)
+      .flatMap(account => account.chats)
+      .filter(chat =>
+        chat.title.toLowerCase().includes(model.query.toLowerCase()),
+      )
+      .map(chat =>
+        h.keyed('li')(
+          chat.id,
+          [h.Class('flex justify-between gap-4 py-4')],
+          [
+            h.span([], [chat.title]),
+            h.span([h.Class('text-[#b8a8ff]')], [chat.kind]),
+          ],
+        ),
+      ),
+  )
+const chatsView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.section(
+    [
+      h.Class('w-full max-w-2xl rounded-2xl bg-[#1c1c22] p-4'),
+      h.AriaLabel('Telegram chats'),
+    ],
+    [
+      accountsView(model, h),
+      h.div(
+        [h.Class('my-4 flex gap-4')],
+        [
+          Button.view(
+            {
+              onClick: Message.ClickedAddAccount(),
+              isDisabled:
+                model.status === 'Busy' || model.login._tag !== 'Closed',
+              toView: attributes =>
+                h.button([...attributes.button], ['Add account']),
+            },
+            h,
+          ),
+          Button.view(
+            {
+              onClick: Message.ClickedRefresh(),
+              isDisabled:
+                model.status === 'Busy' || model.login._tag !== 'Closed',
+              toView: attributes =>
+                h.button([...attributes.button], ['Refresh chats']),
+            },
+            h,
+          ),
+        ],
+      ),
+      Input.view(
+        {
+          id: 'telegram-search',
+          onInput: value => Message.UpdatedQuery({ value }),
+          value: model.query,
+          type: 'search',
+          toView: attributes =>
+            h.input([
+              ...attributes.input,
+              h.Class(fieldClass),
+              h.AriaLabel('Search chats'),
+            ]),
+        },
+        h,
+      ),
+      chatListView(model, h),
+    ],
+  )
 const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
   h.div(
     [h.Class('flex flex-col gap-4')],
@@ -382,23 +566,34 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
             : 'Enter the login code Telegram sent to your app or phone.',
         ],
       ),
-      h.input([
-        h.Class(fieldClass),
-        h.Type('password'),
-        h.AriaLabel(password ? '2FA password' : 'Login code'),
-        h.Value(Redacted.value(model.answer)),
-        h.Disabled(model.status === 'Busy'),
-        h.OnInput(value =>
-          Message.UpdatedAnswer({ value: Redacted.make(value) }),
-        ),
-      ]),
-      h.button(
-        [
-          h.Class(buttonClass),
-          h.Disabled(model.status === 'Busy'),
-          h.OnClick(Message.SubmittedAnswer()),
-        ],
-        ['Continue'],
+      Input.view(
+        {
+          id: 'telegram-answer',
+          onInput: value =>
+            Message.UpdatedAnswer({ value: Redacted.make(value) }),
+          isDisabled: model.status === 'Busy',
+          value: Redacted.value(model.answer),
+          type: 'password',
+          toView: attributes =>
+            h.input([
+              ...attributes.input,
+              h.Class(fieldClass),
+              h.AriaLabel(password ? '2FA password' : 'Login code'),
+            ]),
+        },
+        h,
+      ),
+      Button.view(
+        {
+          onClick: Message.SubmittedAnswer(),
+          isDisabled: model.status === 'Busy',
+          toView: attributes =>
+            h.button(
+              [...attributes.button, h.Class(buttonClass)],
+              ['Continue'],
+            ),
+        },
+        h,
       ),
     ],
   )
@@ -415,64 +610,7 @@ const loginView = (model: Model, h: HtmlBuilder<Message>) => {
       h.h1([h.Class('text-xl')], ['Attach Telegram account']),
       Login.match(model.login, {
         Closed: () => h.empty,
-        Editing: () =>
-          h.div(
-            [h.Class('flex flex-col gap-4')],
-            [
-              h.p(
-                [],
-                [
-                  'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
-                ],
-              ),
-              h.input([
-                h.Class(fieldClass),
-                h.AriaLabel('API ID'),
-                h.Placeholder('API ID'),
-                h.Value(model.apiId),
-                h.Disabled(disabled),
-                h.OnInput(value => Message.UpdatedApiId({ value })),
-              ]),
-              h.input([
-                h.Class(fieldClass),
-                h.Type('password'),
-                h.AriaLabel('API hash'),
-                h.Placeholder('API hash'),
-                h.Value(Redacted.value(model.apiHash)),
-                h.Disabled(disabled),
-                h.OnInput(value =>
-                  Message.UpdatedApiHash({ value: Redacted.make(value) }),
-                ),
-              ]),
-              h.input([
-                h.Class(fieldClass),
-                h.Type('tel'),
-                h.AriaLabel('Phone number'),
-                h.Placeholder('+31 …'),
-                h.Value(Redacted.value(model.phone)),
-                h.Disabled(disabled),
-                h.OnInput(value =>
-                  Message.UpdatedPhone({ value: Redacted.make(value) }),
-                ),
-              ]),
-              h.button(
-                [
-                  h.Class(buttonClass),
-                  h.Disabled(disabled),
-                  h.OnClick(Message.ClickedPhoneLogin()),
-                ],
-                ['Log in with phone'],
-              ),
-              h.button(
-                [
-                  h.Class(buttonClass),
-                  h.Disabled(disabled),
-                  h.OnClick(Message.ClickedQrLogin()),
-                ],
-                ['Log in with QR'],
-              ),
-            ],
-          ),
+        Editing: () => credentialsView(model, h),
         Code: () => answerView(model, false, h),
         Password: () => answerView(model, true, h),
         Qr: ({ image }) =>
@@ -495,9 +633,14 @@ const loginView = (model: Model, h: HtmlBuilder<Message>) => {
       }),
       model.login._tag !== 'Editing' ||
       Array.isReadonlyArrayNonEmpty(model.accounts)
-        ? h.button(
-            [h.Disabled(disabled), h.OnClick(Message.ClickedCancel())],
-            ['Cancel'],
+        ? Button.view(
+            {
+              onClick: Message.ClickedCancel(),
+              isDisabled: disabled,
+              toView: attributes =>
+                h.button([...attributes.button], ['Cancel']),
+            },
+            h,
           )
         : h.empty,
       disabled ? h.p([h.Role('status')], ['Connecting to Telegram…']) : h.empty,
@@ -514,86 +657,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
     ],
     [
       model.error === '' ? h.empty : h.p([h.Role('alert')], [model.error]),
-      model.login._tag === 'Closed' ? h.empty : loginView(model, h),
+      model.login._tag === 'Closed'
+        ? h.h1([h.Class('text-xl')], ['Telegram chats'])
+        : loginView(model, h),
       Array.isReadonlyArrayEmpty(model.accounts)
         ? h.empty
-        : h.section(
-            [
-              h.Class('w-full max-w-2xl rounded-2xl bg-[#1c1c22] p-4'),
-              h.AriaLabel('Telegram chats'),
-            ],
-            [
-              h.nav(
-                [h.AriaLabel('Accounts'), h.Class('flex flex-wrap gap-3')],
-                model.accounts.map(account =>
-                  h.keyed('button')(
-                    account.id,
-                    [
-                      h.Class(buttonClass),
-                      h.AriaPressed(
-                        String(model.selectedAccountId === account.id),
-                      ),
-                      h.OnClick(Message.SelectedAccount({ id: account.id })),
-                    ],
-                    [account.title],
-                  ),
-                ),
-              ),
-              h.div(
-                [h.Class('my-4 flex gap-4')],
-                [
-                  h.button(
-                    [
-                      h.OnClick(Message.ClickedAddAccount()),
-                      h.Disabled(
-                        model.status === 'Busy' ||
-                          model.login._tag !== 'Closed',
-                      ),
-                    ],
-                    ['Add account'],
-                  ),
-                  h.button(
-                    [
-                      h.OnClick(Message.ClickedRefresh()),
-                      h.Disabled(
-                        model.status === 'Busy' ||
-                          model.login._tag !== 'Closed',
-                      ),
-                    ],
-                    ['Refresh chats'],
-                  ),
-                ],
-              ),
-              h.input([
-                h.Class(fieldClass),
-                h.Type('search'),
-                h.AriaLabel('Search chats'),
-                h.Value(model.query),
-                h.OnInput(value => Message.UpdatedQuery({ value })),
-              ]),
-              h.ul(
-                [h.Class('mt-4 divide-y divide-white/10')],
-                model.accounts
-                  .filter(account => account.id === model.selectedAccountId)
-                  .flatMap(account => account.chats)
-                  .filter(chat =>
-                    chat.title
-                      .toLowerCase()
-                      .includes(model.query.toLowerCase()),
-                  )
-                  .map(chat =>
-                    h.keyed('li')(
-                      chat.id,
-                      [h.Class('flex justify-between gap-4 py-4')],
-                      [
-                        h.span([], [chat.title]),
-                        h.span([h.Class('text-[#b8a8ff]')], [chat.kind]),
-                      ],
-                    ),
-                  ),
-              ),
-            ],
-          ),
+        : chatsView(model, h),
     ],
   ),
 })

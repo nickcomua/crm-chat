@@ -71,8 +71,13 @@ const connectionFor = (id: string): Connection => {
 export const loadAccount = async (id: string): Promise<Account> => {
   const { client } = connectionFor(id)
   const user = await client.getMe()
-  const dialogs = await client.getDialogs({ ignoreMigrated: true })
+  // GramJS 2.26.22 inverts ignoreMigrated and drops ordinary peers.
+  // Fetch every dialog and filter migrated basic groups here instead.
+  const dialogs = await client.getDialogs({})
   const chats = dialogs.flatMap((dialog): Array<Chat> => {
+    if (dialog.entity instanceof Api.Chat && dialog.entity.migratedTo) {
+      return []
+    }
     const kind = classifyPeer(dialog.entity)
     if (!kind || !dialog.id) {
       return []
@@ -206,7 +211,7 @@ export const pollQr = async (id: string): Promise<AuthResult> => {
       return await authorized(id)
     }
     const image = await QRCode.toDataURL(
-      `tg://login?token=${result.token.toString('base64url')}`,
+      `tg://login?token=${result.token.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`,
     )
     return { _tag: 'Qr', id, image }
   } catch (error) {
