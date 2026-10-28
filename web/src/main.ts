@@ -21,6 +21,8 @@ export const Model = Schema.Struct({
   draft: Schema.String,
   menuOpen: Schema.Boolean,
   moreOpen: Schema.Boolean,
+  headerMenuOpen: Schema.Boolean,
+  autoDeleteOpen: Schema.Boolean,
 })
 export type Model = typeof Model.Type
 
@@ -31,6 +33,8 @@ export const Message = defineMessageUnion({
   ChangedDraft: { value: Schema.String },
   ClickedMenu: {},
   ClickedMore: {},
+  ClickedHeaderMenu: {},
+  ClickedAutoDelete: {},
   ClickedDismissMenu: {},
 })
 export type Message = typeof Message.Type
@@ -43,6 +47,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         draft: () => '',
         menuOpen: () => false,
         moreOpen: () => false,
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
       }),
     }),
     ClickedBack: () => ({
@@ -58,18 +64,44 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: modifyFields(model, {
         menuOpen: () => !model.menuOpen,
         moreOpen: () => false,
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
       }),
     }),
     ClickedMore: () => ({
       model: modifyFields(model, { moreOpen: () => !model.moreOpen }),
     }),
+    ClickedHeaderMenu: () => ({
+      model: modifyFields(model, {
+        headerMenuOpen: () => !model.headerMenuOpen,
+        autoDeleteOpen: () => false,
+        menuOpen: () => false,
+        moreOpen: () => false,
+      }),
+    }),
+    ClickedAutoDelete: () => ({
+      model: modifyFields(model, { autoDeleteOpen: () => !model.autoDeleteOpen }),
+    }),
     ClickedDismissMenu: () => ({
-      model: modifyFields(model, { menuOpen: () => false, moreOpen: () => false }),
+      model: modifyFields(model, {
+        menuOpen: () => false,
+        moreOpen: () => false,
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
+      }),
     }),
   })
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: { maybeOpenChatId: Option.none(), query: '', draft: '', menuOpen: false, moreOpen: false },
+  model: {
+    maybeOpenChatId: Option.none(),
+    query: '',
+    draft: '',
+    menuOpen: false,
+    moreOpen: false,
+    headerMenuOpen: false,
+    autoDeleteOpen: false,
+  },
 })
 
 const openChat = (model: Model): Option.Option<Chat> =>
@@ -92,7 +124,7 @@ const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 const fieldClass =
   'w-full rounded-full border border-[#8774e1]/40 bg-[#1c1c22] px-4 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]'
 
-const panelClass = 'overflow-hidden bg-[#1c1c22] md:rounded-2xl'
+const panelClass = 'relative bg-[#1c1c22] md:rounded-2xl'
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const opened = openChat(model)
@@ -102,7 +134,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   return {
     title: '',
     body: h.div(
-      [h.Class('app-wallpaper relative flex h-screen gap-2 overflow-hidden px-2 py-5 text-white')],
+      [h.Class('app-wallpaper relative flex h-screen gap-2 px-2 py-5 text-white')],
       [
         h.aside(
           [
@@ -114,16 +146,89 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             h.div(
               [h.Class('flex items-center gap-2 px-3 pb-1 pt-3')],
               [
-                h.button(
-                  [
-                    h.Class(
-                      'flex size-10 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/5',
-                    ),
-                    h.AriaLabel('Menu'),
-                    h.OnClick(Message.ClickedMenu()),
-                  ],
-                  ['☰'],
-                ),
+                h.div([h.Class('relative')], [
+                  h.button(
+                    [
+                      h.Class(
+                        'flex size-10 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/5',
+                      ),
+                      h.AriaLabel('Menu'),
+                      h.OnClick(Message.ClickedMenu()),
+                    ],
+                    ['☰'],
+                  ),
+                  model.menuOpen
+                    ? h.div(
+                        [
+                          h.Class(
+                            'absolute left-0 top-12 z-40 w-64 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
+                          ),
+                          h.Role('menu'),
+                          h.AriaLabel('Menu'),
+                        ],
+                        [
+                          h.div([h.Class('flex items-center gap-3 px-3 py-2')], [
+                            h.div(
+                              [
+                                h.Class(
+                                  'flex size-9 items-center justify-center rounded-full bg-[#8774e1] text-sm font-medium',
+                                ),
+                              ],
+                              ['Y'],
+                            ),
+                            h.div([h.Class('text-[15px] font-medium')], ['You']),
+                          ]),
+                          h.button(
+                            [
+                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
+                              h.OnClick(Message.ClickedDismissMenu()),
+                            ],
+                            ['Saved messages'],
+                          ),
+                          h.button(
+                            [
+                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
+                              h.OnClick(Message.ClickedDismissMenu()),
+                            ],
+                            ['Archived chats'],
+                          ),
+                          h.button(
+                            [
+                              h.Class('flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'),
+                              h.OnClick(Message.ClickedDismissMenu()),
+                            ],
+                            ['Settings'],
+                          ),
+                          h.div([h.Class('relative')], [
+                            h.button(
+                              [
+                                h.Class(
+                                  'flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10',
+                                ),
+                                h.AriaLabel('More'),
+                                h.OnClick(Message.ClickedMore()),
+                              ],
+                              ['More', h.span([h.Class('text-[#9a9aa8]')], ['›'])],
+                            ),
+                            model.moreOpen
+                              ? h.div(
+                                  [
+                                    h.Class(
+                                      'absolute left-full top-0 z-40 ml-2 w-52 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
+                                    ),
+                                    h.Role('menu'),
+                                    h.AriaLabel('More menu'),
+                                  ],
+                                  [
+                                    h.div([h.Class('px-3 py-2 text-[15px]')], ['About this build']),
+                                  ],
+                                )
+                              : h.div([h.Class('hidden')], []),
+                          ]),
+                        ],
+                      )
+                    : h.div([h.Class('hidden')], []),
+                ]),
                 h.input([
                   h.Class(fieldClass),
                   h.Type('search'),
@@ -212,11 +317,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                   [h.Class('flex h-full w-full max-w-md flex-col')],
                   [
                     h.header(
-                      [
-                        h.Class(
-                          'flex h-14 shrink-0 items-center gap-3 rounded-2xl bg-[#1c1c22] px-3',
-                        ),
-                      ],
+                      [h.Class('relative z-30 flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-[#1c1c22] px-2')],
                       [
                         h.button(
                           [
@@ -228,7 +329,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.div(
                           [
                             h.Class(
-                              `flex size-10 items-center justify-center rounded-full text-sm font-medium ${tintFor(chat.kind)}`,
+                              `flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-medium ${tintFor(chat.kind)}`,
                             ),
                           ],
                           [markFor(chat.title)],
@@ -236,10 +337,77 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
                         h.div([h.Class('min-w-0 flex-1')], [
                           h.div([h.Class('truncate text-[15px] font-semibold')], [chat.title]),
                           h.div(
-                            [h.Class('truncate text-[13px] text-[#9a9aa8]')],
-                            [kindStatus[chat.kind]],
+                            [h.Class('truncate text-[13px] text-[#8eb8d4]')],
+                            [chat.kind === 'Dialog' ? 'last seen recently' : kindStatus[chat.kind]],
                           ),
                         ]),
+                        h.button(
+                          [
+                            h.Class('flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10'),
+                            h.AriaLabel('Call'),
+                            h.OnClick(Message.ClickedHeaderMenu()),
+                          ],
+                          ['☎'],
+                        ),
+                        h.button(
+                          [
+                            h.Class('relative flex size-9 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/10'),
+                            h.AriaLabel('Chat menu'),
+                            h.OnClick(Message.ClickedHeaderMenu()),
+                          ],
+                          ['⋮'],
+                        ),
+                        model.headerMenuOpen
+                          ? h.div(
+                              [
+                                h.Class('absolute right-2 top-12 z-40 w-52 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl'),
+                                h.Role('menu'),
+                                h.AriaLabel('Chat menu'),
+                              ],
+                              [
+                                h.div([h.Class('relative')], [
+                                  h.button(
+                                    [
+                                      h.Class('flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10'),
+                                      h.AriaLabel('Auto-delete'),
+                                      h.OnClick(Message.ClickedAutoDelete()),
+                                    ],
+                                    ['Auto-delete', h.span([h.Class('text-[#9a9aa8]')], ['›'])],
+                                  ),
+                                  model.autoDeleteOpen
+                                    ? h.div(
+                                        [
+                                          h.Class('absolute right-full top-0 z-40 mr-2 w-40 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl'),
+                                          h.Role('menu'),
+                                          h.AriaLabel('Auto-delete menu'),
+                                        ],
+                                        ['Never', '1 day', '1 week', '1 month', 'Other'].map((label) =>
+                                          h.button(
+                                            [
+                                              h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'),
+                                              h.OnClick(Message.ClickedDismissMenu()),
+                                            ],
+                                            [label],
+                                          ),
+                                        ),
+                                      )
+                                    : h.div([h.Class('hidden')], []),
+                                ]),
+                                h.button(
+                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
+                                  ['Mute'],
+                                ),
+                                h.button(
+                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
+                                  ['Call'],
+                                ),
+                                h.button(
+                                  [h.Class('block w-full px-3 py-2 text-left text-[15px] text-[#e25c5c] hover:bg-white/10'), h.OnClick(Message.ClickedDismissMenu())],
+                                  ['Delete chat'],
+                                ),
+                              ],
+                            )
+                          : h.div([h.Class('hidden')], []),
                       ],
                     ),
                     h.div(
@@ -310,137 +478,6 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
             }),
           ],
         ),
-        model.menuOpen
-          ? h.div([h.Class('absolute inset-0 z-20')], [
-              h.button(
-                [
-                  h.Class('absolute inset-0 cursor-default'),
-                  h.AriaLabel('Close menu'),
-                  h.OnClick(Message.ClickedDismissMenu()),
-                ],
-                [''],
-              ),
-              h.div(
-                [
-                  h.Class(
-                    'absolute left-3 top-16 z-30 w-72 rounded-2xl bg-[#21212b] py-2 shadow-2xl',
-                  ),
-                  h.Role('menu'),
-                  h.AriaLabel('Menu'),
-                ],
-                [
-                  h.div([h.Class('flex items-center gap-3 px-4 py-3')], [
-                    h.div(
-                      [
-                        h.Class(
-                          'flex size-10 items-center justify-center rounded-full bg-[#8774e1] text-sm font-medium',
-                        ),
-                      ],
-                      ['Y'],
-                    ),
-                    h.div([h.Class('text-[15px] font-medium')], ['You']),
-                  ]),
-                  h.button(
-                    [
-                      h.Class(
-                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                      ),
-                      h.OnClick(Message.ClickedDismissMenu()),
-                    ],
-                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['+']), 'Add account'],
-                  ),
-                  h.button(
-                    [
-                      h.Class(
-                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                      ),
-                      h.OnClick(Message.ClickedDismissMenu()),
-                    ],
-                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['✉']), 'Saved messages'],
-                  ),
-                  h.button(
-                    [
-                      h.Class(
-                        'flex w-full items-center justify-between px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                      ),
-                      h.OnClick(Message.ClickedDismissMenu()),
-                    ],
-                    [
-                      h.span([h.Class('flex items-center gap-3')], [
-                        h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['↓']),
-                        'Archived chats',
-                      ]),
-                      h.span(
-                        [
-                          h.Class(
-                            'flex h-5 min-w-5 items-center justify-center rounded-full bg-[#8774e1] px-1.5 text-[11px]',
-                          ),
-                        ],
-                        ['2'],
-                      ),
-                    ],
-                  ),
-                  h.button(
-                    [
-                      h.Class(
-                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                      ),
-                      h.OnClick(Message.ClickedDismissMenu()),
-                    ],
-                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['☺']), 'Contacts'],
-                  ),
-                  h.button(
-                    [
-                      h.Class(
-                        'flex w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                      ),
-                      h.OnClick(Message.ClickedDismissMenu()),
-                    ],
-                    [h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['⚙']), 'Settings'],
-                  ),
-                  h.div([h.Class('relative')], [
-                    h.button(
-                      [
-                        h.Class(
-                          'flex w-full items-center justify-between px-4 py-2.5 text-left text-[15px] hover:bg-white/5',
-                        ),
-                        h.AriaLabel('More'),
-                        h.OnClick(Message.ClickedMore()),
-                      ],
-                      [
-                        h.span([h.Class('flex items-center gap-3')], [
-                          h.span([h.Class('w-6 text-center text-[#c8c8d4]')], ['…']),
-                          'More',
-                        ]),
-                        h.span([h.Class('text-[#9a9aa8]')], ['›']),
-                      ],
-                    ),
-                    model.moreOpen
-                      ? h.div(
-                          [
-                            h.Class(
-                              'absolute left-full top-0 z-30 ml-2 w-60 rounded-2xl bg-[#21212b] py-2 shadow-2xl',
-                            ),
-                            h.Role('menu'),
-                            h.AriaLabel('More menu'),
-                          ],
-                          [
-                            h.div(
-                              [h.Class('px-4 py-2.5 text-[15px] text-[#d7d7e0]')],
-                              ['About this build'],
-                            ),
-                            h.div(
-                              [h.Class('px-4 pb-2 text-xs text-[#9a9aa8]')],
-                              ['Fixture shell'],
-                            ),
-                          ],
-                        )
-                      : h.div([h.Class('hidden')], []),
-                  ]),
-                ],
-              ),
-            ])
-          : h.div([h.Class('hidden')], []),
       ],
     ),
   }

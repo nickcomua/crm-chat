@@ -10,6 +10,8 @@ const initialModel: Model = {
   draft: '',
   menuOpen: false,
   moreOpen: false,
+  headerMenuOpen: false,
+  autoDeleteOpen: false,
 }
 
 describe('view', () => {
