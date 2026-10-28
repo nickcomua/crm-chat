@@ -10,7 +10,7 @@ subtree_prompted: true
 
 ## Project Notes
 
-This directory is the web shell. The page is still an empty Foldkit view. Vocabulary is in the repo-root `GLOSSARY.md`. Shell boot: `docs/plans/boot-shells.md`. Shared core and the fixture chat list: `docs/plans/shared-core.md` (confirmed design, not yet implemented).
+This directory is the web shell. The page renders the fixture chat list. Vocabulary is in the repo-root `GLOSSARY.md`. Shell boot: `docs/plans/boot-shells.md`. Shared core and the fixture chat list: `docs/plans/shared-core.md`.
 
 Foldkit source at `repos/foldkit` is an optional ignored local reference, pinned to the installed release; it is not a submodule and is not tracked by the project. The three Foldkit skills are copied into the repo-root `.agents/skills/` as real files. If source inspection is needed, obtain the matching release from `https://github.com/foldkit/foldkit`. Application imports remain npm package imports.
 

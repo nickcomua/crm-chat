@@ -1,6 +1,6 @@
 # Share one Rust core
 
-Status: confirmed design (2026-10-28). Design approval only. No implementation and no verification yet.
+Status: confirmed design, with local x86_64-linux verification completed. aarch64-linux is evaluated, not built. GitHub CI has not been run.
 
 Interview record for [KAM-41](https://linear.app/kaminazuma/issue/KAM-41/share-one-rust-core-that-compiles-native-and-to-wasm). Parent design: [KAM-39](https://linear.app/kaminazuma/issue/KAM-39/plan-a-refactor). Shell boot: [boot-shells.md](boot-shells.md).
 
@@ -39,4 +39,16 @@ Verified in `crm-chat-legacy`: Convex `chatType` is Dialog or Group, with no Cha
 
 ## Confirmation
 
-Shared understanding accepted on 2026-10-28. Design approval only. No implementation and no verification yet.
+Shared understanding accepted on 2026-10-28. Design approval is separate from verification.
+
+## Verification
+
+Local x86_64-linux, 2026-10-28:
+
+- `cargo test -p crm-chat-core` passed. The committed types match the core. The manifest test finds no socket crates.
+- `cargo check -p crm-chat-core --target wasm32-unknown-unknown` passed. ts-rs 12.0.1 sits on that compile. No browser module is produced.
+- `npm test`, `npm run typecheck`, `npm run lint`, and `npm run lint:eslint` passed in `web/`. The scene test shows Ada, Book club, and Announcements, with kinds, and no button or heading.
+- `nix flake check --accept-flake-config --keep-going` passed the host checks: website, desktop, wasm32, coreTypes, clippy, typescript, nix-fmt, nix-lint.
+- `nix flake check --accept-flake-config --all-systems --no-build` evaluated aarch64-linux. It was not built.
+- `nix develop --accept-flake-config -c true` exited 0.
+- GitHub CI has not been run.
