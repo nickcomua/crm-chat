@@ -1,1 +1,7 @@
 @import 'tailwindcss';
+
+.app-wallpaper {
+  background-color: #0e0e14;
+  background-image: url('/wallpaper.svg?v=4');
+  background-size: 220px 220px;
+}
