@@ -2,7 +2,7 @@
 
 The web shell is `web/`. Read `web/FOLDKIT.md` and `web/AGENTS.md` before changing it.
 
-Effect skills live in `.agents/skills/`. Foldkit skills are linked there from the vendored repository after `web/repos/foldkit` is present.
+Effect skills live in `.agents/skills/`. Foldkit skills link into the ignored local source at `web/repos/foldkit`. A fresh clone must obtain Foldkit's source at the tag matching `web/package.json` before those links can be used. That source is a local reference, not a submodule or application dependency.
 
 # Learning more about Effect
 

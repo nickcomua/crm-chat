@@ -12,7 +12,7 @@ subtree_prompted: true
 
 This directory is the web shell. The page is an empty Foldkit view. Vocabulary is in the repo-root `GLOSSARY.md`. The confirmed design is `docs/plans/boot-shells.md`.
 
-The Foldkit source is vendored at `repos/foldkit`, pinned to the installed release. Read it. Do not import from it.
+Foldkit source at `repos/foldkit` is an ignored local reference, pinned to the installed release; it is not a submodule and is not tracked by the project. If absent, obtain the matching release from `https://github.com/foldkit/foldkit` before using the linked Foldkit skills. Application imports remain npm package imports.
 
 # Learning more about Effect
 

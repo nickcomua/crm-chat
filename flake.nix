@@ -54,7 +54,7 @@
           fileset =
             pkgs.lib.fileset.difference
             (pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ./.)
-            ./web/repos;
+            (pkgs.lib.fileset.maybeMissing ./web/repos);
         };
         src = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -92,7 +92,7 @@
           version = "0.1.0";
           src = pkgs.lib.fileset.toSource {
             root = ./web;
-            fileset = pkgs.lib.fileset.difference ./web ./web/repos;
+            fileset = pkgs.lib.fileset.difference ./web (pkgs.lib.fileset.maybeMissing ./web/repos);
           };
           npmDeps = pkgs.importNpmLock {npmRoot = ./web;};
           npmConfigHook = pkgs.importNpmLock.npmConfigHook;
