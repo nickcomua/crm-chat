@@ -68,6 +68,7 @@ struct Slot {
     api_id: i32,
     api_hash: String,
     phase: watch::Sender<Phase>,
+    parameters_sent: bool,
 }
 
 struct Shared {
@@ -194,6 +195,14 @@ fn phase_from_update_json(value: &serde_json::Value) -> Option<Phase> {
     };
     phase_from_state_json(state)
 }
+
+fn publish(phase: &watch::Sender<Phase>, next: Phase) {
+    // send() discards the value when no one is subscribed. ensure() drops the
+    // initial receiver, and poll does not subscribe, so Ready never replaced
+    // WaitQr. send_replace keeps the value for the next borrow.
+    phase.send_replace(next);
+}
+
 fn phase_from_authorization(state: AuthorizationState) -> Phase {
     match state {
         AuthorizationState::WaitTdlibParameters => Phase::Opening,
@@ -473,6 +482,7 @@ impl Client {
                 api_id,
                 api_hash: api_hash.to_owned(),
                 phase,
+                parameters_sent: false,
             },
         );
         self.ids().insert(id.to_owned(), client_id);
@@ -517,7 +527,7 @@ impl Client {
                 )
                 .await;
             } else if let Some(slot) = self.shared.slots.lock().expect("slots").get(&client_id) {
-                let _ = slot.phase.send(phase);
+                publish(&slot.phase, phase);
             }
         }
         Ok(self.phase(client_id))
@@ -701,12 +711,33 @@ impl Client {
     }
 }
 
+fn apply_parameter_response(shared: &Shared, client_id: i32, response: &Value) {
+    let Some(error) = public_error(response) else {
+        return;
+    };
+    let slots = shared.slots.lock().expect("slots");
+    let Some(slot) = slots.get(&client_id) else {
+        return;
+    };
+    // A second setTdlibParameters is a free-text error. Storing it as Failed
+    // after WaitQr or Ready leaves poll on the QR step. A real failure is
+    // still recorded while parameters have not been accepted.
+    let current = slot.phase.borrow().clone();
+    if matches!(current, Phase::Opening) {
+        publish(&slot.phase, Phase::Failed(error));
+    }
+}
+
 async fn send_parameters(shared: &Shared, client_id: i32) {
     let parameters = {
-        let slots = shared.slots.lock().expect("slots");
-        let Some(slot) = slots.get(&client_id) else {
+        let mut slots = shared.slots.lock().expect("slots");
+        let Some(slot) = slots.get_mut(&client_id) else {
             return;
         };
+        if slot.parameters_sent {
+            return;
+        }
+        slot.parameters_sent = true;
         json!({
             "@type": "setTdlibParameters",
             "use_test_dc": false,
@@ -726,11 +757,7 @@ async fn send_parameters(shared: &Shared, client_id: i32) {
         })
     };
     let response = tdlib_rs::send_json(client_id, parameters).await;
-    if let Some(error) = public_error(&response) {
-        if let Some(slot) = shared.slots.lock().expect("slots").get(&client_id) {
-            let _ = slot.phase.send(Phase::Failed(error));
-        }
-    }
+    apply_parameter_response(shared, client_id, &response);
 }
 
 async fn apply_authorization(shared: &Shared, client_id: i32, state: AuthorizationState) {
@@ -740,7 +767,7 @@ async fn apply_authorization(shared: &Shared, client_id: i32, state: Authorizati
     }
     let phase = phase_from_authorization(state);
     if let Some(slot) = shared.slots.lock().expect("slots").get(&client_id) {
-        let _ = slot.phase.send(phase);
+        publish(&slot.phase, phase);
     }
 }
 
@@ -781,47 +808,136 @@ fn message_from_json(value: &Value) -> Option<Message> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_kind, chat_tdlib_id, database_root_from, phase_from_update_json, public_error,
-        valid_account_id, ChatKind, Phase,
+        apply_authorization, apply_parameter_response, chat_kind, chat_tdlib_id,
+        database_root_from, phase_from_update_json, public_error, publish, send_parameters,
+        valid_account_id, ChatKind, Phase, Shared, Slot,
     };
     use serde_json::json;
     use std::path::Path;
+    use std::time::Duration;
+    use tdlib_rs::enums::AuthorizationState;
+    use tdlib_rs::types::AuthorizationStateWaitOtherDeviceConfirmation;
+
+    fn test_shared() -> Shared {
+        Shared {
+            slots: std::sync::Mutex::new(std::collections::HashMap::new()),
+            ids: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn insert_slot(shared: &Shared, client_id: i32, phase: Phase, parameters_sent: bool) {
+        let (tx, _rx) = tokio::sync::watch::channel(phase);
+        shared.slots.lock().expect("slots").insert(
+            client_id,
+            Slot {
+                directory: Path::new("/tmp/crm-chat-tdlib-test").to_path_buf(),
+                api_id: 1,
+                api_hash: "0123456789abcdef0123456789abcdef".into(),
+                phase: tx,
+                parameters_sent,
+            },
+        );
+    }
+
+    fn slot_phase(shared: &Shared, client_id: i32) -> Phase {
+        shared
+            .slots
+            .lock()
+            .expect("slots")
+            .get(&client_id)
+            .expect("slot")
+            .phase
+            .borrow()
+            .clone()
+    }
 
     #[test]
     fn authorization_updates_move_the_phase_from_qr_to_ready() {
-        let updates = [
-            json!({
-                "@type": "updateAuthorizationState",
-                "authorization_state": {"@type": "authorizationStateWaitTdlibParameters"}
-            }),
-            json!({
-                "@type": "updateAuthorizationState",
-                "authorization_state": {"@type": "authorizationStateWaitPhoneNumber"}
-            }),
-            json!({
-                "@type": "updateAuthorizationState",
-                "authorization_state": {
-                    "@type": "authorizationStateWaitOtherDeviceConfirmation",
-                    "link": "tg://login?token=abc"
-                }
-            }),
-            json!({
-                "@type": "updateAuthorizationState",
-                "authorization_state": {"@type": "authorizationStateReady"}
-            }),
-        ];
-        let (tx, rx) = tokio::sync::watch::channel(Phase::Opening);
-        let mut seen = Vec::new();
-        for update in updates {
-            let phase = phase_from_update_json(&update).expect("authorization update");
-            seen.push(phase.clone());
-            tx.send(phase).ok();
-        }
-        assert!(matches!(seen[0], Phase::Opening));
-        assert!(matches!(seen[1], Phase::WaitPhone));
-        assert!(matches!(seen[2], Phase::WaitQr(ref link) if link == "tg://login?token=abc"));
-        assert!(matches!(seen[3], Phase::Ready));
-        assert!(matches!(rx.borrow().clone(), Phase::Ready));
+        let shared = test_shared();
+        let client_id = 7;
+        insert_slot(&shared, client_id, Phase::Opening, true);
+        // ensure() drops the watch receiver, and poll does not subscribe.
+        // The slot must still end at Ready.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            apply_authorization(
+                &shared,
+                client_id,
+                AuthorizationState::WaitOtherDeviceConfirmation(
+                    AuthorizationStateWaitOtherDeviceConfirmation {
+                        link: "tg://login?token=abc".into(),
+                    },
+                ),
+            )
+            .await;
+            assert!(matches!(
+                slot_phase(&shared, client_id),
+                Phase::WaitQr(ref link) if link == "tg://login?token=abc"
+            ));
+            apply_authorization(&shared, client_id, AuthorizationState::Ready).await;
+            let finished = tokio::time::timeout(
+                Duration::from_millis(200),
+                send_parameters(&shared, client_id),
+            )
+            .await;
+            assert!(
+                finished.is_ok(),
+                "a second setTdlibParameters must not be sent"
+            );
+        });
+        assert!(matches!(slot_phase(&shared, client_id), Phase::Ready));
+        assert!(matches!(
+            phase_from_update_json(&json!({"@type": "authorizationStateReady"})),
+            Some(Phase::Ready)
+        ));
+    }
+
+    #[test]
+    fn a_duplicate_parameter_error_does_not_replace_qr_or_ready() {
+        let shared = test_shared();
+        let client_id = 9;
+        insert_slot(
+            &shared,
+            client_id,
+            Phase::WaitQr("tg://login?token=abc".into()),
+            true,
+        );
+        let error = json!({"@type": "error", "message": "Unexpected setTdlibParameters"});
+        apply_parameter_response(&shared, client_id, &error);
+        assert!(matches!(
+            slot_phase(&shared, client_id),
+            Phase::WaitQr(ref link) if link == "tg://login?token=abc"
+        ));
+        publish(
+            &shared
+                .slots
+                .lock()
+                .expect("slots")
+                .get(&client_id)
+                .expect("slot")
+                .phase,
+            Phase::Ready,
+        );
+        apply_parameter_response(&shared, client_id, &error);
+        assert!(matches!(slot_phase(&shared, client_id), Phase::Ready));
+        publish(
+            &shared
+                .slots
+                .lock()
+                .expect("slots")
+                .get(&client_id)
+                .expect("slot")
+                .phase,
+            Phase::Opening,
+        );
+        apply_parameter_response(&shared, client_id, &error);
+        assert!(matches!(
+            slot_phase(&shared, client_id),
+            Phase::Failed(ref message) if message == "REQUEST_FAILED"
+        ));
     }
 
     #[test]
