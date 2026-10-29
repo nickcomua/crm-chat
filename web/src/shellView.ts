@@ -25,6 +25,37 @@ const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 
+const isLastInGroup = (
+  lines: ReadonlyArray<{ readonly mine: boolean }>,
+  index: number,
+): boolean => {
+  const line = lines[index]
+  const next = lines[index + 1]
+  if (line === undefined) {
+    return false
+  }
+  return next === undefined || next.mine !== line.mine
+}
+
+const bubbleClass = (mine: boolean, tail: boolean): string => {
+  const corners = mine
+    ? tail
+      ? 'rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-none'
+      : 'rounded-2xl'
+    : tail
+      ? 'rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-none'
+      : 'rounded-2xl'
+  return `relative z-0 w-fit max-w-[80%] px-3 py-2 text-[15px] leading-5 ${corners} ${
+    mine ? 'bg-[#8774e1]' : 'bg-[#2a2a32]'
+  }`
+}
+
+const messageTail = <Message>(mine: boolean, h: HtmlBuilder<Message>) =>
+  h.span([
+    h.AriaHidden(true),
+    h.Class(mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in'),
+  ])
+
 const menuItemClass =
   'flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'
 
@@ -584,38 +615,41 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                       h.div(
                         [
                           h.Class(
-                            'flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-4 py-3',
+                            'flex min-h-0 flex-1 flex-col justify-end overflow-y-auto px-4 py-3',
                           ),
                         ],
-                        lines.map(line =>
-                          h.div(
+                        lines.map((line, index) => {
+                          const tail = isLastInGroup(lines, index)
+                          const time = h.span(
                             [
                               h.Class(
-                                `flex ${line.mine ? 'justify-end' : 'justify-start'}`,
+                                'ml-3 align-bottom text-[11px] text-white/70',
+                              ),
+                            ],
+                            [line.time],
+                          )
+                          return h.div(
+                            [
+                              h.Class(
+                                `flex ${line.mine ? 'justify-end' : 'justify-start'} ${
+                                  index === lines.length - 1
+                                    ? ''
+                                    : tail
+                                      ? 'mb-2'
+                                      : 'mb-0.5'
+                                }`,
                               ),
                             ],
                             [
                               h.div(
-                                [
-                                  h.Class(
-                                    `w-fit max-w-[80%] rounded-2xl px-3 py-2 text-[15px] leading-5 ${
-                                      line.mine
-                                        ? 'rounded-br-md bg-[#8774e1]'
-                                        : 'rounded-bl-md bg-[#2a2a32]'
-                                    }`,
-                                  ),
-                                ],
+                                [h.Class(bubbleClass(line.mine, tail))],
                                 line.caption === undefined
                                   ? [
                                       line.text,
-                                      h.span(
-                                        [
-                                          h.Class(
-                                            'ml-3 align-bottom text-[11px] text-white/70',
-                                          ),
-                                        ],
-                                        [line.time],
-                                      ),
+                                      time,
+                                      tail
+                                        ? messageTail(line.mine, h)
+                                        : h.empty,
                                     ]
                                   : [
                                       h.div(
@@ -636,19 +670,15 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                         ],
                                       ),
                                       h.div([h.Class('px-0.5')], [line.text]),
-                                      h.span(
-                                        [
-                                          h.Class(
-                                            'ml-3 align-bottom text-[11px] text-white/70',
-                                          ),
-                                        ],
-                                        [line.time],
-                                      ),
+                                      time,
+                                      tail
+                                        ? messageTail(line.mine, h)
+                                        : h.empty,
                                     ],
                               ),
                             ],
-                          ),
-                        ),
+                          )
+                        }),
                       ),
                   }),
                   chat.kind === 'Channel'
