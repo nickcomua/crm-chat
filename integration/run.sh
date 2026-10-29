@@ -62,6 +62,10 @@ scope_env() {
       'TG_API_ID_2',
       'TG_API_HASH_2',
       'TG_SESSION_FILE_2',
+      'TG_SESSION_GRAMMERS_1',
+      'TG_USER_NUMERIC_ID_1',
+      'TG_SESSION_GRAMMERS_2',
+      'TG_USER_NUMERIC_ID_2',
     ]
     const missing = required.filter((key) => !process.env[key])
     if (missing.length > 0) {
@@ -113,5 +117,6 @@ run_scoped app node --no-warnings "$stage/web-check.cjs"
 echo "integration-test: desktop grammers over TCP"
 run_scoped app "$desktop" credentials
 
-echo "integration-test: legacy test account"
+echo "integration-test: authenticated accounts"
+echo "authenticated: web gramjs wss skipped, a grammers sqlite session is not a GramJS string session"
 run_scoped integration "$desktop" account

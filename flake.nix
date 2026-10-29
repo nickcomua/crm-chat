@@ -225,6 +225,24 @@
           export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
           exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
         '';
+        loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
+          set -euo pipefail
+          export PATH=${
+            pkgs.lib.makeBinPath [
+              rustToolchain
+              pkgs.nodejs
+              pkgs.pkg-config
+              pkgs.gcc
+              pkgs.coreutils
+            ]
+          }:$PATH
+          export PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig
+          export CRM_CHAT_INVOCATION_DIR="$PWD"
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
+          export CRM_CHAT_SECRET_STATE=${./integration/secret-state.cjs}
+          exec ${pkgs.bash}/bin/bash ${./integration/login.sh} "$@"
+        '';
       in {
         formatter = pkgs.alejandra;
         packages = {
@@ -328,6 +346,10 @@
         apps.integration-test = {
           type = "app";
           program = "${integrationTest}";
+        };
+        apps.login-test-account = {
+          type = "app";
+          program = "${loginTestAccount}";
         };
       }
     );

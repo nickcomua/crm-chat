@@ -34,6 +34,16 @@ block the app:
 - `TG_API_ID_1`, `TG_API_HASH_1`, `TG_SESSION_FILE_1`, `TG_USER_ID_1`
 - `TG_API_ID_2`, `TG_API_HASH_2`, `TG_SESSION_FILE_2`
 
+Those file and `TG_USER_ID_1` names are legacy entries already in BWS. The
+login command does not read, overwrite, change, or delete them.
+
+The authenticated check uses these optional keys instead:
+
+- `TG_SESSION_GRAMMERS_1`, `TG_USER_NUMERIC_ID_1`
+- `TG_SESSION_GRAMMERS_2`, `TG_USER_NUMERIC_ID_2`
+
+`TG_SESSION_GRAMMERS_<slot>` is a base64 grammers SqliteSession. `TG_USER_NUMERIC_ID_<slot>` is the decimal user id from `getMe()`. Both are written only by the login command below.
+
 `CACHIX_AUTH_TOKEN` remains optional build-tooling material. GitHub Actions
 still reads that token from GitHub's secret store. Local BWS configuration is
 not copied to a runner. Nix checks and package builds do not need vault access.
@@ -95,8 +105,13 @@ this repo:
 
 SecretSpec prompts for the value. Do not pass the value as an argument: the
 BWS CLI can place it on a process command line. Do not paste it into chat,
-tickets, pull requests, or commits. Repeat for `TG_HASH` and any
-integration-test key you need to rotate.
+tickets, pull requests, or commits. Repeat for `TG_HASH` if you need to
+rotate the application credentials.
+
+Do not use `secretspec set` for `TG_SESSION_GRAMMERS_<slot>` or
+`TG_USER_NUMERIC_ID_<slot>`. Those are written by the login command, which
+refuses when the name already exists. It never overwrites, changes, or
+deletes an existing BWS entry.
 
 Check resolution without printing values:
 
@@ -106,6 +121,34 @@ A required secret that is missing makes that command fail. Optional test
 secrets may be missing. The access token comes from the user-local provider
 credential or from `BWS_ACCESS_TOKEN` in the invoking environment. Configure
 that locally; never paste the token into chat or put it on a command line.
+
+## Login a test account
+
+Mykola runs this once per integration-test account, in his own terminal,
+from this repository. It is impure: it needs the network, a TTY, `bws` and
+`secretspec` on `PATH`, and the user-local BWS config. It is not part of
+`nix flake check`.
+
+    nix run .#login-test-account --accept-flake-config -- 1
+    nix run .#login-test-account --accept-flake-config -- 2
+
+The command loads `TG_ID` and `TG_HASH` with
+`secretspec run --provider bws --scope app`, prompts for the phone number
+and the login code, and prompts for the 2FA password with hidden input only
+when Telegram asks for it. It logs in with grammers over TCP, calls
+`getMe()`, and stores two new BWS secrets for that slot:
+
+- `TG_SESSION_GRAMMERS_<slot>` — base64 of the grammers SqliteSession
+- `TG_USER_NUMERIC_ID_<slot>` — the numeric user id
+
+Values are passed to `secretspec set --from-file -` on stdin, never as
+arguments. If either name already exists, the command exits before login
+when it can, and always before writing. It does not overwrite, change, or
+delete an existing entry. It does not print the session, the user id, the
+phone number, the code, the password, the API hash, or vault identifiers.
+
+Do not create Telegram accounts with this command. A phone that is not
+already registered is rejected.
 
 ## Integration test
 
@@ -132,8 +175,20 @@ The same values are then used for a real connection:
 Tokens and secret values are not printed. Output is pass, skip, or an RPC
 error name.
 
-If `TG_SESSION_FILE_1` is a file and `TG_USER_ID_1` is a numeric Telegram user
-id, the command copies that session and checks the logged-in user id through
-grammers. A missing session file does not fail the credential checks; the
-command prints `authenticated: skipped` instead. Do not paste command output
-that contains secret values.
+If `TG_SESSION_GRAMMERS_<slot>` and `TG_USER_NUMERIC_ID_<slot>` are both
+present, the command restores that grammers SqliteSession and checks the
+logged-in user id through grammers over TCP. `getMe().id` must equal the
+stored numeric id. A missing pair does not fail the credential checks; the
+command prints `authenticated: skipped` for that slot. A session without a
+numeric id fails.
+
+The web path does not load this session. GramJS accepts only its own
+StringSession: a version byte, a datacenter, an address, a port, and a
+256-byte auth key. A grammers SqliteSession is a libsql database
+(`dc_home`, `dc_option`, peer cache, update state), optionally with a WAL
+file packed beside it. GramJS cannot open that database, and this command
+does not translate it into a GramJS string. The GramJS WSS check still
+proves the application credentials. It does not sign in. The integration
+test prints that skip on every run.
+
+Do not paste command output that contains secret values.

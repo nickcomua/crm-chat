@@ -37,6 +37,10 @@ const redact = (text) => {
     'TG_SESSION_FILE_1',
     'TG_SESSION_FILE_2',
     'TG_USER_ID_1',
+    'TG_SESSION_GRAMMERS_1',
+    'TG_USER_NUMERIC_ID_1',
+    'TG_SESSION_GRAMMERS_2',
+    'TG_USER_NUMERIC_ID_2',
   ]) {
     const value = process.env[key]
     if (value && value.length >= 4) {

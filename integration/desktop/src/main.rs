@@ -3,9 +3,17 @@
 //! Application credentials come from the process environment. The Nix app starts
 //! this binary under `secretspec run --provider bws`. Nothing here prints secret
 //! values, session contents, or vault identifiers.
+//!
+//! `login` writes a grammers sqlite session for one test account. `account`
+//! loads that session. GramJS cannot open it; see `docs/secrets.md`.
+
+mod login;
+mod session_blob;
 
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -19,23 +27,11 @@ use grammers_tl_types as tl;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
-const TIMEOUT: Duration = Duration::from_secs(45);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(45);
 
 struct Connected {
     client: Client,
     pool: JoinHandle<()>,
-}
-
-enum SessionLookup {
-    Unset,
-    Missing,
-    Found(PathBuf),
-}
-
-enum UserIdLookup {
-    Unset,
-    NotNumeric,
-    Numeric(i64),
 }
 
 fn main() -> ExitCode {
@@ -52,19 +48,28 @@ async fn run() -> ExitCode {
     match args.next().as_deref() {
         Some("credentials") => credentials_check().await,
         Some("account") => account_check().await,
+        Some("login") => {
+            let session_out = args.next();
+            let user_id_out = args.next();
+            match (session_out, user_id_out, args.next()) {
+                (Some(session_out), Some(user_id_out), None) => {
+                    login::run(Path::new(&session_out), Path::new(&user_id_out)).await
+                }
+                _ => {
+                    eprintln!("desktop: login expects a session path and a user-id path");
+                    ExitCode::from(2)
+                }
+            }
+        }
         _ => {
-            eprintln!("desktop: expected subcommand credentials or account");
+            eprintln!("desktop: expected subcommand credentials, account, or login");
             ExitCode::from(2)
         }
     }
 }
 
-fn require_app_credentials() -> Result<(i32, String), ExitCode> {
+pub(crate) fn require_app_credentials() -> Result<(i32, String), ExitCode> {
     parse_credentials("TG_ID", "TG_HASH", "app")
-}
-
-fn require_account_credentials() -> Result<(i32, String), ExitCode> {
-    parse_credentials("TG_API_ID_1", "TG_API_HASH_1", "integration")
 }
 
 fn parse_credentials(id_key: &str, hash_key: &str, scope: &str) -> Result<(i32, String), ExitCode> {
@@ -99,7 +104,7 @@ fn parse_credentials(id_key: &str, hash_key: &str, scope: &str) -> Result<(i32, 
     Ok((api_id, api_hash))
 }
 
-async fn connect<S>(api_id: i32, session: Arc<S>) -> Result<Connected, InvocationError>
+pub(crate) async fn connect<S>(api_id: i32, session: Arc<S>) -> Result<Connected, InvocationError>
 where
     S: Session + Sized,
     S::Error: std::error::Error + Send + Sync + 'static,
@@ -114,13 +119,13 @@ where
     Ok(Connected { client, pool })
 }
 
-async fn shutdown(connected: Connected) {
+pub(crate) async fn shutdown(connected: Connected) {
     drop(connected.client);
     connected.pool.abort();
     let _ = connected.pool.await;
 }
 
-fn describe(error: &InvocationError) -> String {
+pub(crate) fn describe(error: &InvocationError) -> String {
     match error {
         InvocationError::Rpc(rpc) => format!("rpc {}:{}", rpc.code, rpc.name),
         InvocationError::Io(_) => "io".to_string(),
@@ -254,53 +259,67 @@ async fn prove_rejected() -> Result<(), String> {
 }
 
 async fn account_check() -> ExitCode {
-    let (api_id, _api_hash) = match require_account_credentials() {
+    let (api_id, _api_hash) = match require_app_credentials() {
         Ok(credentials) => credentials,
         Err(code) => return code,
     };
-    let session = existing_session("TG_SESSION_FILE_1");
-    let user_id = user_id("TG_USER_ID_1");
-    let SessionLookup::Found(path) = session else {
-        match session {
-            SessionLookup::Unset => {
-                println!("authenticated: skipped, TG_SESSION_FILE_1 did not resolve");
-            }
-            SessionLookup::Missing => {
-                println!("authenticated: skipped, TG_SESSION_FILE_1 is not a file on this machine");
-            }
-            SessionLookup::Found(_) => {}
-        }
-        match user_id {
-            UserIdLookup::NotNumeric => {
-                println!("authenticated: TG_USER_ID_1 is not a numeric Telegram user id");
-            }
-            UserIdLookup::Unset => {
-                println!("authenticated: TG_USER_ID_1 did not resolve");
-            }
-            UserIdLookup::Numeric(_) => {}
-        }
-        return ExitCode::SUCCESS;
-    };
-    let UserIdLookup::Numeric(expected) = user_id else {
-        eprintln!("authenticated: session file is present but TG_USER_ID_1 is not a numeric Telegram user id");
-        return ExitCode::from(1);
-    };
-    match timeout(TIMEOUT, prove_account(api_id, &path, expected)).await {
-        Ok(Ok(())) => ExitCode::SUCCESS,
-        Ok(Err(message)) => {
+    let mut failed = false;
+    for slot in [1, 2] {
+        if let Err(message) = check_slot(api_id, slot).await {
             eprintln!("authenticated: {message}");
-            ExitCode::from(1)
+            failed = true;
         }
-        Err(_) => {
-            eprintln!("authenticated: timed out");
-            ExitCode::from(1)
-        }
+    }
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
-async fn prove_account(api_id: i32, source: &Path, expected: i64) -> Result<(), String> {
-    let copy = copy_session(source)?;
-    let opened = SqliteSession::open(&copy).await;
+async fn check_slot(api_id: i32, slot: u8) -> Result<(), String> {
+    let session_key = format!("TG_SESSION_GRAMMERS_{slot}");
+    let user_key = format!("TG_USER_NUMERIC_ID_{slot}");
+    let session = env::var(&session_key).unwrap_or_default();
+    let user = env::var(&user_key).unwrap_or_default();
+    if session.is_empty() && user.is_empty() {
+        println!("authenticated: skipped, slot {slot} secrets did not resolve");
+        return Ok(());
+    }
+    if session.is_empty() {
+        return Err(format!(
+            "slot {slot} has {user_key} but {session_key} did not resolve"
+        ));
+    }
+    let Some(expected) = numeric_user_id(&user) else {
+        return Err(format!(
+            "slot {slot} has a session but {user_key} is not a numeric Telegram user id"
+        ));
+    };
+    match timeout(TIMEOUT, prove_account(api_id, &session, expected, slot)).await {
+        Ok(Ok(())) => {
+            println!("authenticated: pass (desktop grammers tcp, slot {slot})");
+            Ok(())
+        }
+        Ok(Err(message)) => Err(format!("slot {slot}: {message}")),
+        Err(_) => Err(format!("slot {slot} timed out")),
+    }
+}
+
+async fn prove_account(api_id: i32, encoded: &str, expected: i64, slot: u8) -> Result<(), String> {
+    let (database, wal) = session_blob::unpack(encoded)?;
+    let dir = env::temp_dir().join(format!(
+        "crm-chat-integration-{}-{slot}",
+        std::process::id()
+    ));
+    let path = dir.join("account.session");
+    let opened = match write_session(&dir, &path, &database, &wal) {
+        Ok(()) => SqliteSession::open(&path).await,
+        Err(message) => {
+            let _ = fs::remove_dir_all(&dir);
+            return Err(message);
+        }
+    };
     let result = match opened {
         Ok(session) => {
             let connected = connect(api_id, Arc::new(session))
@@ -310,10 +329,41 @@ async fn prove_account(api_id: i32, source: &Path, expected: i64) -> Result<(), 
             shutdown(connected).await;
             checked
         }
-        Err(_) => Err("could not open the session file".to_string()),
+        Err(_) => Err("could not open the grammers session".to_string()),
     };
-    let _ = fs::remove_dir_all(copy.parent().unwrap_or(Path::new(".")));
+    let _ = fs::remove_dir_all(&dir);
     result
+}
+
+fn write_session(dir: &Path, path: &Path, database: &[u8], wal: &[u8]) -> Result<(), String> {
+    fs::create_dir_all(dir)
+        .map_err(|_| "could not create a temporary session directory".to_string())?;
+    write_private(path, database)?;
+    if !wal.is_empty() {
+        write_private(&wal_path(path), wal)?;
+    }
+    Ok(())
+}
+
+fn wal_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push("-wal");
+    path.with_file_name(name)
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| "could not write the session file".to_string())?;
+    file.write_all(bytes)
+        .map_err(|_| "could not write the session file".to_string())?;
+    Ok(())
 }
 
 async fn check_self(client: &Client, expected: i64) -> Result<(), String> {
@@ -333,57 +383,16 @@ async fn check_self(client: &Client, expected: i64) -> Result<(), String> {
         .bot_api_dialog_id()
         .ok_or_else(|| "getMe did not return a user id".to_string())?;
     if actual != expected {
-        return Err("user id does not match TG_USER_ID_1".to_string());
+        return Err("user id does not match the stored id".to_string());
     }
-    println!("authenticated: pass");
     Ok(())
 }
 
-fn existing_session(key: &str) -> SessionLookup {
-    let Ok(value) = env::var(key) else {
-        return SessionLookup::Unset;
-    };
-    if value.is_empty() {
-        return SessionLookup::Unset;
-    }
-    let path = PathBuf::from(&value);
-    if path.is_file() {
-        return SessionLookup::Found(path);
-    }
-    if let Some(joined) = invocation_join(&path) {
-        if joined.is_file() {
-            return SessionLookup::Found(joined);
-        }
-    }
-    SessionLookup::Missing
-}
-
-fn invocation_join(path: &Path) -> Option<PathBuf> {
-    if path.is_absolute() {
+fn numeric_user_id(value: &str) -> Option<i64> {
+    let mut chars = value.chars();
+    let first = chars.next()?;
+    if !('1'..='9').contains(&first) || !chars.all(|character| character.is_ascii_digit()) {
         return None;
     }
-    let root = env::var("CRM_CHAT_INVOCATION_DIR").ok()?;
-    Some(PathBuf::from(root).join(path))
-}
-
-fn user_id(key: &str) -> UserIdLookup {
-    let Ok(value) = env::var(key) else {
-        return UserIdLookup::Unset;
-    };
-    if value.is_empty() {
-        return UserIdLookup::Unset;
-    }
-    match value.parse::<i64>() {
-        Ok(id) if id > 0 => UserIdLookup::Numeric(id),
-        _ => UserIdLookup::NotNumeric,
-    }
-}
-
-fn copy_session(source: &Path) -> Result<PathBuf, String> {
-    let dir = env::temp_dir().join(format!("crm-chat-integration-{}", std::process::id()));
-    fs::create_dir_all(&dir)
-        .map_err(|_| "could not create a temporary session copy".to_string())?;
-    let dest = dir.join("account.session");
-    fs::copy(source, &dest).map_err(|_| "could not copy the session file".to_string())?;
-    Ok(dest)
+    value.parse().ok()
 }
