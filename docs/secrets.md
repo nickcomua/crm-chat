@@ -49,8 +49,13 @@ Web and desktop:
 
     secretspec run --provider bws --scope app -- COMMAND
 
-Integration tests, when those tickets land:
+Integration tests:
 
+    nix run .#integration-test --accept-flake-config
+
+That command is documented below. It runs the checks under:
+
+    secretspec run --provider bws --scope app -- COMMAND
     secretspec run --provider bws --scope integration -- COMMAND
 
 Run the command from this repository so SecretSpec finds `secretspec.toml`.
@@ -101,3 +106,34 @@ A required secret that is missing makes that command fail. Optional test
 secrets may be missing. The access token comes from the user-local provider
 credential or from `BWS_ACCESS_TOKEN` in the invoking environment. Configure
 that locally; never paste the token into chat or put it on a command line.
+
+## Integration test
+
+`nix flake check` does not call Telegram or BWS. Its sandbox has neither
+network nor vault access. From this repository, with `bws` on `PATH` and the
+user-local SecretSpec config in place. Use the workstation `secretspec` on
+`PATH` (the one that can reach BWS), not a bare Nix package that has no
+vault token:
+
+    nix run .#integration-test --accept-flake-config
+
+The command needs network and the BWS vault. It is not part of `nix flake check`.
+
+It fails if `TG_ID` or `TG_HASH` do not resolve, or if they are not in the
+shape the apps accept. The app scope must inject only those two Telegram keys.
+The same values are then used for a real connection:
+
+- GramJS over WSS, with the socket options from `web/src/telegram.ts`. The
+  check calls `help.getConfig`, then `auth.exportLoginToken`. A second call
+  with invalid application credentials must be rejected.
+- grammers over TCP, the desktop transport. The same two calls, and the same
+  rejection check.
+
+Tokens and secret values are not printed. Output is pass, skip, or an RPC
+error name.
+
+If `TG_SESSION_FILE_1` is a file and `TG_USER_ID_1` is a numeric Telegram user
+id, the command copies that session and checks the logged-in user id through
+grammers. A missing session file does not fail the credential checks; the
+command prints `authenticated: skipped` instead. Do not paste command output
+that contains secret values.
