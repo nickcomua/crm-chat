@@ -1,0 +1,299 @@
+/* Telegram Web K surfaces on shadcn token names. See README.md for the mapping. */
+
+:root {
+  color-scheme: light;
+  --font-sans:
+    Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --leading-tight: 1.25;
+  --leading-body: 1.3125;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 700;
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --radius: 0.75rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-message: 0.9375rem;
+  --radius-full: 9999px;
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #000000;
+  --muted: #f4f4f5;
+  --muted-foreground: #707579;
+  --accent: #3390ec1a;
+  --accent-foreground: #3390ec;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --chart-1: #3390ec;
+  --chart-2: #00c73e;
+  --chart-3: #fb8c00;
+  --chart-4: #8774e1;
+  --chart-5: #eb6858;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #000000;
+  --sidebar-primary: #3390ec;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #000000;
+  --sidebar-border: #dadce0;
+  --sidebar-ring: #3390ec;
+  --shadow-2xs: 0 1px 0 #72727214;
+  --shadow-xs: 0 1px 2px #7272722b;
+  --shadow-sm: 0 1px 2px #72727240;
+  --shadow: 0 4px 16px #72727240;
+  --shadow-md: 0 8px 24px #72727240;
+  --shadow-lg: 0 12px 28px #72727240;
+  --shadow-xl: 0 20px 40px #72727240;
+  --telegram-message-in: #ffffff;
+  --telegram-message-in-foreground: #000000;
+  --telegram-message-out: #eeffde;
+  --telegram-message-out-foreground: #000000;
+  --telegram-wallpaper: #d4ddd2;
+  --telegram-online: #00c73e;
+  --telegram-link: #3390ec;
+  --telegram-webk-night-primary: #8774e1;
+}
+
+:root.dark,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #212121;
+  --foreground: #ffffff;
+  --card: #212121;
+  --card-foreground: #ffffff;
+  --popover: #212121;
+  --popover-foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #0f0f0f;
+  --secondary-foreground: #ffffff;
+  --muted: #2c2c2c;
+  --muted-foreground: #aaaaaa;
+  --accent: #3390ec1a;
+  --accent-foreground: #8bc4f8;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: #303030;
+  --input: #5b5b5a;
+  --ring: #3390ec;
+  --chart-1: #3390ec;
+  --chart-2: #00c73e;
+  --chart-3: #fb8c00;
+  --chart-4: #8774e1;
+  --chart-5: #eb6858;
+  --sidebar: #212121;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #3390ec;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #2c2c2c;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #303030;
+  --sidebar-ring: #3390ec;
+  --shadow-2xs: 0 1px 0 #00000040;
+  --shadow-xs: 0 1px 2px #00000040;
+  --shadow-sm: 0 1px 2px #1010109c;
+  --shadow: 0 4px 16px #1010109c;
+  --shadow-md: 0 8px 24px #1010109c;
+  --shadow-lg: 0 12px 28px #1010109c;
+  --shadow-xl: 0 20px 40px #1010109c;
+  --telegram-message-in: #212121;
+  --telegram-message-in-foreground: #ffffff;
+  --telegram-message-out: #2b5278;
+  --telegram-message-out-foreground: #ffffff;
+  --telegram-wallpaper: #0f0f0f;
+  --telegram-online: #00c73e;
+  --telegram-link: #3390ec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'],
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --background: #212121;
+    --foreground: #ffffff;
+    --card: #212121;
+    --card-foreground: #ffffff;
+    --popover: #212121;
+    --popover-foreground: #ffffff;
+    --primary: #3390ec;
+    --primary-foreground: #ffffff;
+    --secondary: #0f0f0f;
+    --secondary-foreground: #ffffff;
+    --muted: #2c2c2c;
+    --muted-foreground: #aaaaaa;
+    --accent: #3390ec1a;
+    --accent-foreground: #8bc4f8;
+    --destructive: #e53935;
+    --destructive-foreground: #ffffff;
+    --border: #303030;
+    --input: #5b5b5a;
+    --ring: #3390ec;
+    --chart-1: #3390ec;
+    --chart-2: #00c73e;
+    --chart-3: #fb8c00;
+    --chart-4: #8774e1;
+    --chart-5: #eb6858;
+    --sidebar: #212121;
+    --sidebar-foreground: #ffffff;
+    --sidebar-primary: #3390ec;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #2c2c2c;
+    --sidebar-accent-foreground: #ffffff;
+    --sidebar-border: #303030;
+    --sidebar-ring: #3390ec;
+    --shadow-2xs: 0 1px 0 #00000040;
+    --shadow-xs: 0 1px 2px #00000040;
+    --shadow-sm: 0 1px 2px #1010109c;
+    --shadow: 0 4px 16px #1010109c;
+    --shadow-md: 0 8px 24px #1010109c;
+    --shadow-lg: 0 12px 28px #1010109c;
+    --shadow-xl: 0 20px 40px #1010109c;
+    --telegram-message-in: #212121;
+    --telegram-message-in-foreground: #ffffff;
+    --telegram-message-out: #2b5278;
+    --telegram-message-out-foreground: #ffffff;
+    --telegram-wallpaper: #0f0f0f;
+    --telegram-online: #00c73e;
+    --telegram-link: #3390ec;
+  }
+}
+
+.ui-theme {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  color: var(--foreground);
+}
+
+.ui-theme-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--muted-foreground);
+}
+
+.ui-theme-switcher {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xs);
+}
+
+.ui-theme-option {
+  margin: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  padding: 0.375rem 0.75rem;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+}
+
+.ui-theme-option:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.ui-theme-option[aria-checked='true'] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ui-theme-option[aria-checked='true']:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ui-theme-option:focus {
+  outline: none;
+}
+
+.ui-theme-option:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ui-theme-demo {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 28rem;
+  padding: var(--space-4);
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--leading-body);
+}
+
+.ui-theme-resolved {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-sm);
+}
+
+.ui-theme-swatches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.ui-theme-swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--foreground);
+  font-size: var(--font-size-sm);
+}
+
+.ui-theme-swatch-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-message);
+  font-weight: var(--font-weight-medium);
+}
