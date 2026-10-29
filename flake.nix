@@ -50,8 +50,9 @@
         ];
         tdlib = pkgs.callPackage ./nix/tdlib.nix {};
         emscripten = pkgs.callPackage ./nix/emscripten.nix {};
+        opensslWasm = pkgs.callPackage ./nix/openssl-wasm.nix {inherit emscripten;};
         tdlibWasm = pkgs.callPackage ./nix/tdlib-wasm.nix {
-          inherit emscripten;
+          inherit emscripten opensslWasm;
           tdlibSrc = tdlib.src;
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
@@ -67,7 +68,6 @@
             (craneLib.fileset.commonCargoSources ./.)
             (pkgs.lib.fileset.maybeMissing ./integration))
           ./third_party/tdlib-rs/tdlib-rs/tl
-          ./nix/tdlib.nix
         ];
         src = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -107,7 +107,20 @@
           version = "0.1.0";
           src = pkgs.lib.fileset.toSource {
             root = ./web;
-            fileset = pkgs.lib.fileset.difference ./web (pkgs.lib.fileset.maybeMissing ./web/repos);
+            fileset = pkgs.lib.fileset.unions [
+              ./web/package.json
+              ./web/package-lock.json
+              ./web/index.html
+              ./web/tsconfig.json
+              ./web/vite.config.ts
+              ./web/vitest.config.ts
+              ./web/eslint.config.js
+              ./web/.oxlintrc.json
+              ./web/.oxlintrc.effect.json
+              ./web/.oxfmtrc.json
+              ./web/src
+              ./web/public
+            ];
           };
           npmDeps = pkgs.importNpmLock {npmRoot = ./web;};
           npmConfigHook = pkgs.importNpmLock.npmConfigHook;
@@ -198,10 +211,12 @@
             '';
           }
         );
-        coreTypes = craneLib.mkCargoDerivation (
+        # One cargo test builds both packages. coreTypes and telegramTests are
+        # the same derivation so flake check does not compile the workspace twice.
+        cargoTests = craneLib.mkCargoDerivation (
           commonArgs
           // {
-            pname = "crm-chat-core-types";
+            pname = "crm-chat-cargo-tests";
             version = "0.1.0";
             inherit cargoArtifacts;
             src = pkgs.lib.fileset.toSource {
@@ -213,7 +228,8 @@
             };
             doInstallCargoArtifacts = false;
             buildPhaseCargoCommand = ''
-              cargo test -p crm-chat-core --locked
+              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
+              cargo test -p crm-chat-core -p crm-chat-telegram --locked
             '';
             installPhaseCommand = ''
               mkdir -p $out
@@ -265,23 +281,9 @@
           cp ${tdlib.src}/td/generate/scheme/td_api.tl third_party/tdlib-rs/tdlib-rs/tl/api.tl
           echo "updated third_party/tdlib-rs/tdlib-rs/tl/api.tl from TDLib ${tdlib.version}"
         '';
-        telegramTests = craneLib.mkCargoDerivation (
-          commonArgs
-          // {
-            pname = "crm-chat-telegram-tests";
-            version = "0.1.0";
-            inherit cargoArtifacts;
-            doInstallCargoArtifacts = false;
-            buildPhaseCargoCommand = ''
-              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
-              cargo test -p crm-chat-telegram --locked
-            '';
-            installPhaseCommand = ''
-              mkdir -p $out
-              touch $out/checked
-            '';
-          }
-        );
+        # tauri-build only checks that frontendDist exists. Clippy does not need
+        # the website, which would pull the wasm TDLib build into this check.
+        frontendStub = pkgs.writeTextDir "index.html" "<!doctype html><title></title>\n";
       in {
         formatter = pkgs.alejandra;
         packages =
@@ -310,8 +312,9 @@
               statix check $src
               touch $out
             '';
-          inherit website wasm32 coreTypes telegramTests;
-          inherit desktop;
+          inherit website wasm32 desktop;
+          coreTypes = cargoTests;
+          telegramTests = cargoTests;
           tdlibWasm =
             if system == "x86_64-linux"
             then
@@ -365,12 +368,15 @@
             // {
               inherit cargoArtifacts;
               src = appSrc;
-              TAURI_CONFIG = builtins.toJSON {build.frontendDist = "${website}";};
+              TAURI_CONFIG = builtins.toJSON {build.frontendDist = "${frontendStub}";};
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
             }
           );
           typescript = website.overrideAttrs {
             pname = "crm-chat-typescript";
+            # Typecheck, lint, and vitest do not read the wasm binary. Drop the
+            # website preBuild so this check does not wait on tdlibWasm.
+            preBuild = "";
             buildPhase = ''
               npm run typecheck
               npm run lint
