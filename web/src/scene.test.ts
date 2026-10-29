@@ -44,7 +44,7 @@ test('phone login requests 2FA then loads distinct chat types', () => {
       '0123456789abcdef0123456789abcdef',
     ),
     type(role('textbox', { name: 'Phone number' }), '+31000000000'),
-    click(role('button', { name: 'Log in with phone' })),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       BeginLogin,
       Message.SucceededAuthenticate({
@@ -73,9 +73,14 @@ test('phone login requests 2FA then loads distinct chat types', () => {
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('region', { name: 'Telegram login' })).not.toExist(),
     expectAll(all.role('listitem')).toHaveCount(3),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Dialog'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Group'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Channel'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'personal chat',
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('group'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('channel'),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'Select a chat to start messaging',
+    ),
   )
 })
 
@@ -88,7 +93,7 @@ test('QR login displays a scannable image', () => {
         apiHash: () => Redacted.make('0123456789abcdef0123456789abcdef'),
       }),
     ),
-    click(role('button', { name: 'Log in with QR' })),
+    click(role('button', { name: 'Log in by QR code' })),
     Command.resolve(
       BeginLogin,
       Message.SucceededAuthenticate({
@@ -133,7 +138,7 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('alert')).not.toExist(),
-    expect(role('heading', { name: 'Telegram chats' })).toExist(),
+    expect(role('region', { name: 'Telegram chats' })).toExist(),
   )
 })
 
@@ -150,6 +155,9 @@ test('supplied application credentials are not rendered as inputs', () => {
     expect(role('textbox', { name: 'API ID' })).not.toExist(),
     expect(role('textbox', { name: 'API hash' })).not.toExist(),
     expect(role('textbox', { name: 'Phone number' })).toExist(),
-    expect(role('button', { name: 'Log in with QR' })).toExist(),
+    expect(role('button', { name: 'Log in by QR code' })).toExist(),
+    expect(role('button', { name: 'Country' })).toExist(),
+    expect(role('checkbox', { name: 'Keep me signed in' })).toBeChecked(),
+    expect(role('region', { name: 'Telegram login' })).toContainText('+31'),
   )
 })
