@@ -36,34 +36,54 @@ pub fn create_client() -> i32 {
     tdjson::create_client()
 }
 
+/// Synchronously executes a TDLib request documented as "Can be called synchronously".
+///
+/// Copies the response before returning. TDLib frees that buffer on the next
+/// [`receive`] or `execute`, so call this before [`receive`] is running.
+pub fn execute(request: &str) -> Option<String> {
+    tdjson::execute(request)
+}
+
 /// Receive a single update or response from TdLib. If it's an update, it
 /// returns a tuple with the `Update` and the associated `client_id`.
 /// Note that to start receiving updates for a client you need to send
 /// at least a request with it first.
 pub fn receive() -> Option<(Update, i32)> {
-    let response = tdjson::receive(2.0);
-    if let Some(response_str) = response {
-        let response: Value = serde_json::from_str(&response_str).unwrap();
+    tdjson::receive(2.0).as_deref().and_then(decode_incoming)
+}
 
-        match response.get("@extra") {
-            Some(_) => {
-                OBSERVER.notify(response);
-            }
-            None => {
-                let client_id = response["@client_id"].as_i64().unwrap() as i32;
-                match serde_json::from_value(response) {
-                    Ok(update) => {
-                        return Some((update, client_id));
-                    }
-                    Err(e) => {
-                        log::warn!("Received an unknown response: {response_str}\nReason: {e}");
-                    }
-                }
-            }
+/// Decodes one TDLib JSON payload.
+///
+/// A request response (`@extra`) is delivered to its waiter and yields `None`.
+/// Malformed JSON, a missing client id, and an unknown update also yield `None`.
+/// Nothing from the payload is written to the log.
+pub fn decode_incoming(response_str: &str) -> Option<(Update, i32)> {
+    let response: Value = match serde_json::from_str(response_str) {
+        Ok(value) => value,
+        Err(_) => {
+            log::warn!("dropped a TDLib payload that was not JSON");
+            return None;
+        }
+    };
+    if response.get("@extra").is_some() {
+        OBSERVER.notify(response);
+        return None;
+    }
+    let Some(client_id) = response
+        .get("@client_id")
+        .and_then(Value::as_i64)
+        .and_then(|client_id| i32::try_from(client_id).ok())
+    else {
+        log::warn!("dropped a TDLib update without a client id");
+        return None;
+    };
+    match serde_json::from_value(response) {
+        Ok(update) => Some((update, client_id)),
+        Err(_) => {
+            log::warn!("dropped a TDLib update that could not be decoded");
+            None
         }
     }
-
-    None
 }
 
 pub(crate) async fn send_request(client_id: i32, mut request: Value) -> Value {

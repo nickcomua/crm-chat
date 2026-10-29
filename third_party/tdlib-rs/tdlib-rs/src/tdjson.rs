@@ -14,6 +14,7 @@ unsafe extern "C" {
     fn td_create_client_id() -> c_int;
     fn td_send(client_id: c_int, request: *const c_char);
     fn td_receive(timeout: c_double) -> *const c_char;
+    fn td_execute(request: *const c_char) -> *const c_char;
 }
 
 pub(crate) fn create_client() -> i32 {
@@ -30,5 +31,20 @@ pub(crate) fn receive(timeout: f64) -> Option<String> {
         td_receive(timeout)
             .as_ref()
             .map(|response| CStr::from_ptr(response).to_string_lossy().into_owned())
+    }
+}
+
+/// Synchronously runs a request TDLib documents as safe to call without a client.
+///
+/// TDLib invalidates the returned pointer on the next `td_receive` or `td_execute`,
+/// so the response is copied before this returns. Do not call it while `receive` runs.
+pub(crate) fn execute(request: &str) -> Option<String> {
+    let cstring = CString::new(request).ok()?;
+    unsafe {
+        let response = td_execute(cstring.as_ptr());
+        if response.is_null() {
+            return None;
+        }
+        Some(CStr::from_ptr(response).to_string_lossy().into_owned())
     }
 }

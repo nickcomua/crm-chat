@@ -30,15 +30,22 @@ impl Observer {
     }
 
     pub fn notify(&self, response: Value) {
-        let extra = response["@extra"].as_u64().unwrap() as u32;
+        let Some(extra) = response
+            .get("@extra")
+            .and_then(Value::as_u64)
+            .and_then(|extra| u32::try_from(extra).ok())
+        else {
+            log::warn!("dropped a TDLib response with an unexpected request id");
+            return;
+        };
         match self.requests.write().unwrap().remove(&extra) {
             Some(sender) => {
                 if sender.send(response).is_err() {
-                    log::warn!("Got a response of an unaccessible request");
+                    log::warn!("dropped a TDLib response for a closed request");
                 }
             }
             None => {
-                log::warn!("Got a response of an unknown request");
+                log::warn!("dropped a TDLib response for an unknown request");
             }
         }
     }

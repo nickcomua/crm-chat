@@ -13,6 +13,26 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
 static RECEIVER_STARTED: AtomicBool = AtomicBool::new(false);
 
+const LOG_SILENCE_REQUESTS: [&str; 2] = [
+    r#"{"@type":"setLogVerbosityLevel","new_verbosity_level":0}"#,
+    r#"{"@type":"setLogStream","log_stream":{"@type":"logStreamEmpty"}}"#,
+];
+
+/// TDLib defaults to verbose stderr logging, which includes phone numbers,
+/// login codes, passwords, `api_hash`, and the database key. Both calls are
+/// synchronous and must finish before a client exists and before `receive` runs.
+fn silence_tdlib_logs() -> Result<(), String> {
+    for request in LOG_SILENCE_REQUESTS {
+        let response = tdlib_rs::execute(request).ok_or("could not silence TDLib logs")?;
+        let value: Value =
+            serde_json::from_str(&response).map_err(|_| "could not silence TDLib logs")?;
+        if value.get("@type").and_then(Value::as_str) != Some("ok") {
+            return Err("could not silence TDLib logs".into());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ChatKind {
     Dialog,
@@ -221,6 +241,19 @@ impl Client {
         if RECEIVER_STARTED.swap(true, Ordering::SeqCst) {
             return Err("TDLib receiver is already running".into());
         }
+        // The receive thread is spawned only after every fallible step below.
+        // Clearing the flag on error lets a later open try again.
+        match Self::open_receiver(root) {
+            Ok(client) => Ok(client),
+            Err(error) => {
+                RECEIVER_STARTED.store(false, Ordering::SeqCst);
+                Err(error)
+            }
+        }
+    }
+
+    fn open_receiver(root: PathBuf) -> Result<Self, String> {
+        silence_tdlib_logs()?;
         std::fs::create_dir_all(&root)
             .map_err(|_| "could not create the TDLib directory".to_owned())?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -476,14 +509,6 @@ impl Client {
             },
         );
         self.ids().insert(id.to_owned(), client_id);
-        let response = tdlib_rs::send_json(
-            client_id,
-            json!({"@type": "setLogVerbosityLevel", "new_verbosity_level": 0}),
-        )
-        .await;
-        if let Some(error) = public_error(&response) {
-            return Err(error);
-        }
         send_parameters(&self.shared, client_id).await;
         Ok(client_id)
     }
@@ -782,10 +807,36 @@ fn message_from_json(value: &Value) -> Option<Message> {
 mod tests {
     use super::{
         chat_kind, chat_tdlib_id, database_root_from, phase_from_update_json, public_error,
-        valid_account_id, ChatKind, Phase,
+        valid_account_id, ChatKind, Client, Phase, LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
+    use std::sync::Mutex;
+
+    struct PayloadLog {
+        lines: Mutex<Vec<String>>,
+    }
+
+    impl log::Log for PayloadLog {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                self.lines
+                    .lock()
+                    .expect("log")
+                    .push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static PAYLOAD_LOG: PayloadLog = PayloadLog {
+        lines: Mutex::new(Vec::new()),
+    };
 
     #[test]
     fn authorization_updates_move_the_phase_from_qr_to_ready() {
@@ -862,6 +913,68 @@ mod tests {
     fn chat_ids_are_namespaced_by_the_local_account() {
         assert_eq!(chat_tdlib_id("one", "one:42").unwrap(), 42);
         assert!(chat_tdlib_id("one", "one:nope").is_err());
+    }
+
+    #[test]
+    fn log_silence_runs_before_a_client_and_names_no_secrets() {
+        assert!(LOG_SILENCE_REQUESTS[0].contains("setLogVerbosityLevel"));
+        assert!(LOG_SILENCE_REQUESTS[0].contains("\"new_verbosity_level\":0"));
+        assert!(LOG_SILENCE_REQUESTS[1].contains("logStreamEmpty"));
+        for request in LOG_SILENCE_REQUESTS {
+            assert!(!request.contains("api_hash"));
+            assert!(!request.contains("phone"));
+            assert!(!request.contains("password"));
+        }
+    }
+
+    #[test]
+    fn a_failed_open_releases_the_receiver_flag() {
+        let blocker =
+            std::env::temp_dir().join(format!("crm-chat-open-blocker-{}", std::process::id()));
+        let _ = std::fs::remove_file(&blocker);
+        std::fs::write(&blocker, b"x").expect("blocker");
+        let root = blocker.join("tdlib");
+        let first = match Client::open(root.clone()) {
+            Ok(_) => panic!("open succeeded"),
+            Err(error) => error,
+        };
+        let second = match Client::open(root) {
+            Ok(_) => panic!("open succeeded"),
+            Err(error) => error,
+        };
+        let _ = std::fs::remove_file(&blocker);
+        assert_ne!(first, "TDLib receiver is already running");
+        assert_ne!(second, "TDLib receiver is already running");
+        assert_eq!(first, "could not create the TDLib directory");
+        assert_eq!(second, "could not create the TDLib directory");
+    }
+
+    #[test]
+    fn unknown_tdlib_payloads_are_dropped_without_their_contents() {
+        let _ = log::set_logger(&PAYLOAD_LOG);
+        log::set_max_level(log::LevelFilter::Warn);
+        let canary = "CANARY-api_hash-phone-code-password";
+        let payloads = [
+            "not-json",
+            r#"{"@type":"updateNope","@client_id":1,"text":"CANARY-api_hash-phone-code-password"}"#,
+            r#"{"@type":"updateAuthorizationState","authorization_state":{"@type":"authorizationStateReady"},"text":"CANARY-api_hash-phone-code-password"}"#,
+            r#"{"@extra":"CANARY-api_hash-phone-code-password","@type":"ok"}"#,
+        ];
+        for payload in payloads {
+            assert!(payload.contains(canary) || payload == "not-json");
+            assert!(tdlib_rs::decode_incoming(payload).is_none());
+        }
+        let ready = tdlib_rs::decode_incoming(
+            r#"{"@type":"updateAuthorizationState","@client_id":4,"authorization_state":{"@type":"authorizationStateReady"}}"#,
+        )
+        .expect("ready update");
+        assert_eq!(ready.1, 4);
+        assert!(matches!(
+            ready.0,
+            tdlib_rs::enums::Update::AuthorizationState(_)
+        ));
+        let logged = PAYLOAD_LOG.lines.lock().expect("log lines");
+        assert!(logged.iter().all(|line| !line.contains(canary)));
     }
 
     #[test]
