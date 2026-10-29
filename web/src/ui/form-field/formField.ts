@@ -20,7 +20,7 @@ export type FieldControl = Readonly<{
   describedBy: Option.Option<string>
 }>
 
-export type ViewConfig<Message> = Readonly<{
+export type ViewConfig<_Message> = Readonly<{
   id: string
   label: string
   error: Option.Option<string>

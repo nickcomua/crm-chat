@@ -127,7 +127,7 @@ export const view = (
     start: number,
     direction: 1 | -1,
   ): Option.Option<number> => {
-    if (Array.isArrayEmpty(inputs.options)) {
+    if (Array.isReadonlyArrayEmpty(inputs.options)) {
       return Option.none()
     }
     const candidates = Array.makeBy(inputs.options.length, step =>

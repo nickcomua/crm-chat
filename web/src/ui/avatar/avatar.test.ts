@@ -6,14 +6,14 @@ import { expect, test } from 'vitest'
 
 import {
   type AvatarConfig,
+  Message,
+  type Model,
   avatarColor,
   demo,
   demoInit,
   demoUpdate,
   init,
   initials,
-  Message,
-  type Model,
   update,
   view,
 } from './avatar'
