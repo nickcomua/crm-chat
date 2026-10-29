@@ -312,6 +312,21 @@
             '';
           inherit website wasm32 coreTypes telegramTests;
           inherit desktop;
+          # Same fetch for native and wasm, and the vendored scheme is that
+          # commit's td_api.tl. This does not build either library.
+          tdlib-pin =
+            pkgs.runCommand "tdlib-pin" {
+              nativeSrc = tdlib.src;
+              wasmSrc = tdlibWasm.src;
+              bindings = ./third_party/tdlib-rs/tdlib-rs/tl/api.tl;
+            } ''
+              if [ "$nativeSrc" != "$wasmSrc" ]; then
+                echo "native TDLib source $nativeSrc does not match wasm source $wasmSrc" >&2
+                exit 1
+              fi
+              cmp "$nativeSrc/td/generate/scheme/td_api.tl" "$bindings"
+              touch $out
+            '';
           tdlibWasm =
             if system == "x86_64-linux"
             then
