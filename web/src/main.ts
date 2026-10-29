@@ -25,8 +25,13 @@ import {
   submitCode,
   submitPassword,
 } from './telegram'
+import { readAppCredentials } from './appCredentials'
 
 const Secret = Schema.Redacted(Schema.String)
+const RuntimeCredentials = defineTaggedUnion({
+  Absent: {},
+  Present: { apiId: Schema.String, apiHash: Secret },
+})
 const Login = defineTaggedUnion({
   Editing: {},
   Closed: {},
@@ -36,6 +41,7 @@ const Login = defineTaggedUnion({
 })
 export const Model = Schema.Struct({
   login: Login,
+  appCredentials: Schema.Literals(['Manual', 'Supplied']),
   apiId: Schema.String,
   apiHash: Secret,
   phone: Secret,
@@ -60,6 +66,7 @@ export const Message = defineMessageUnion({
   ClickedCancel: {},
   SelectedAccount: { id: Schema.String },
   ClickedRefresh: {},
+  CompletedLoadAppCredentials: { credentials: RuntimeCredentials },
   SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
   FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
   SucceededRefresh: { account: Account },
@@ -91,6 +98,29 @@ const loginError = (error: unknown): string => {
   }
   return 'Telegram could not complete the request. Retry or cancel and start again.'
 }
+export const LoadAppCredentials = Command.define('LoadAppCredentials', {
+  messages: [Message.CompletedLoadAppCredentials],
+  execute: Effect.tryPromise(() => readAppCredentials()).pipe(
+    Effect.map(credentials =>
+      Message.CompletedLoadAppCredentials({
+        credentials:
+          credentials === undefined
+            ? RuntimeCredentials.Absent()
+            : RuntimeCredentials.Present({
+                apiId: credentials.apiId,
+                apiHash: Redacted.make(credentials.apiHash),
+              }),
+      }),
+    ),
+    Effect.catch(() =>
+      Effect.succeed(
+        Message.CompletedLoadAppCredentials({
+          credentials: RuntimeCredentials.Absent(),
+        }),
+      ),
+    ),
+  ),
+})
 export const BeginLogin = Command.define('BeginLogin', {
   args: {
     apiId: Schema.String,
@@ -285,6 +315,16 @@ export const update = (model: Model, message: Message) =>
             }),
             commands: [Refresh({ id: model.selectedAccountId })],
           },
+    CompletedLoadAppCredentials: ({ credentials }) =>
+      model.status === 'Busy' || credentials._tag === 'Absent'
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              appCredentials: () => 'Supplied',
+              apiId: () => credentials.apiId,
+              apiHash: () => credentials.apiHash,
+            }),
+          },
     SucceededAuthenticate: ({ result, sourceId }) => {
       if (
         sourceId !== '' &&
@@ -356,6 +396,7 @@ export const update = (model: Model, message: Message) =>
   })
 export const initialModel: Model = {
   login: Login.Editing(),
+  appCredentials: 'Manual',
   apiId: '',
   apiHash: Redacted.make(''),
   phone: Redacted.make(''),
@@ -368,12 +409,20 @@ export const initialModel: Model = {
 }
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: initialModel,
+  commands: [LoadAppCredentials()],
 })
 const fieldClass =
   'w-full rounded-xl border border-white/20 bg-[#1c1c22] px-4 py-3 text-white'
 const buttonClass =
   'rounded-xl bg-[#8774e1] px-4 py-3 text-white disabled:opacity-50'
-const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
+const suppliedApplicationNote = (h: HtmlBuilder<Message>) =>
+  h.p(
+    [],
+    [
+      'Application credentials are supplied for this run. They are not part of the page.',
+    ],
+  )
+const manualApplicationFields = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [h.Class('flex flex-col gap-4')],
     [
@@ -417,6 +466,15 @@ const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
         },
         h,
       ),
+    ],
+  )
+const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class('flex flex-col gap-4')],
+    [
+      model.appCredentials === 'Supplied'
+        ? suppliedApplicationNote(h)
+        : manualApplicationFields(model, h),
       Input.view(
         {
           id: 'telegram-phone',
