@@ -1,0 +1,12 @@
+[package]
+name = "crm-chat-telegram"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Telegram accounts, login, chats, and messages through TDLib"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tdlib-rs = { path = "../../third_party/tdlib-rs/tdlib-rs", default-features = false, features = ["pkg-config"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

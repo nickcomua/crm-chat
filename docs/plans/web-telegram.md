@@ -1,6 +1,6 @@
 # Browser Telegram login and chats (KAM-42)
 
-`web/src/telegram.ts` is the browser adapter. It keeps one GramJS client per attached account, outside the Foldkit Model. The core remains types only, with no transport dependencies. KAM-43 supplies a native desktop adapter later.
+`web/src/telegram.ts` is the page adapter. In the desktop shell it calls Tauri commands backed by native TDLib, one database directory per account. In the browser it still keeps one GramJS client per account until the emscripten TDLib build is cached. The core remains types only, with no transport dependencies. See `tdlib.md`.
 
 The UI uses the Telegram application API ID and hash supplied at runtime by SecretSpec (`TG_ID` and `TG_HASH`). See `docs/secrets.md`. If that process was not started with `secretspec run`, the page asks for them instead. Enter a phone number with country code and the code Telegram sends, or choose QR and scan in Telegram → Settings → Devices → Link Desktop Device. Both paths handle a two-step verification password. New Telegram account registration is not supported: create the account in an official app first.
 

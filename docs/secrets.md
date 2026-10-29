@@ -135,17 +135,16 @@ from this repository. It is impure: it needs the network, a TTY, `bws` and
 The command loads `TG_ID` and `TG_HASH` with
 `secretspec run --provider bws --scope app`, prompts for the phone number
 and the login code, and prompts for the 2FA password with hidden input only
-when Telegram asks for it. It logs in with grammers over TCP, calls
-`getMe()`, and stores two new BWS secrets for that slot:
+when Telegram asks for it. It logs in with TDLib and writes the account
+database under the desktop data directory documented in `docs/plans/tdlib.md`.
+Account `1` or `2` is the directory name. It does not write a session to BWS.
+It does not overwrite, change, or delete an existing BWS entry. It does not
+print the session, a user id, the phone number, the code, the password, the
+API hash, or vault identifiers.
 
-- `TG_SESSION_GRAMMERS_<slot>` — base64 of the grammers SqliteSession
-- `TG_USER_NUMERIC_ID_<slot>` — the numeric user id
-
-Values are passed to `secretspec set --from-file -` on stdin, never as
-arguments. If either name already exists, the command exits before login
-when it can, and always before writing. It does not overwrite, change, or
-delete an existing entry. It does not print the session, the user id, the
-phone number, the code, the password, the API hash, or vault identifiers.
+`TG_SESSION_GRAMMERS_<slot>` and `TG_USER_NUMERIC_ID_<slot>` are leftover
+declarations. Do not delete or change those BWS entries. The login command
+does not read them.
 
 Do not create Telegram accounts with this command. A phone that is not
 already registered is rejected.
@@ -164,31 +163,14 @@ The command needs network and the BWS vault. It is not part of `nix flake check`
 
 It fails if `TG_ID` or `TG_HASH` do not resolve, or if they are not in the
 shape the apps accept. The app scope must inject only those two Telegram keys.
-The same values are then used for a real connection:
+The same values are then used for a real TDLib connection. The check opens a
+throwaway database, requests QR login, and requires Telegram to accept the
+application credentials. It does not print the login link. It then looks for
+logged-in accounts in the desktop TDLib directory. If that directory has no
+account, the command prints `NEEDS TEST ACCOUNTS:` and exits 2. It does not
+read BWS session entries.
 
-- GramJS over WSS, with the socket options from `web/src/telegram.ts`. The
-  check calls `help.getConfig`, then `auth.exportLoginToken`. A second call
-  with invalid application credentials must be rejected.
-- grammers over TCP, the desktop transport. The same two calls, and the same
-  rejection check.
-
-Tokens and secret values are not printed. Output is pass, skip, or an RPC
-error name.
-
-If `TG_SESSION_GRAMMERS_<slot>` and `TG_USER_NUMERIC_ID_<slot>` are both
-present, the command restores that grammers SqliteSession and checks the
-logged-in user id through grammers over TCP. `getMe().id` must equal the
-stored numeric id. A missing pair does not fail the credential checks; the
-command prints `authenticated: skipped` for that slot. A session without a
-numeric id fails.
-
-The web path does not load this session. GramJS accepts only its own
-StringSession: a version byte, a datacenter, an address, a port, and a
-256-byte auth key. A grammers SqliteSession is a libsql database
-(`dc_home`, `dc_option`, peer cache, update state), optionally with a WAL
-file packed beside it. GramJS cannot open that database, and this command
-does not translate it into a GramJS string. The GramJS WSS check still
-proves the application credentials. It does not sign in. The integration
-test prints that skip on every run.
+Tokens and secret values are not printed. Output is pass, or a TDLib error
+code.
 
 Do not paste command output that contains secret values.

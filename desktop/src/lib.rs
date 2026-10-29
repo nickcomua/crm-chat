@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 #[derive(serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct TelegramAppCredentials {
@@ -31,10 +33,125 @@ fn telegram_app_credentials() -> Option<TelegramAppCredentials> {
     telegram_app_credentials_from(&api_id, &api_hash)
 }
 
+struct TelegramState {
+    client: std::sync::Mutex<Option<std::sync::Arc<crm_chat_telegram::Client>>>,
+}
+
+fn client(app: &tauri::AppHandle) -> Result<std::sync::Arc<crm_chat_telegram::Client>, String> {
+    let state = app
+        .try_state::<TelegramState>()
+        .ok_or("Telegram is not running")?;
+    let mut guard = state.client.lock().expect("telegram state");
+    if let Some(client) = guard.as_ref() {
+        return Ok(std::sync::Arc::clone(client));
+    }
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "could not resolve the desktop data directory".to_owned())?
+        .join("tdlib");
+    let client = std::sync::Arc::new(crm_chat_telegram::Client::open(root)?);
+    *guard = Some(std::sync::Arc::clone(&client));
+    Ok(client)
+}
+
+fn parse_api_id(value: &str) -> Result<i32, String> {
+    value.parse().map_err(|_| "API_ID_INVALID".to_owned())
+}
+
+#[tauri::command]
+async fn telegram_begin_login(
+    app: tauri::AppHandle,
+    id: String,
+    phone: String,
+    qr: bool,
+    api_id: String,
+    api_hash: String,
+) -> Result<crm_chat_telegram::AuthStep, String> {
+    let client = client(&app)?;
+    let api_id = parse_api_id(&api_id)?;
+    if qr {
+        client.begin_qr(&id, api_id, &api_hash).await
+    } else {
+        client.begin_phone(&id, api_id, &api_hash, &phone).await
+    }
+}
+
+#[tauri::command]
+async fn telegram_submit_code(
+    app: tauri::AppHandle,
+    id: String,
+    code: String,
+) -> Result<crm_chat_telegram::AuthStep, String> {
+    client(&app)?.submit_code(&id, &code).await
+}
+
+#[tauri::command]
+async fn telegram_submit_password(
+    app: tauri::AppHandle,
+    id: String,
+    password: String,
+) -> Result<crm_chat_telegram::AuthStep, String> {
+    client(&app)?.submit_password(&id, &password).await
+}
+
+#[tauri::command]
+async fn telegram_poll(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<crm_chat_telegram::AuthStep, String> {
+    client(&app)?.poll(&id).await
+}
+
+#[tauri::command]
+async fn telegram_load_account(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<crm_chat_telegram::Account, String> {
+    client(&app)?.load_account(&id).await
+}
+
+#[tauri::command]
+async fn telegram_messages(
+    app: tauri::AppHandle,
+    id: String,
+    chat_id: String,
+) -> Result<Vec<crm_chat_telegram::Message>, String> {
+    client(&app)?.messages(&id, &chat_id).await
+}
+
+#[tauri::command]
+async fn telegram_logout(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    client(&app)?.logout(&id).await
+}
+
+#[tauri::command]
+async fn telegram_restore(
+    app: tauri::AppHandle,
+    api_id: String,
+    api_hash: String,
+) -> Result<Vec<crm_chat_telegram::Account>, String> {
+    let client = client(&app)?;
+    client.restore(parse_api_id(&api_id)?, &api_hash).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![telegram_app_credentials])
+        .manage(TelegramState {
+            client: std::sync::Mutex::new(None),
+        })
+        .invoke_handler(tauri::generate_handler![
+            telegram_app_credentials,
+            telegram_begin_login,
+            telegram_submit_code,
+            telegram_submit_password,
+            telegram_poll,
+            telegram_load_account,
+            telegram_messages,
+            telegram_logout,
+            telegram_restore
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

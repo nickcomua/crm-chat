@@ -48,6 +48,7 @@
           ])
           fenix.packages.${system}.targets.wasm32-unknown-unknown.latest.rust-std
         ];
+        tdlib = pkgs.callPackage ./nix/tdlib.nix {};
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         nixSrc = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -56,10 +57,13 @@
             (pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ./.)
             (pkgs.lib.fileset.maybeMissing ./web/repos);
         };
-        cargoFiles =
-          pkgs.lib.fileset.difference
-          (craneLib.fileset.commonCargoSources ./.)
-          (pkgs.lib.fileset.maybeMissing ./integration);
+        cargoFiles = pkgs.lib.fileset.unions [
+          (pkgs.lib.fileset.difference
+            (craneLib.fileset.commonCargoSources ./.)
+            (pkgs.lib.fileset.maybeMissing ./integration))
+          ./third_party/tdlib-rs/tdlib-rs/tl
+          ./nix/tdlib.nix
+        ];
         src = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = cargoFiles;
@@ -72,12 +76,14 @@
           nativeBuildInputs = [
             pkgs.pkg-config
             pkgs.perl
+            tdlib
           ];
           buildInputs = [
             pkgs.webkitgtk_4_1
             pkgs.openssl
             pkgs.glib-networking
             pkgs.librsvg
+            tdlib
           ];
         };
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -149,6 +155,9 @@
                   pkgs.dbus
                   pkgs.libsoup_3
                   pkgs.librsvg
+                  tdlib
+                  pkgs.openssl
+                  pkgs.zlib
                 ]
               }" $out/bin/.crm-chat-desktop-unwrapped
               makeWrapper $out/bin/.crm-chat-desktop-unwrapped $out/bin/crm-chat-desktop \
@@ -203,10 +212,6 @@
             '';
           }
         );
-        integrationNodeModules = pkgs.importNpmLock.buildNodeModules {
-          npmRoot = ./web;
-          inherit (pkgs) nodejs;
-        };
         integrationTest = pkgs.writeShellScript "crm-chat-integration-test" ''
           set -euo pipefail
           export PATH=${
@@ -217,12 +222,11 @@
               pkgs.gcc
             ]
           }:$PATH
-          export PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig
+          export CRM_CHAT_TDLIB=${tdlib}
+          export PKG_CONFIG_PATH=${tdlib}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig
+          export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
           export CRM_CHAT_INVOCATION_DIR="$PWD"
           export CRM_CHAT_SECRETS=${./secretspec.toml}
-          export CRM_CHAT_WEB_CHECK=${./integration/web-check.cjs}
-          export CRM_CHAT_NODE_MODULES=${integrationNodeModules}
-          export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
           exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
         '';
         loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
@@ -230,23 +234,49 @@
           export PATH=${
             pkgs.lib.makeBinPath [
               rustToolchain
-              pkgs.nodejs
               pkgs.pkg-config
               pkgs.gcc
               pkgs.coreutils
+              pkgs.util-linux
             ]
           }:$PATH
-          export PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig
+          export CRM_CHAT_TDLIB=${tdlib}
+          export PKG_CONFIG_PATH=${tdlib}/lib/pkgconfig:${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.zlib.dev}/lib/pkgconfig
+          export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
           export CRM_CHAT_INVOCATION_DIR="$PWD"
           export CRM_CHAT_SECRETS=${./secretspec.toml}
-          export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
-          export CRM_CHAT_SECRET_STATE=${./integration/secret-state.cjs}
           exec ${pkgs.bash}/bin/bash ${./integration/login.sh} "$@"
         '';
+        regenerateTdlibBindings = pkgs.writeShellScript "regenerate-tdlib-bindings" ''
+          set -euo pipefail
+          if [ ! -f third_party/tdlib-rs/tdlib-rs/tl/api.tl ]; then
+            echo "regenerate-tdlib-bindings: run from the crm-chat repository" >&2
+            exit 1
+          fi
+          cp ${tdlib.src}/td/generate/scheme/td_api.tl third_party/tdlib-rs/tdlib-rs/tl/api.tl
+          echo "updated third_party/tdlib-rs/tdlib-rs/tl/api.tl from TDLib ${tdlib.version}"
+        '';
+        telegramTests = craneLib.mkCargoDerivation (
+          commonArgs
+          // {
+            pname = "crm-chat-telegram-tests";
+            version = "0.1.0";
+            inherit cargoArtifacts;
+            doInstallCargoArtifacts = false;
+            buildPhaseCargoCommand = ''
+              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
+              cargo test -p crm-chat-telegram --locked
+            '';
+            installPhaseCommand = ''
+              mkdir -p $out
+              touch $out/checked
+            '';
+          }
+        );
       in {
         formatter = pkgs.alejandra;
         packages = {
-          inherit website wasm32;
+          inherit website wasm32 tdlib;
           inherit desktop;
           default = desktop;
         };
@@ -267,7 +297,7 @@
               statix check $src
               touch $out
             '';
-          inherit website wasm32 coreTypes;
+          inherit website wasm32 coreTypes telegramTests;
           inherit desktop;
           desktop-starts =
             pkgs.runCommand "crm-chat-desktop-starts" {
@@ -336,6 +366,7 @@
             pkgs.pkg-config
             pkgs.webkitgtk_4_1
             pkgs.openssl
+            tdlib
             pkgs.importNpmLock.hooks.linkNodeModulesHook
           ];
           npmDeps = pkgs.importNpmLock.buildNodeModules {
@@ -343,13 +374,19 @@
             inherit (pkgs) nodejs;
           };
         };
-        apps.integration-test = {
-          type = "app";
-          program = "${integrationTest}";
-        };
-        apps.login-test-account = {
-          type = "app";
-          program = "${loginTestAccount}";
+        apps = {
+          integration-test = {
+            type = "app";
+            program = "${integrationTest}";
+          };
+          login-test-account = {
+            type = "app";
+            program = "${loginTestAccount}";
+          };
+          regenerate-tdlib-bindings = {
+            type = "app";
+            program = "${regenerateTdlibBindings}";
+          };
         };
       }
     );

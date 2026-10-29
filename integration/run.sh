@@ -1,6 +1,6 @@
 #!/bin/sh
 # Real SecretSpec + Telegram check. Invoked by `nix run .#integration-test`.
-# Prints pass/skip lines and RPC error names only. Never print secret values.
+# Prints pass/skip lines and TDLib error codes only. Never print secret values.
 set -eu
 
 if ! command -v secretspec >/dev/null 2>&1; then
@@ -21,10 +21,8 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 : "${CRM_CHAT_SECRETS:?integration-test: CRM_CHAT_SECRETS is unset}"
-: "${CRM_CHAT_WEB_CHECK:?integration-test: CRM_CHAT_WEB_CHECK is unset}"
-: "${CRM_CHAT_NODE_MODULES:?integration-test: CRM_CHAT_NODE_MODULES is unset}"
-: "${CRM_CHAT_DESKTOP_MANIFEST:?integration-test: CRM_CHAT_DESKTOP_MANIFEST is unset}"
 : "${CRM_CHAT_INVOCATION_DIR:?integration-test: CRM_CHAT_INVOCATION_DIR is unset}"
+: "${CRM_CHAT_TDLIB:?integration-test: CRM_CHAT_TDLIB is unset}"
 
 redact() {
   sed -E \
@@ -89,21 +87,12 @@ scope_env() {
   "
 }
 
-stage=$(mktemp -d)
-cleanup() {
-  rm -rf "$stage"
-}
-trap cleanup EXIT
-ln -s "$CRM_CHAT_NODE_MODULES/node_modules" "$stage/node_modules"
-cp "$CRM_CHAT_WEB_CHECK" "$stage/web-check.cjs"
-
-manifest=$CRM_CHAT_DESKTOP_MANIFEST
-if [ -f "$CRM_CHAT_INVOCATION_DIR/integration/desktop/Cargo.toml" ]; then
-  manifest=$CRM_CHAT_INVOCATION_DIR/integration/desktop/Cargo.toml
-fi
+manifest=$CRM_CHAT_INVOCATION_DIR/integration/desktop/Cargo.toml
 target=${XDG_CACHE_HOME:-$HOME/.cache}/crm-chat/integration-target
 mkdir -p "$target"
-echo "integration-test: building grammers TCP check"
+export PKG_CONFIG_PATH="$CRM_CHAT_TDLIB/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$CRM_CHAT_TDLIB/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+echo "integration-test: building TDLib check"
 cargo build --release --manifest-path "$manifest" --target-dir "$target"
 desktop=$target/release/crm-chat-integration-desktop
 
@@ -111,12 +100,8 @@ echo "integration-test: resolving SecretSpec scopes"
 scope_env app app
 scope_env integration integration
 
-echo "integration-test: web GramJS over WSS"
-run_scoped app node --no-warnings "$stage/web-check.cjs"
-
-echo "integration-test: desktop grammers over TCP"
+echo "integration-test: desktop TDLib"
 run_scoped app "$desktop" credentials
 
-echo "integration-test: authenticated accounts"
-echo "authenticated: web gramjs wss skipped, a grammers sqlite session is not a GramJS string session"
-run_scoped integration "$desktop" account
+echo "integration-test: saved desktop accounts"
+run_scoped app "$desktop" account

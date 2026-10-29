@@ -10,6 +10,108 @@ import { StringSession } from 'telegram/sessions'
 
 import type { Chat } from './generated/core'
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+const tauriInvoke = ():
+  | ((command: string, args?: Record<string, unknown>) => Promise<unknown>)
+  | undefined => {
+  const internals: unknown = Reflect.get(globalThis, '__TAURI_INTERNALS__')
+  if (!isRecord(internals)) {
+    return undefined
+  }
+  const invoke: unknown = Reflect.get(internals, 'invoke')
+  if (typeof invoke !== 'function') {
+    return undefined
+  }
+  return (command, args) => Promise.resolve(invoke(command, args))
+}
+
+const stringField = (value: Record<string, unknown>, key: string): string => {
+  const field = value[key]
+  if (typeof field !== 'string') {
+    throw new Error('Telegram could not complete the request.')
+  }
+  return field
+}
+
+const decodeAccount = (value: unknown): Account => {
+  if (
+    !isRecord(value) ||
+    typeof value['id'] !== 'string' ||
+    typeof value['title'] !== 'string' ||
+    !Array.isArray(value['chats'])
+  ) {
+    throw new Error('Telegram could not complete the request.')
+  }
+  const chats = value['chats'].flatMap((chat): Array<Chat> => {
+    if (
+      !isRecord(chat) ||
+      typeof chat['id'] !== 'string' ||
+      typeof chat['title'] !== 'string'
+    ) {
+      return []
+    }
+    const kind = chat['kind']
+    if (kind !== 'Dialog' && kind !== 'Group' && kind !== 'Channel') {
+      return []
+    }
+    return [{ id: chat['id'], title: chat['title'], kind }]
+  })
+  return { id: value['id'], title: value['title'], chats }
+}
+
+const nativeAuth = async (value: unknown): Promise<AuthResult> => {
+  if (!isRecord(value) || typeof value['_tag'] !== 'string') {
+    throw new Error('Telegram could not complete the request.')
+  }
+  const id = stringField(value, 'id')
+  if (value['_tag'] === 'Code') {
+    return { _tag: 'Code', id }
+  }
+  if (value['_tag'] === 'Password') {
+    return { _tag: 'Password', id }
+  }
+  if (value['_tag'] === 'Qr') {
+    return {
+      _tag: 'Qr',
+      id,
+      image: await QRCode.toDataURL(stringField(value, 'link')),
+    }
+  }
+  if (value['_tag'] === 'Authorized') {
+    return { _tag: 'Authorized', account: decodeAccount(value['account']) }
+  }
+  throw new Error('Telegram could not complete the request.')
+}
+
+export const loadMessages = async (
+  id: string,
+  chatId: string,
+): Promise<Array<{ id: string; text: string; outgoing: boolean; date: number }>> => {
+  const invoke = tauriInvoke()
+  if (invoke === undefined) {
+    return []
+  }
+  const value = await invoke('telegram_messages', { id, chat_id: chatId })
+  return Array.isArray(value) ? value : []
+}
+
+export const restoreAccounts = async (
+  apiId: number,
+  apiHash: string,
+): Promise<Array<Account>> => {
+  const invoke = tauriInvoke()
+  if (invoke === undefined) {
+    return []
+  }
+  const value = await invoke('telegram_restore', {
+    api_id: String(apiId),
+    api_hash: apiHash,
+  })
+  return Array.isArray(value) ? value.map(decodeAccount) : []
+}
+
 export const ChatSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
@@ -69,6 +171,10 @@ const connectionFor = (id: string): Connection => {
 }
 
 export const loadAccount = async (id: string): Promise<Account> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return decodeAccount(await invoke('telegram_load_account', { id }))
+  }
   const { client } = connectionFor(id)
   const user = await client.getMe()
   // GramJS 2.26.22 inverts ignoreMigrated and drops ordinary peers.
@@ -119,6 +225,18 @@ export const beginLogin = async (
   phone: string,
   qr: boolean,
 ): Promise<AuthResult> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return nativeAuth(
+      await invoke('telegram_begin_login', {
+        id,
+        phone,
+        qr,
+        api_id: String(apiId),
+        api_hash: apiHash,
+      }),
+    )
+  }
   const client = new TelegramClient(
     new StringSession(''),
     apiId,
@@ -155,6 +273,10 @@ export const submitCode = async (
   id: string,
   code: string,
 ): Promise<AuthResult> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return nativeAuth(await invoke('telegram_submit_code', { id, code }))
+  }
   const { client, phone, phoneCodeHash } = connectionFor(id)
   try {
     const result = await client.invoke(
@@ -177,6 +299,12 @@ export const submitPassword = async (
   id: string,
   password: string,
 ): Promise<AuthResult> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return nativeAuth(
+      await invoke('telegram_submit_password', { id, password }),
+    )
+  }
   const { client } = connectionFor(id)
   const parameters = await client.invoke(new Api.account.GetPassword())
   await client.invoke(
@@ -188,6 +316,10 @@ export const submitPassword = async (
 }
 
 export const pollQr = async (id: string): Promise<AuthResult> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return nativeAuth(await invoke('telegram_poll', { id }))
+  }
   const { client } = connectionFor(id)
   try {
     const result = await client.invoke(
@@ -220,6 +352,11 @@ export const pollQr = async (id: string): Promise<AuthResult> => {
 }
 
 export const removeConnection = async (id: string): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_logout', { id })
+    return
+  }
   const connection = connections.get(id)
   connections.delete(id)
   if (connection) {
