@@ -61,17 +61,16 @@ const nativeAuth = async (value: unknown): Promise<AuthResult> => {
   if (!isRecord(value) || typeof value['_tag'] !== 'string') {
     throw new Error('Telegram could not complete the request.')
   }
-  const id = stringField(value, 'id')
   if (value['_tag'] === 'Code') {
-    return { _tag: 'Code', id }
+    return { _tag: 'Code', id: stringField(value, 'id') }
   }
   if (value['_tag'] === 'Password') {
-    return { _tag: 'Password', id }
+    return { _tag: 'Password', id: stringField(value, 'id') }
   }
   if (value['_tag'] === 'Qr') {
     return {
       _tag: 'Qr',
-      id,
+      id: stringField(value, 'id'),
       image: await QRCode.toDataURL(stringField(value, 'link')),
     }
   }

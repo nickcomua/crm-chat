@@ -385,6 +385,29 @@ describe('TDLib browser protocol', () => {
     ])
   })
 
+  test('desktop Authorized matches the Rust account shape and has no top-level id', async () => {
+    const rustStep = {
+      _tag: 'Authorized',
+      account: {
+        id: 'acct',
+        title: 'Ada',
+        chats: [{ id: 'acct:7', title: 'Ada', kind: 'Dialog' as const }],
+      },
+    }
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {
+      invoke: () => Promise.resolve(rustStep),
+    })
+    try {
+      const { pollAccount } = await import('./telegram')
+      await expect(pollAccount('acct')).resolves.toEqual({
+        _tag: 'Authorized',
+        account: rustStep.account,
+      })
+    } finally {
+      Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+    }
+  })
+
   test('shows the desktop error string instead of a generic failure', () => {
     expect(desktopFailure('TDLib: database is locked')).toBe(
       'TDLib: database is locked',

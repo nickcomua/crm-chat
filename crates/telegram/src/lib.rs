@@ -88,6 +88,11 @@ struct Slot {
     api_id: i32,
     api_hash: String,
     phase: watch::Sender<Phase>,
+    /// Advances when Telegram publishes a new authorization state, not when
+    /// poll re-reads the current one. A code, password, phone, or QR request
+    /// waits for the next generation, so it does not return the step it was
+    /// answering before TDLib's update arrives.
+    generation: u64,
     parameters_sent: bool,
 }
 
@@ -223,6 +228,13 @@ fn publish(phase: &watch::Sender<Phase>, next: Phase) {
     phase.send_replace(next);
 }
 
+fn publish_authorization(slot: &mut Slot, next: Phase) {
+    // Bump before send_replace so a waiter woken by changed() reads the new
+    // generation.
+    slot.generation += 1;
+    publish(&slot.phase, next);
+}
+
 fn phase_from_authorization(state: AuthorizationState) -> Phase {
     match state {
         AuthorizationState::WaitTdlibParameters => Phase::Opening,
@@ -322,13 +334,14 @@ impl Client {
         phone: &str,
     ) -> Result<AuthStep, String> {
         let client_id = self.ensure(id, api_id, api_hash).await?;
-        self.wait_until(client_id, OPEN_TIMEOUT, |phase| {
+        self.wait_until(client_id, OPEN_TIMEOUT, |_, phase| {
             matches!(phase, Phase::WaitPhone | Phase::Ready | Phase::Failed(_))
         })
         .await?;
         if matches!(self.phase(client_id), Phase::Ready) {
             return self.authorized(id, client_id).await;
         }
+        let seen = self.generation(client_id);
         let response = tdlib_rs::send_json(
             client_id,
             json!({
@@ -340,7 +353,7 @@ impl Client {
         if let Some(error) = public_error(&response) {
             return Err(error);
         }
-        self.step_after_request(id, client_id).await
+        self.step_after_request(id, client_id, seen).await
     }
 
     pub async fn begin_qr(
@@ -350,7 +363,7 @@ impl Client {
         api_hash: &str,
     ) -> Result<AuthStep, String> {
         let client_id = self.ensure(id, api_id, api_hash).await?;
-        self.wait_until(client_id, OPEN_TIMEOUT, |phase| {
+        self.wait_until(client_id, OPEN_TIMEOUT, |_, phase| {
             matches!(
                 phase,
                 Phase::WaitPhone | Phase::WaitQr(_) | Phase::Ready | Phase::Failed(_)
@@ -363,6 +376,7 @@ impl Client {
         if matches!(self.phase(client_id), Phase::WaitQr(_)) {
             return self.step_from_phase(id, client_id).await;
         }
+        let seen = self.generation(client_id);
         let response = tdlib_rs::send_json(
             client_id,
             json!({
@@ -374,11 +388,12 @@ impl Client {
         if let Some(error) = public_error(&response) {
             return Err(error);
         }
-        self.step_after_request(id, client_id).await
+        self.step_after_request(id, client_id, seen).await
     }
 
     pub async fn submit_code(&self, id: &str, code: &str) -> Result<AuthStep, String> {
         let client_id = self.client_id(id)?;
+        let seen = self.generation(client_id);
         let response = tdlib_rs::send_json(
             client_id,
             json!({"@type": "checkAuthenticationCode", "code": code}),
@@ -387,11 +402,12 @@ impl Client {
         if let Some(error) = public_error(&response) {
             return Err(error);
         }
-        self.step_after_request(id, client_id).await
+        self.step_after_request(id, client_id, seen).await
     }
 
     pub async fn submit_password(&self, id: &str, password: &str) -> Result<AuthStep, String> {
         let client_id = self.client_id(id)?;
+        let seen = self.generation(client_id);
         let response = tdlib_rs::send_json(
             client_id,
             json!({"@type": "checkAuthenticationPassword", "password": password}),
@@ -400,7 +416,7 @@ impl Client {
         if let Some(error) = public_error(&response) {
             return Err(error);
         }
-        self.step_after_request(id, client_id).await
+        self.step_after_request(id, client_id, seen).await
     }
 
     pub async fn poll(&self, id: &str) -> Result<AuthStep, String> {
@@ -459,7 +475,7 @@ impl Client {
             }
         }
         let _ = self
-            .wait_until(client_id, STEP_TIMEOUT, |phase| {
+            .wait_until(client_id, STEP_TIMEOUT, |_, phase| {
                 matches!(phase, Phase::Closed | Phase::WaitPhone | Phase::Failed(_))
             })
             .await;
@@ -480,7 +496,7 @@ impl Client {
         for id in ids {
             let client_id = self.ensure(&id, api_id, api_hash).await?;
             let phase = self
-                .wait_until(client_id, OPEN_TIMEOUT, |phase| {
+                .wait_until(client_id, OPEN_TIMEOUT, |_, phase| {
                     matches!(phase, Phase::Ready | Phase::WaitPhone | Phase::Failed(_))
                 })
                 .await
@@ -515,6 +531,7 @@ impl Client {
                 api_id,
                 api_hash: api_hash.to_owned(),
                 phase,
+                generation: 0,
                 parameters_sent: false,
             },
         );
@@ -527,14 +544,25 @@ impl Client {
         self.shared.ids.lock().expect("ids")
     }
 
-    fn phase(&self, client_id: i32) -> Phase {
+    fn observed(&self, client_id: i32) -> Option<(u64, Phase)> {
         self.shared
             .slots
             .lock()
             .expect("slots")
             .get(&client_id)
-            .map(|slot| slot.phase.borrow().clone())
+            .map(|slot| (slot.generation, slot.phase.borrow().clone()))
+    }
+
+    fn phase(&self, client_id: i32) -> Phase {
+        self.observed(client_id)
+            .map(|(_, phase)| phase)
             .unwrap_or(Phase::Closed)
+    }
+
+    fn generation(&self, client_id: i32) -> u64 {
+        self.observed(client_id)
+            .map(|(generation, _)| generation)
+            .unwrap_or(0)
     }
 
     async fn refresh_phase(&self, client_id: i32) -> Result<Phase, String> {
@@ -552,6 +580,8 @@ impl Client {
                 )
                 .await;
             } else if let Some(slot) = self.shared.slots.lock().expect("slots").get(&client_id) {
+                // A re-read is not a new authorization: keep the generation so
+                // a pending code or password submit keeps waiting.
                 publish(&slot.phase, phase);
             }
         }
@@ -562,12 +592,19 @@ impl Client {
         &self,
         client_id: i32,
         timeout: Duration,
-        pred: impl Fn(&Phase) -> bool,
+        pred: impl Fn(u64, &Phase) -> bool,
     ) -> Result<Phase, String> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            let phase = self.phase(client_id);
-            if pred(&phase) {
+            // Subscribe before reading so a publish between the read and the
+            // wait still wakes this loop.
+            let (mut rx, generation, phase) = {
+                let slots = self.shared.slots.lock().expect("slots");
+                let slot = slots.get(&client_id).ok_or("account is not open")?;
+                let phase = slot.phase.borrow().clone();
+                (slot.phase.subscribe(), slot.generation, phase)
+            };
+            if pred(generation, &phase) {
                 return Ok(phase);
             }
             if std::time::Instant::now() >= deadline {
@@ -575,11 +612,6 @@ impl Client {
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             let slice = remaining.min(Duration::from_millis(500));
-            let mut rx = {
-                let slots = self.shared.slots.lock().expect("slots");
-                let slot = slots.get(&client_id).ok_or("account is not open")?;
-                slot.phase.subscribe()
-            };
             tokio::select! {
                 changed = rx.changed() => {
                     if changed.is_err() {
@@ -590,23 +622,20 @@ impl Client {
                     let _ = tokio::time::timeout(slice, self.refresh_phase(client_id)).await;
                 }
             }
-            if pred(&self.phase(client_id)) {
-                return Ok(self.phase(client_id));
-            }
         }
     }
 
-    async fn step_after_request(&self, id: &str, client_id: i32) -> Result<AuthStep, String> {
-        self.wait_until(client_id, STEP_TIMEOUT, |phase| {
-            matches!(
-                phase,
-                Phase::WaitCode
-                    | Phase::WaitPassword
-                    | Phase::WaitQr(_)
-                    | Phase::Ready
-                    | Phase::Failed(_)
-                    | Phase::Closed
-            )
+    /// `seen` is the generation read before the request was sent. Waiting for
+    /// a phase alone would return WaitCode right after a correct code, before
+    /// TDLib's next authorization update is applied.
+    async fn step_after_request(
+        &self,
+        id: &str,
+        client_id: i32,
+        seen: u64,
+    ) -> Result<AuthStep, String> {
+        self.wait_until(client_id, STEP_TIMEOUT, move |generation, _| {
+            generation != seen
         })
         .await?;
         self.step_from_phase(id, client_id).await
@@ -740,8 +769,8 @@ fn apply_parameter_response(shared: &Shared, client_id: i32, response: &Value) {
     let Some(error) = public_error(response) else {
         return;
     };
-    let slots = shared.slots.lock().expect("slots");
-    let Some(slot) = slots.get(&client_id) else {
+    let mut slots = shared.slots.lock().expect("slots");
+    let Some(slot) = slots.get_mut(&client_id) else {
         return;
     };
     // A second setTdlibParameters is a free-text error. Storing it as Failed
@@ -749,7 +778,7 @@ fn apply_parameter_response(shared: &Shared, client_id: i32, response: &Value) {
     // still recorded while parameters have not been accepted.
     let current = slot.phase.borrow().clone();
     if matches!(current, Phase::Opening) {
-        publish(&slot.phase, Phase::Failed(error));
+        publish_authorization(slot, Phase::Failed(error));
     }
 }
 
@@ -791,8 +820,8 @@ async fn apply_authorization(shared: &Shared, client_id: i32, state: Authorizati
         return;
     }
     let phase = phase_from_authorization(state);
-    if let Some(slot) = shared.slots.lock().expect("slots").get(&client_id) {
-        publish(&slot.phase, phase);
+    if let Some(slot) = shared.slots.lock().expect("slots").get_mut(&client_id) {
+        publish_authorization(slot, phase);
     }
 }
 
@@ -834,8 +863,9 @@ fn message_from_json(value: &Value) -> Option<Message> {
 mod tests {
     use super::{
         apply_authorization, apply_parameter_response, chat_kind, chat_tdlib_id,
-        database_root_from, phase_from_update_json, public_error, publish, send_parameters,
-        valid_account_id, ChatKind, Client, Phase, Shared, Slot, LOG_SILENCE_REQUESTS,
+        database_root_from, phase_from_update_json, public_error, publish, publish_authorization,
+        send_parameters, valid_account_id, Account, AuthStep, Chat, ChatKind, Client, Phase,
+        Shared, Slot, LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
@@ -860,6 +890,7 @@ mod tests {
                 api_id: 1,
                 api_hash: "0123456789abcdef0123456789abcdef".into(),
                 phase: tx,
+                generation: 0,
                 parameters_sent,
             },
         );
@@ -944,6 +975,115 @@ mod tests {
             phase_from_update_json(&json!({"@type": "authorizationStateReady"})),
             Some(Phase::Ready)
         ));
+    }
+
+    fn client_with_slot(client_id: i32, phase: Phase) -> Client {
+        let shared = test_shared();
+        insert_slot(&shared, client_id, phase, true);
+        Client {
+            root: Path::new("/tmp/crm-chat-tdlib-test").to_path_buf(),
+            shared: std::sync::Arc::new(shared),
+            _runtime: None,
+        }
+    }
+
+    fn advance(client: &Client, client_id: i32, phase: Phase) {
+        let mut slots = client.shared.slots.lock().expect("slots");
+        publish_authorization(slots.get_mut(&client_id).expect("slot"), phase);
+    }
+
+    #[tokio::test]
+    async fn a_submitted_code_waits_for_the_next_authorization_state() {
+        let client = client_with_slot(4, Phase::Opening);
+        advance(&client, 4, Phase::WaitCode);
+        assert_eq!(client.generation(4), 1);
+        let seen = client.generation(4);
+        let mut waiting = std::pin::pin!(client.step_after_request("acct", 4, seen));
+        tokio::select! {
+            biased;
+            step = &mut waiting => {
+                panic!("returned the code step it was answering: {step:?}")
+            }
+            _ = tokio::task::yield_now() => {}
+        }
+        // A poll that re-reads WaitCode is not a new state.
+        if let Some(slot) = client.shared.slots.lock().expect("slots").get(&4) {
+            publish(&slot.phase, Phase::WaitCode);
+        }
+        assert_eq!(client.generation(4), seen);
+        advance(&client, 4, Phase::WaitPassword);
+        let step = tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .expect("timed out after the new generation")
+            .expect("step");
+        assert_eq!(
+            step,
+            AuthStep::Password {
+                id: "acct".to_owned()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_qr_link_is_a_new_generation() {
+        let qr = |link: &str| {
+            AuthorizationState::WaitOtherDeviceConfirmation(
+                AuthorizationStateWaitOtherDeviceConfirmation {
+                    link: link.to_owned(),
+                },
+            )
+        };
+        let client = client_with_slot(5, Phase::Opening);
+        apply_authorization(&client.shared, 5, qr("tg://login?token=first")).await;
+        let seen = client.generation(5);
+        let mut waiting = std::pin::pin!(client.step_after_request("acct", 5, seen));
+        tokio::select! {
+            biased;
+            step = &mut waiting => {
+                panic!("returned the existing QR without a new generation: {step:?}")
+            }
+            _ = tokio::task::yield_now() => {}
+        }
+        apply_authorization(&client.shared, 5, qr("tg://login?token=second")).await;
+        let step = tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .expect("timed out after the new generation")
+            .expect("step");
+        assert_eq!(
+            step,
+            AuthStep::Qr {
+                id: "acct".to_owned(),
+                link: "tg://login?token=second".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn desktop_authorized_nests_the_account_and_has_no_top_level_id() {
+        let step = AuthStep::Authorized {
+            account: Account {
+                id: "acct".to_owned(),
+                title: "Ada".to_owned(),
+                chats: vec![Chat {
+                    id: "acct:7".to_owned(),
+                    title: "Ada".to_owned(),
+                    kind: ChatKind::Dialog,
+                }],
+            },
+        };
+        let value = serde_json::to_value(&step).expect("serialize");
+        assert_eq!(
+            value,
+            json!({
+                "_tag": "Authorized",
+                "account": {
+                    "id": "acct",
+                    "title": "Ada",
+                    "chats": [{ "id": "acct:7", "title": "Ada", "kind": "Dialog" }]
+                }
+            })
+        );
+        assert!(value.get("id").is_none());
     }
 
     #[test]
