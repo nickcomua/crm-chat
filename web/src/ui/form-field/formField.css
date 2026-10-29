@@ -1,0 +1,50 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --muted-foreground: #707579;
+  --destructive: #e53935;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --muted-foreground: #aaaaaa;
+  --destructive: #e53935;
+  --border: #0f0f0f;
+  --input: #3a3a3a;
+  --ring: #3390ec;
+}
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  max-width: 20rem;
+}
+
+.ui-field-description,
+.ui-field-error {
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.ui-field-description {
+  color: var(--muted-foreground, #707579);
+}
+
+.ui-field-error {
+  color: var(--destructive, #e53935);
+}
+
+.ui-field-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

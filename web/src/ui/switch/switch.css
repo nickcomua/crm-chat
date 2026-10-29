@@ -1,0 +1,83 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #707579;
+  --border: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #aaaaaa;
+  --border: #0f0f0f;
+  --ring: #3390ec;
+}
+
+.ui-switch {
+  align-items: center;
+  display: flex;
+  gap: 0.625rem;
+}
+
+.ui-switch-control {
+  align-items: center;
+  background: var(--muted-foreground, #707579);
+  border: 0;
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.5rem;
+  padding: 0.125rem;
+  width: 2.75rem;
+}
+
+.ui-switch-control[data-state='checked'] {
+  background: var(--primary, #3390ec);
+}
+
+.ui-switch-thumb {
+  background: #ffffff;
+  border-radius: 999px;
+  display: block;
+  height: 1.25rem;
+  transform: translateX(0);
+  transition: transform 160ms ease;
+  width: 1.25rem;
+}
+
+.ui-switch-control[data-state='checked'] .ui-switch-thumb {
+  transform: translateX(1.25rem);
+}
+
+.ui-switch-control:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #3390ec) 28%, transparent);
+  outline: none;
+}
+
+.ui-switch-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-switch-control[data-readonly] {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch-thumb {
+    transition: none;
+  }
+}
+
+.ui-switch-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

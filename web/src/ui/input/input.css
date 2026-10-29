@@ -1,0 +1,87 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --card: #ffffff;
+  --card-foreground: #222222;
+  --popover: #ffffff;
+  --popover-foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #222222;
+  --muted: #f4f4f5;
+  --muted-foreground: #707579;
+  --accent: #e7f3ff;
+  --accent-foreground: #222222;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --card: #212121;
+  --card-foreground: #ffffff;
+  --popover: #2b2b2b;
+  --popover-foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #2b2b2b;
+  --secondary-foreground: #ffffff;
+  --muted: #181818;
+  --muted-foreground: #aaaaaa;
+  --accent: #2b2b2b;
+  --accent-foreground: #ffffff;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: #0f0f0f;
+  --input: #3a3a3a;
+  --ring: #3390ec;
+}
+
+.ui-input {
+  background: var(--background, #ffffff);
+  border: 1px solid var(--input, #dadce0);
+  border-radius: var(--radius, 0.75rem);
+  box-sizing: border-box;
+  color: var(--foreground, #222222);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.3;
+  padding: 0.625rem 0.75rem;
+  width: 100%;
+}
+
+.ui-input::placeholder {
+  color: var(--muted-foreground, #707579);
+}
+
+.ui-input:focus-visible {
+  border-color: var(--ring, #3390ec);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #3390ec) 28%, transparent);
+  outline: none;
+}
+
+.ui-input[aria-invalid='true'] {
+  border-color: var(--destructive, #e53935);
+}
+
+.ui-input[aria-invalid='true']:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--destructive, #e53935) 28%, transparent);
+}
+
+.ui-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-input-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 20rem;
+}
