@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tdlib_rs::enums::{AuthorizationState, Update};
 use tokio::sync::{mpsc, watch};
 
@@ -78,7 +78,7 @@ struct Shared {
 pub struct Client {
     root: PathBuf,
     shared: Arc<Shared>,
-    _runtime: tokio::runtime::Runtime,
+    _runtime: Option<tokio::runtime::Runtime>,
 }
 
 pub fn database_root_from(data_home: &Path) -> PathBuf {
@@ -94,7 +94,9 @@ pub fn database_root() -> PathBuf {
     let data_home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
             home.join(".local").join("share")
         });
     database_root_from(&data_home)
@@ -112,7 +114,9 @@ pub async fn prove_application_credentials(api_id: i32, api_hash: &str) -> Resul
     let _ = std::fs::remove_dir_all(&root);
     match step {
         Ok(AuthStep::Qr { .. } | AuthStep::Authorized { .. } | AuthStep::Password { .. }) => Ok(()),
-        Ok(AuthStep::Code { .. }) => Err("Telegram asked for a phone code during a QR check".into()),
+        Ok(AuthStep::Code { .. }) => {
+            Err("Telegram asked for a phone code during a QR check".into())
+        }
         Err(error) => Err(error),
     }
 }
@@ -130,9 +134,9 @@ pub fn chat_kind(type_name: &str, is_channel: bool) -> Option<ChatKind> {
 fn valid_account_id(id: &str) -> Result<(), String> {
     let ok = !id.is_empty()
         && id.len() <= 80
-        && id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_');
+        && id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        });
     if ok {
         Ok(())
     } else {
@@ -149,9 +153,9 @@ fn public_error(value: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or("REQUEST_FAILED");
     if !message.is_empty()
-        && message
-            .chars()
-            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_')
+        && message.chars().all(|character| {
+            character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+        })
     {
         Some(message.to_owned())
     } else {
@@ -159,6 +163,37 @@ fn public_error(value: &Value) -> Option<String> {
     }
 }
 
+fn phase_from_state_json(state: &serde_json::Value) -> Option<Phase> {
+    match state.get("@type").and_then(serde_json::Value::as_str)? {
+        "authorizationStateWaitTdlibParameters" => Some(Phase::Opening),
+        "authorizationStateWaitPhoneNumber" => Some(Phase::WaitPhone),
+        "authorizationStateWaitCode" => Some(Phase::WaitCode),
+        "authorizationStateWaitPassword" => Some(Phase::WaitPassword),
+        "authorizationStateWaitOtherDeviceConfirmation" => Some(Phase::WaitQr(
+            state
+                .get("link")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        )),
+        "authorizationStateReady" => Some(Phase::Ready),
+        "authorizationStateClosed"
+        | "authorizationStateClosing"
+        | "authorizationStateLoggingOut" => Some(Phase::Closed),
+        _ => None,
+    }
+}
+
+fn phase_from_update_json(value: &serde_json::Value) -> Option<Phase> {
+    let state = if value.get("@type").and_then(serde_json::Value::as_str)
+        == Some("updateAuthorizationState")
+    {
+        value.get("authorization_state")?
+    } else {
+        value
+    };
+    phase_from_state_json(state)
+}
 fn phase_from_authorization(state: AuthorizationState) -> Phase {
     match state {
         AuthorizationState::WaitTdlibParameters => Phase::Opening,
@@ -169,9 +204,9 @@ fn phase_from_authorization(state: AuthorizationState) -> Phase {
             Phase::WaitQr(confirmation.link)
         }
         AuthorizationState::Ready => Phase::Ready,
-        AuthorizationState::Closed | AuthorizationState::Closing | AuthorizationState::LoggingOut => {
-            Phase::Closed
-        }
+        AuthorizationState::Closed
+        | AuthorizationState::Closing
+        | AuthorizationState::LoggingOut => Phase::Closed,
         AuthorizationState::WaitRegistration(_)
         | AuthorizationState::WaitEmailAddress(_)
         | AuthorizationState::WaitEmailCode(_)
@@ -186,7 +221,8 @@ impl Client {
         if RECEIVER_STARTED.swap(true, Ordering::SeqCst) {
             return Err("TDLib receiver is already running".into());
         }
-        std::fs::create_dir_all(&root).map_err(|_| "could not create the TDLib directory".to_owned())?;
+        std::fs::create_dir_all(&root)
+            .map_err(|_| "could not create the TDLib directory".to_owned())?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_time()
@@ -207,12 +243,10 @@ impl Client {
         });
         std::thread::Builder::new()
             .name("tdlib-receive".into())
-            .spawn(move || {
-                loop {
-                    if let Some(update) = tdlib_rs::receive() {
-                        if tx.blocking_send(update).is_err() {
-                            break;
-                        }
+            .spawn(move || loop {
+                if let Some(update) = tdlib_rs::receive() {
+                    if tx.blocking_send(update).is_err() {
+                        break;
                     }
                 }
             })
@@ -220,10 +254,20 @@ impl Client {
         Ok(Self {
             root,
             shared,
-            _runtime: runtime,
+            _runtime: Some(runtime),
         })
     }
+}
 
+impl Drop for Client {
+    fn drop(&mut self) {
+        if let Some(runtime) = self._runtime.take() {
+            std::thread::spawn(move || drop(runtime)).join().ok();
+        }
+    }
+}
+
+impl Client {
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -319,6 +363,7 @@ impl Client {
 
     pub async fn poll(&self, id: &str) -> Result<AuthStep, String> {
         let client_id = self.client_id(id)?;
+        let _ = tokio::time::timeout(Duration::from_secs(2), self.refresh_phase(client_id)).await;
         self.step_from_phase(id, client_id).await
     }
 
@@ -439,6 +484,7 @@ impl Client {
         if let Some(error) = public_error(&response) {
             return Err(error);
         }
+        send_parameters(&self.shared, client_id).await;
         Ok(client_id)
     }
 
@@ -456,31 +502,62 @@ impl Client {
             .unwrap_or(Phase::Closed)
     }
 
+    async fn refresh_phase(&self, client_id: i32) -> Result<Phase, String> {
+        let response =
+            tdlib_rs::send_json(client_id, json!({"@type": "getAuthorizationState"})).await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        if let Some(phase) = phase_from_update_json(&response) {
+            if matches!(phase, Phase::Opening) {
+                apply_authorization(
+                    &self.shared,
+                    client_id,
+                    AuthorizationState::WaitTdlibParameters,
+                )
+                .await;
+            } else if let Some(slot) = self.shared.slots.lock().expect("slots").get(&client_id) {
+                let _ = slot.phase.send(phase);
+            }
+        }
+        Ok(self.phase(client_id))
+    }
+
     async fn wait_until(
         &self,
         client_id: i32,
         timeout: Duration,
         pred: impl Fn(&Phase) -> bool,
     ) -> Result<Phase, String> {
-        let mut rx = {
-            let slots = self.shared.slots.lock().expect("slots");
-            let slot = slots.get(&client_id).ok_or("account is not open")?;
-            slot.phase.subscribe()
-        };
-        let wait = async {
-            loop {
-                let current = rx.borrow().clone();
-                if pred(&current) {
-                    return current;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let phase = self.phase(client_id);
+            if pred(&phase) {
+                return Ok(phase);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("Telegram did not answer in time".into());
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let slice = remaining.min(Duration::from_millis(500));
+            let mut rx = {
+                let slots = self.shared.slots.lock().expect("slots");
+                let slot = slots.get(&client_id).ok_or("account is not open")?;
+                slot.phase.subscribe()
+            };
+            tokio::select! {
+                changed = rx.changed() => {
+                    if changed.is_err() {
+                        return Err("account is not open".into());
+                    }
                 }
-                if rx.changed().await.is_err() {
-                    return Phase::Closed;
+                _ = tokio::time::sleep(slice) => {
+                    let _ = tokio::time::timeout(slice, self.refresh_phase(client_id)).await;
                 }
             }
-        };
-        match tokio::time::timeout(timeout, wait).await {
-            Ok(phase) => Ok(phase),
-            Err(_) => Err("Telegram did not answer in time".into()),
+            if pred(&self.phase(client_id)) {
+                return Ok(self.phase(client_id));
+            }
         }
     }
 
@@ -516,8 +593,16 @@ impl Client {
     }
 
     async fn authorized(&self, id: &str, client_id: i32) -> Result<AuthStep, String> {
-        let account = self.read_account(id, client_id).await?;
-        Ok(AuthStep::Authorized { account })
+        match tokio::time::timeout(Duration::from_secs(5), self.read_account(id, client_id)).await {
+            Ok(Ok(account)) => Ok(AuthStep::Authorized { account }),
+            Ok(Err(_)) | Err(_) => Ok(AuthStep::Authorized {
+                account: Account {
+                    id: id.to_owned(),
+                    title: "Telegram account".to_owned(),
+                    chats: Vec::new(),
+                },
+            }),
+        }
     }
 
     async fn read_account(&self, id: &str, client_id: i32) -> Result<Account, String> {
@@ -616,37 +701,41 @@ impl Client {
     }
 }
 
+async fn send_parameters(shared: &Shared, client_id: i32) {
+    let parameters = {
+        let slots = shared.slots.lock().expect("slots");
+        let Some(slot) = slots.get(&client_id) else {
+            return;
+        };
+        json!({
+            "@type": "setTdlibParameters",
+            "use_test_dc": false,
+            "database_directory": slot.directory,
+            "files_directory": slot.directory.join("files"),
+            "database_encryption_key": "",
+            "use_file_database": true,
+            "use_chat_info_database": true,
+            "use_message_database": true,
+            "use_secret_chats": false,
+            "api_id": slot.api_id,
+            "api_hash": slot.api_hash,
+            "system_language_code": "en",
+            "device_model": "CRM Chat",
+            "system_version": "",
+            "application_version": "0.1.0",
+        })
+    };
+    let response = tdlib_rs::send_json(client_id, parameters).await;
+    if let Some(error) = public_error(&response) {
+        if let Some(slot) = shared.slots.lock().expect("slots").get(&client_id) {
+            let _ = slot.phase.send(Phase::Failed(error));
+        }
+    }
+}
+
 async fn apply_authorization(shared: &Shared, client_id: i32, state: AuthorizationState) {
     if matches!(state, AuthorizationState::WaitTdlibParameters) {
-        let parameters = {
-            let slots = shared.slots.lock().expect("slots");
-            let Some(slot) = slots.get(&client_id) else {
-                return;
-            };
-            json!({
-                "@type": "setTdlibParameters",
-                "use_test_dc": false,
-                "database_directory": slot.directory,
-                "files_directory": slot.directory.join("files"),
-                "database_encryption_key": "",
-                "use_file_database": true,
-                "use_chat_info_database": true,
-                "use_message_database": true,
-                "use_secret_chats": false,
-                "api_id": slot.api_id,
-                "api_hash": slot.api_hash,
-                "system_language_code": "en",
-                "device_model": "CRM Chat",
-                "system_version": "",
-                "application_version": "0.1.0",
-            })
-        };
-        let response = tdlib_rs::send_json(client_id, parameters).await;
-        if let Some(error) = public_error(&response) {
-            if let Some(slot) = shared.slots.lock().expect("slots").get(&client_id) {
-                let _ = slot.phase.send(Phase::Failed(error));
-            }
-        }
+        send_parameters(shared, client_id).await;
         return;
     }
     let phase = phase_from_authorization(state);
@@ -691,15 +780,58 @@ fn message_from_json(value: &Value) -> Option<Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::{chat_kind, chat_tdlib_id, database_root_from, public_error, valid_account_id, ChatKind};
+    use super::{
+        chat_kind, chat_tdlib_id, database_root_from, phase_from_update_json, public_error,
+        valid_account_id, ChatKind, Phase,
+    };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn authorization_updates_move_the_phase_from_qr_to_ready() {
+        let updates = [
+            json!({
+                "@type": "updateAuthorizationState",
+                "authorization_state": {"@type": "authorizationStateWaitTdlibParameters"}
+            }),
+            json!({
+                "@type": "updateAuthorizationState",
+                "authorization_state": {"@type": "authorizationStateWaitPhoneNumber"}
+            }),
+            json!({
+                "@type": "updateAuthorizationState",
+                "authorization_state": {
+                    "@type": "authorizationStateWaitOtherDeviceConfirmation",
+                    "link": "tg://login?token=abc"
+                }
+            }),
+            json!({
+                "@type": "updateAuthorizationState",
+                "authorization_state": {"@type": "authorizationStateReady"}
+            }),
+        ];
+        let (tx, rx) = tokio::sync::watch::channel(Phase::Opening);
+        let mut seen = Vec::new();
+        for update in updates {
+            let phase = phase_from_update_json(&update).expect("authorization update");
+            seen.push(phase.clone());
+            tx.send(phase).ok();
+        }
+        assert!(matches!(seen[0], Phase::Opening));
+        assert!(matches!(seen[1], Phase::WaitPhone));
+        assert!(matches!(seen[2], Phase::WaitQr(ref link) if link == "tg://login?token=abc"));
+        assert!(matches!(seen[3], Phase::Ready));
+        assert!(matches!(rx.borrow().clone(), Phase::Ready));
+    }
 
     #[test]
     fn classifies_the_three_chat_kinds() {
         assert_eq!(chat_kind("chatTypePrivate", false), Some(ChatKind::Dialog));
         assert_eq!(chat_kind("chatTypeSecret", false), Some(ChatKind::Dialog));
-        assert_eq!(chat_kind("chatTypeBasicGroup", false), Some(ChatKind::Group));
+        assert_eq!(
+            chat_kind("chatTypeBasicGroup", false),
+            Some(ChatKind::Group)
+        );
         assert_eq!(
             chat_kind("chatTypeSupergroup", false),
             Some(ChatKind::Group)
