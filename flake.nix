@@ -225,6 +225,46 @@
           export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
           exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
         '';
+        uiScreenshots = pkgs.writeShellScript "crm-chat-ui-screenshots" ''
+          set -euo pipefail
+          root="''${1:-$PWD}"
+          port=$(${pkgs.python3}/bin/python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+          out="$root/docs/screenshots"
+          mkdir -p "$out"
+          web="$root/web"
+          if [ ! -x "$web/node_modules/.bin/vite" ]; then
+            ln -sfn ${integrationNodeModules}/node_modules "$web/node_modules"
+          fi
+          cd "$web"
+          ${integrationNodeModules}/node_modules/.bin/vite --host 127.0.0.1 --port "$port" --strictPort &
+          vite_pid=$!
+          cleanup() {
+            kill "$vite_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          ready=0
+          for _ in $(seq 1 50); do
+            if ! kill -0 "$vite_pid" 2>/dev/null; then
+              echo "vite exited before the preview page was ready" >&2
+              exit 1
+            fi
+            if ${pkgs.curl}/bin/curl -sf "http://127.0.0.1:$port/preview.html" | grep -q 'entry.preview'; then
+              ready=1
+              break
+            fi
+            sleep 0.2
+          done
+          if [ "$ready" != 1 ]; then
+            echo "vite did not serve the preview page" >&2
+            exit 1
+          fi
+          chromium=$(echo ${pkgs.playwright-driver.browsers}/chromium-*/chrome-linux64/chrome)
+          export PLAYWRIGHT_CORE=${pkgs.playwright-driver}/index.mjs
+          export CHROMIUM="$chromium"
+          export UI_BASE="http://127.0.0.1:$port"
+          export UI_OUT="$out"
+          ${pkgs.nodejs}/bin/node "$root/integration/capture-ui.mjs"
+        '';
       in {
         formatter = pkgs.alejandra;
         packages = {
@@ -328,6 +368,10 @@
         apps.integration-test = {
           type = "app";
           program = "${integrationTest}";
+        };
+        apps.ui-screenshots = {
+          type = "app";
+          program = "${uiScreenshots}";
         };
       }
     );

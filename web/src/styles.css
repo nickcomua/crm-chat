@@ -1,5 +1,9 @@
 @import 'tailwindcss';
 
+html {
+  color-scheme: dark;
+}
+
 .app-wallpaper {
   background-color: #0e0e14;
   background-image: url('/wallpaper.svg?v=4');

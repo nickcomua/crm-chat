@@ -57,4 +57,9 @@ export default defineConfig({
   optimizeDeps: {
     entries: ['src/entry.ts'],
   },
+  build: {
+    rollupOptions: {
+      input: 'index.html',
+    },
+  },
 })
