@@ -20,11 +20,12 @@
       {
         "title": "",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "devtools": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost https://*.web.telegram.org wss://*.web.telegram.org https://*.telegram.org wss://*.telegram.org; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {

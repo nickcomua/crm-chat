@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Keep the `devtools` feature off so release builds cannot open the web inspector.
 tauri = { version = "2", features = [] }
 crm-chat-telegram = { path = "../crates/telegram" }
 serde = { version = "1", features = ["derive"] }

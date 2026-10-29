@@ -54,17 +54,24 @@ scope_env() {
     const required = ['TG_ID', 'TG_HASH']
     const integration = [
       'TG_API_ID_1',
-      'TG_API_HASH_1',
-      'TG_SESSION_FILE_1',
       'TG_USER_ID_1',
       'TG_API_ID_2',
-      'TG_API_HASH_2',
-      'TG_SESSION_FILE_2',
-      'TG_SESSION_GRAMMERS_1',
       'TG_USER_NUMERIC_ID_1',
-      'TG_SESSION_GRAMMERS_2',
       'TG_USER_NUMERIC_ID_2',
     ]
+    const unused = [
+      'TG_API_HASH_1',
+      'TG_API_HASH_2',
+      'TG_SESSION_FILE_1',
+      'TG_SESSION_FILE_2',
+      'TG_SESSION_GRAMMERS_1',
+      'TG_SESSION_GRAMMERS_2',
+    ]
+    const loadedUnused = unused.filter((key) => process.env[key])
+    if (loadedUnused.length > 0) {
+      console.error(mode + ' scope: loaded unused secrets ' + loadedUnused.join(', '))
+      process.exit(1)
+    }
     const missing = required.filter((key) => !process.env[key])
     if (missing.length > 0) {
       console.error(mode + ' scope: failed to resolve ' + missing.join(', '))
