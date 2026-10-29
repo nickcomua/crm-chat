@@ -257,13 +257,15 @@ export const submitPassword = async (
   return toAuthResult(await sessionFor(id).submitPassword(password))
 }
 
-export const pollQr = async (id: string): Promise<AuthResult> => {
+export const pollAccount = async (id: string): Promise<AuthResult> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
     return nativeAuth(await invoke('telegram_poll', { id }))
   }
   return toAuthResult(await sessionFor(id).poll())
 }
+
+export const pollQr = pollAccount
 
 export const removeConnection = async (id: string): Promise<void> => {
   const invoke = tauriInvoke()

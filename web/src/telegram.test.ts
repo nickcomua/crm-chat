@@ -204,18 +204,18 @@ describe('TDLib browser protocol', () => {
     Reflect.set(globalThis, '__TAURI_INTERNALS__', {
       invoke: (command: string, args?: Record<string, unknown>) => {
         calls.push({ command, args })
-        if (command === 'telegram_begin_login') {
+        if (command === 'telegram_begin_login' || command === 'telegram_poll') {
           return Promise.resolve({ _tag: 'Code', id: 'acct' })
         }
         return Promise.resolve([])
       },
     })
-    const { beginLogin, loadMessages, restoreAccounts } = await import(
-      './telegram'
-    )
+    const { beginLogin, loadMessages, pollAccount, restoreAccounts } =
+      await import('./telegram')
     await beginLogin('acct', 123, 'hash', '+100', false)
     await restoreAccounts(123, 'hash')
     await loadMessages('acct', '7')
+    await pollAccount('acct')
     Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
     expect(calls).toEqual([
       {
@@ -235,6 +235,10 @@ describe('TDLib browser protocol', () => {
       {
         command: 'telegram_messages',
         args: { id: 'acct', chatId: '7' },
+      },
+      {
+        command: 'telegram_poll',
+        args: { id: 'acct' },
       },
     ])
   })

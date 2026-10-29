@@ -21,8 +21,9 @@ import {
   beginLogin,
   desktopFailure,
   loadAccount,
-  pollQr,
+  pollAccount,
   removeConnection,
+  restoreAccounts,
   submitCode,
   submitPassword,
 } from './telegram'
@@ -68,6 +69,7 @@ export const Message = defineMessageUnion({
   SelectedAccount: { id: Schema.String },
   ClickedRefresh: {},
   CompletedLoadAppCredentials: { credentials: RuntimeCredentials },
+  CompletedRestore: { accounts: Schema.Array(Account) },
   SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
   FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
   SucceededRefresh: { account: Account },
@@ -155,6 +157,19 @@ export const SubmitAnswer = Command.define('SubmitAnswer', {
             sourceId: id,
           }),
         ),
+      ),
+    ),
+})
+export const Restore = Command.define('Restore', {
+  args: { apiId: Schema.String, apiHash: Secret },
+  messages: [Message.CompletedRestore],
+  execute: ({ apiId, apiHash }) =>
+    Effect.tryPromise(() =>
+      restoreAccounts(Number(apiId), Redacted.value(apiHash)),
+    ).pipe(
+      Effect.map(accounts => Message.CompletedRestore({ accounts })),
+      Effect.catch(() =>
+        Effect.succeed(Message.CompletedRestore({ accounts: [] })),
       ),
     ),
 })
@@ -302,8 +317,31 @@ export const update = (model: Model, message: Message) =>
               appCredentials: () => 'Supplied',
               apiId: () => credentials.apiId,
               apiHash: () => credentials.apiHash,
+              status: () => 'Busy',
             }),
+            commands: [
+              Restore({
+                apiId: credentials.apiId,
+                apiHash: credentials.apiHash,
+              }),
+            ],
           },
+    CompletedRestore: ({ accounts }) => {
+      const first = accounts[0]
+      if (first === undefined || model.login._tag !== 'Editing') {
+        return { model: modifyFields(model, { status: () => 'Ready' }) }
+      }
+      return {
+        model: modifyFields(model, {
+          login: () => Login.Closed(),
+          status: () => 'Busy',
+          error: () => '',
+          accounts: () => accounts,
+          selectedAccountId: () => first.id,
+        }),
+        commands: [Refresh({ id: first.id })],
+      }
+    },
     SucceededAuthenticate: ({ result, sourceId }) => {
       if (
         sourceId !== '' &&
@@ -709,14 +747,19 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
     { id: Schema.String },
     {
       modelToDependencies: model => ({
-        id: model.login._tag === 'Qr' ? model.login.id : '',
+        id:
+          model.login._tag === 'Qr' ||
+          model.login._tag === 'Code' ||
+          model.login._tag === 'Password'
+            ? model.login.id
+            : '',
       }),
       dependenciesToStream: ({ id }) =>
         id === ''
           ? Stream.empty
           : Stream.fromEffectSchedule(
               Effect.sleep('2 seconds').pipe(
-                Effect.andThen(Effect.tryPromise(() => pollQr(id))),
+                Effect.andThen(Effect.tryPromise(() => pollAccount(id))),
                 Effect.map(result =>
                   Message.SucceededAuthenticate({ result, sourceId: id }),
                 ),

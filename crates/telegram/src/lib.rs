@@ -554,8 +554,12 @@ impl Client {
             }),
         )
         .await;
-        if let Some(error) = public_error(&chats) {
-            return Err(error);
+        if public_error(&chats).is_some() {
+            return Ok(Account {
+                id: id.to_owned(),
+                title,
+                chats: Vec::new(),
+            });
         }
         let ids = chats
             .get("chat_ids")

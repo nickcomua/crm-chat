@@ -9,6 +9,7 @@ import {
   Message,
   type Model,
   Refresh,
+  Restore,
   initialModel,
   update,
 } from './main'
@@ -134,6 +135,44 @@ test('a failed login can be retried without losing application credentials', () 
   )
 })
 
+test('a QR poll that reaches Ready opens the chat list', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        login: () => ({ _tag: 'Qr', id: 'qr', image: 'old' }),
+        accounts: () => [],
+        selectedAccountId: () => '',
+      }),
+    ),
+    message(
+      Message.SucceededAuthenticate({
+        sourceId: 'qr',
+        result: AuthResult.Qr({ id: 'qr', image: 'refreshed' }),
+      }),
+    ),
+    model(current => {
+      expect(current.login).toEqual({
+        _tag: 'Qr',
+        id: 'qr',
+        image: 'refreshed',
+      })
+    }),
+    message(
+      Message.SucceededAuthenticate({
+        sourceId: 'qr',
+        result: AuthResult.Authorized({ account: first }),
+      }),
+    ),
+    Command.resolve(Refresh, Message.SucceededRefresh({ account: first })),
+    model(current => {
+      expect(current.login._tag).toBe('Closed')
+      expect(current.accounts).toEqual([first])
+      expect(current.selectedAccountId).toBe('first')
+    }),
+  )
+})
+
 test('a successful QR poll clears a transient authentication error', () => {
   story(
     update,
@@ -161,7 +200,7 @@ test('a successful QR poll clears a transient authentication error', () => {
   )
 })
 
-test('runtime application credentials replace manual entry and are kept in the model', () => {
+test('startup restores a saved account after credentials load', () => {
   story(
     update,
     given(initialModel),
@@ -176,7 +215,14 @@ test('runtime application credentials replace manual entry and are kept in the m
     ),
     model(current => {
       expect(current.appCredentials).toBe('Supplied')
-      expect(current.apiId).toBe('12345')
+      expect(current.status).toBe('Busy')
+    }),
+    Command.resolve(Restore, Message.CompletedRestore({ accounts: [first] })),
+    Command.resolve(Refresh, Message.SucceededRefresh({ account: first })),
+    model(current => {
+      expect(current.login._tag).toBe('Closed')
+      expect(current.accounts).toEqual([first])
+      expect(current.selectedAccountId).toBe('first')
     }),
     message(
       Message.CompletedLoadAppCredentials({
@@ -184,8 +230,7 @@ test('runtime application credentials replace manual entry and are kept in the m
       }),
     ),
     model(current => {
-      expect(current.appCredentials).toBe('Supplied')
-      expect(current.apiId).toBe('12345')
+      expect(current.accounts).toEqual([first])
     }),
   )
 })
