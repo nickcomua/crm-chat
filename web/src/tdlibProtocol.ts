@@ -214,9 +214,11 @@ const messageFrom = (value: unknown): Message | undefined => {
 }
 
 const STEP_TIMEOUT = 60_000
+const DISCARD_TIMEOUT = 2_000
 
 export class TdAccount {
   phase: Phase = { _tag: 'Opening' }
+  chatListError: string | undefined = undefined
   private readonly waiters: Array<() => void> = []
 
   constructor(
@@ -269,13 +271,7 @@ export class TdAccount {
   }
 
   async untilOpened(timeout: number): Promise<Phase> {
-    return this.waitFor(
-      phase =>
-        phase._tag === 'Ready' ||
-        phase._tag === 'WaitPhone' ||
-        phase._tag === 'Failed',
-      timeout,
-    )
+    return this.waitFor(phase => phase._tag !== 'Opening', timeout)
   }
 
   private async step(): Promise<AuthStep> {
@@ -352,7 +348,9 @@ export class TdAccount {
   }
 
   async submitCode(code: string): Promise<AuthStep> {
-    return this.afterRequest(this.send({ '@type': 'checkAuthenticationCode', code }))
+    return this.afterRequest(
+      this.send({ '@type': 'checkAuthenticationCode', code }),
+    )
   }
 
   async submitPassword(password: string): Promise<AuthStep> {
@@ -366,6 +364,7 @@ export class TdAccount {
   }
 
   async readAccount(): Promise<Account> {
+    this.chatListError = undefined
     const me = await this.send({ '@type': 'getMe' })
     await this.send({
       '@type': 'loadChats',
@@ -376,7 +375,16 @@ export class TdAccount {
       '@type': 'getChats',
       chat_list: { '@type': 'chatListMain' },
       limit: 100,
+    }).catch((error: unknown) => {
+      this.chatListError =
+        error instanceof Error && error.message !== ''
+          ? error.message
+          : 'REQUEST_FAILED'
+      return undefined
     })
+    if (chats === undefined) {
+      return { id: this.id, title: accountTitle(me), chats: [] }
+    }
     const ids = field(chats, 'chat_ids')
     const parsed: Array<Chat> = []
     if (Array.isArray(ids)) {
@@ -427,17 +435,32 @@ export class TdAccount {
     if (!Array.isArray(messages)) {
       return []
     }
-    return messages.flatMap(value => {
-      const message = messageFrom(value)
-      return message === undefined ? [] : [message]
-    }).reverse()
+    return messages
+      .flatMap(value => {
+        const message = messageFrom(value)
+        return message === undefined ? [] : [message]
+      })
+      .reverse()
   }
 
   async logout(): Promise<void> {
     await this.send({ '@type': 'logOut' }).catch(() => undefined)
     await this.waitFor(
-      phase => phase._tag === 'Closed' || phase._tag === 'WaitPhone' || phase._tag === 'Failed',
+      phase =>
+        phase._tag === 'Closed' ||
+        phase._tag === 'WaitPhone' ||
+        phase._tag === 'Failed',
     ).catch(() => undefined)
+    await this.sink.close()
+  }
+
+  async discard(): Promise<void> {
+    await Promise.race([
+      this.send({ '@type': 'logOut' }).catch(() => undefined),
+      new Promise<void>(resolve => {
+        setTimeout(resolve, DISCARD_TIMEOUT)
+      }),
+    ])
     await this.sink.close()
   }
 }

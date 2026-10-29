@@ -3,8 +3,8 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import QRCode from 'qrcode'
 
 import type { Chat } from './generated/core'
-import { browserRuntime } from './tdlibWasm'
 import { type AuthStep, TdAccount } from './tdlibProtocol'
+import { browserRuntime } from './tdlibWasm'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -134,7 +134,9 @@ export const toAuthResult = async (step: AuthStep): Promise<AuthResult> => {
 export const loadMessages = async (
   id: string,
   chatId: string,
-): Promise<Array<{ id: string; text: string; outgoing: boolean; date: number }>> => {
+): Promise<
+  Array<{ id: string; text: string; outgoing: boolean; date: number }>
+> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
     const value = await invoke('telegram_messages', { id, chatId })
@@ -199,7 +201,12 @@ export const loadAccount = async (id: string): Promise<Account> => {
   if (invoke !== undefined) {
     return decodeAccount(await invoke('telegram_load_account', { id }))
   }
-  return sessionFor(id).readAccount()
+  const session = sessionFor(id)
+  const account = await session.readAccount()
+  if (session.chatListError !== undefined) {
+    throw new Error(session.chatListError)
+  }
+  return account
 }
 
 export const beginLogin = async (
@@ -227,8 +234,10 @@ export const beginLogin = async (
     const step = qr ? await account.beginQr() : await account.beginPhone(phone)
     return await toAuthResult(step)
   } catch (error) {
-    sessions.delete(id)
-    await account.logout()
+    if (account.phase._tag !== 'Ready') {
+      sessions.delete(id)
+      await account.logout()
+    }
     throw error
   }
 }

@@ -15,6 +15,7 @@ import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
 import * as Button from '@foldkit/ui/button'
 import * as Input from '@foldkit/ui/input'
 
+import { readAppCredentials } from './appCredentials'
 import {
   Account,
   AuthResult,
@@ -27,7 +28,6 @@ import {
   submitCode,
   submitPassword,
 } from './telegram'
-import { readAppCredentials } from './appCredentials'
 
 const Secret = Schema.Redacted(Schema.String)
 const RuntimeCredentials = defineTaggedUnion({
@@ -446,7 +446,7 @@ const manualApplicationFields = (model: Model, h: HtmlBuilder<Message>) =>
       h.p(
         [],
         [
-          'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
+          'Use your application credentials from my.telegram.org. A signed-in account stays in this browser.',
         ],
       ),
       Input.view(

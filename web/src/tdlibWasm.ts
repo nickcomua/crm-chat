@@ -18,7 +18,11 @@ type Cwrap = (
 
 type SyncFs = {
   mkdir: (path: string) => void
-  mount: (filesystem: unknown, options: Record<string, unknown>, path: string) => void
+  mount: (
+    filesystem: unknown,
+    options: Record<string, unknown>,
+    path: string,
+  ) => void
   filesystems: { IDBFS?: unknown }
   syncfs: (populate: boolean, callback: (error: unknown) => void) => void
   readdir: (path: string) => Array<string>
@@ -58,11 +62,24 @@ const mkdir = (fs: SyncFs, path: string): void => {
   }
 }
 
+const syncFailure = (error: unknown): Error => {
+  const detail =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : ''
+  if (detail === '') {
+    return new Error('could not sync the TDLib database')
+  }
+  return new Error(`could not sync the TDLib database: ${detail}`)
+}
+
 const syncFs = (fs: SyncFs, populate: boolean): Promise<void> =>
   new Promise((resolve, reject) => {
     fs.syncfs(populate, error => {
       if (error) {
-        reject(new Error('could not sync the TDLib database'))
+        reject(syncFailure(error))
         return
       }
       resolve()
@@ -97,13 +114,13 @@ type ClientSlot = {
 export class TdWasmRuntime {
   private module: TdModule | undefined
   private readonly slots = new Map<string, ClientSlot>()
-  private readonly pending = new Map<
-    string,
-    (value: unknown) => void
-  >()
+  private readonly pending = new Map<string, (value: unknown) => void>()
   private extra = 0
   private syncTimer: ReturnType<typeof setInterval> | undefined
+  private syncTail: Promise<void> = Promise.resolve()
+  private lifecycleBound = false
   private opening: Promise<void> | undefined
+  syncError: unknown = undefined
 
   private functions(): {
     create: () => number
@@ -168,9 +185,8 @@ export class TdWasmRuntime {
     created.FS.mount(filesystem, {}, '/tdlib')
     await syncFs(created.FS, true)
     this.module = created
-    this.syncTimer = setInterval(() => {
-      void syncFs(created.FS, false).catch(() => undefined)
-    }, 5000)
+    this.armSyncTimer()
+    this.bindLifecycle()
     this.receiveSoon()
   }
 
@@ -239,7 +255,11 @@ export class TdWasmRuntime {
       })
       return
     }
+    const wasReady = slot.account.phase._tag === 'Ready'
     slot.account.apply(value)
+    if (!wasReady && slot.account.phase._tag === 'Ready') {
+      this.flushSoon()
+    }
   }
 
   private dispatch(clientId: number, query: TdQuery): Promise<unknown> {
@@ -285,7 +305,10 @@ export class TdWasmRuntime {
     this.slots.set(id, { account, apiHash, apiId, clientId, directory })
     this.functions().send(
       clientId,
-      JSON.stringify({ '@type': 'setLogVerbosityLevel', new_verbosity_level: 0 }),
+      JSON.stringify({
+        '@type': 'setLogVerbosityLevel',
+        new_verbosity_level: 0,
+      }),
     )
     this.receiveSoon()
     return account
@@ -305,24 +328,80 @@ export class TdWasmRuntime {
     const accounts: Array<TdAccount> = []
     for (const id of ids) {
       const account = await this.open(id, apiId, apiHash)
-      const phase = await account.untilOpened(OPEN_TIMEOUT).catch(() => account.phase)
+      const phase = await account
+        .untilOpened(OPEN_TIMEOUT)
+        .catch(() => account.phase)
       if (phase._tag === 'Ready') {
         accounts.push(account)
+      } else {
+        await account.discard()
       }
     }
     return accounts
   }
 
-  async sync(): Promise<void> {
-    const filesystem = this.module?.FS
-    if (filesystem === undefined) {
+  private flushSoon(): void {
+    void this.sync().catch(error => {
+      this.syncError = error
+    })
+  }
+
+  private bindLifecycle(): void {
+    if (this.lifecycleBound) {
       return
     }
-    await syncFs(filesystem, false)
-    if (this.syncTimer !== undefined) {
-      clearInterval(this.syncTimer)
-      this.syncTimer = undefined
+    this.lifecycleBound = true
+    window.addEventListener('pagehide', () => {
+      this.flushSoon()
+    })
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this.flushSoon()
+      }
+    })
+  }
+
+  private clearSyncTimer(): void {
+    if (this.syncTimer === undefined) {
+      return
     }
+    clearInterval(this.syncTimer)
+    this.syncTimer = undefined
+  }
+
+  private armSyncTimer(): void {
+    this.clearSyncTimer()
+    if (this.module === undefined) {
+      return
+    }
+    this.syncTimer = setInterval(() => {
+      this.flushSoon()
+    }, 5000)
+  }
+
+  async sync(): Promise<void> {
+    const run = this.syncTail.then(async () => {
+      const filesystem = this.module?.FS
+      if (filesystem === undefined) {
+        return
+      }
+      this.clearSyncTimer()
+      try {
+        await syncFs(filesystem, false)
+        this.syncError = undefined
+      } catch (error) {
+        const failure = error instanceof Error ? error : syncFailure(error)
+        this.syncError = failure
+        throw failure
+      } finally {
+        this.armSyncTimer()
+      }
+    })
+    this.syncTail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
   }
 }
 
