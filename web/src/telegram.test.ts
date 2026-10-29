@@ -1,220 +1,289 @@
-import bigInt from 'big-integer'
-import { Buffer as BrowserBuffer } from 'buffer/'
 import QRCode from 'qrcode'
-import { Api, TelegramClient } from 'telegram'
-import { getDialogs as collectDialogs } from 'telegram/client/dialogs'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
-  beginLogin,
-  classifyPeer,
-  connectionOptions,
-  loadAccount,
-  pollQr,
-  removeConnection,
-  submitCode,
-  submitPassword,
-} from './telegram'
+  TdAccount,
+  type TdQuery,
+  type TdSink,
+  chatKind,
+  publicError,
+} from './tdlibProtocol'
+import { desktopFailure, toAuthResult } from './telegram'
 
-vi.mock('telegram/Password', () => ({
-  computeCheck: vi.fn(async () => new Api.InputCheckPasswordEmpty()),
-}))
+type Plan = {
+  response?: unknown
+  update?: unknown
+}
 
-const user = new Api.User({
-  id: bigInt(1),
-  firstName: 'Ada',
-  accessHash: bigInt(2),
-})
-const codeSent = { phoneCodeHash: 'hash', isCodeViaApp: true }
-const me = vi.spyOn(TelegramClient.prototype, 'getMe').mockResolvedValue(user)
-const connect = vi
-  .spyOn(TelegramClient.prototype, 'connect')
-  .mockResolvedValue(true)
-const destroy = vi
-  .spyOn(TelegramClient.prototype, 'destroy')
-  .mockResolvedValue()
-const sendCode = vi
-  .spyOn(TelegramClient.prototype, 'sendCode')
-  .mockResolvedValue(codeSent)
-const invoke = vi.spyOn(TelegramClient.prototype, 'invoke')
-const getDialogs = vi.spyOn(TelegramClient.prototype, 'getDialogs')
-const switchDc = vi
-  .spyOn(TelegramClient.prototype, '_switchDC')
-  .mockResolvedValue(true)
-
-afterEach(async () => {
-  await Promise.all(['one', 'two', 'qr', 'failed'].map(removeConnection))
-  vi.clearAllMocks()
+const authorization = (name: string, extra?: Record<string, unknown>) => ({
+  '@type': 'updateAuthorizationState',
+  authorization_state: { '@type': name, ...extra },
 })
 
-describe('browser adapter', () => {
-  test('forces secure WebSockets and retains independent account connections', async () => {
-    expect(connectionOptions.useWSS).toBe(true)
-    expect(connectionOptions.networkSocket.name).toBe('PromisedWebSockets')
-    await beginLogin('one', 123, 'hash', '+310001', false)
-    await beginLogin('two', 123, 'hash', '+310002', false)
-    expect(connect.mock.instances[0]).not.toBe(connect.mock.instances[1])
-    invoke.mockResolvedValue(new Api.auth.Authorization({ user }))
-    await submitCode('one', '11111')
-    await submitCode('two', '22222')
-    expect(invoke.mock.calls[0]?.[0]).toMatchObject({
-      phoneNumber: '+310001',
-      phoneCode: '11111',
-    })
-    expect(invoke.mock.calls[1]?.[0]).toMatchObject({
-      phoneNumber: '+310002',
-      phoneCode: '22222',
-    })
-    expect(me).toHaveBeenCalledTimes(2)
+const scripted = (
+  plans: Array<Plan>,
+): { account: TdAccount; sent: Array<TdQuery> } => {
+  const sent: Array<TdQuery> = []
+  let account: TdAccount | undefined
+  const sink: TdSink = {
+    send: query => {
+      sent.push(query)
+      const plan = plans.shift()
+      queueMicrotask(() => {
+        if (plan?.update !== undefined && account !== undefined) {
+          account.apply(plan.update)
+        }
+      })
+      return Promise.resolve(plan?.response ?? { '@type': 'ok' })
+    },
+    close: () => Promise.resolve(),
+  }
+  account = new TdAccount(sink, 'one')
+  return { account, sent }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('TDLib browser protocol', () => {
+  test('keeps two accounts on independent clients', async () => {
+    const first = scripted([
+      { update: authorization('authorizationStateWaitCode') },
+    ])
+    const second = scripted([
+      { update: authorization('authorizationStateWaitCode') },
+    ])
+    first.account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    second.account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    await first.account.beginPhone('+100')
+    await second.account.beginPhone('+200')
+    expect(first.sent[0]).toMatchObject({ phone_number: '+100' })
+    expect(second.sent[0]).toMatchObject({ phone_number: '+200' })
   })
 
-  test('phone code transitions to 2FA and uses Telegram SRP check', async () => {
-    await beginLogin('one', 123, 'hash', '+310001', false)
-    invoke.mockRejectedValueOnce(new Error('SESSION_PASSWORD_NEEDED'))
-    await expect(submitCode('one', '11111')).resolves.toEqual({
+  test('phone code transitions to 2FA and then an account', async () => {
+    const phone = scripted([
+      { update: authorization('authorizationStateWaitCode') },
+    ])
+    phone.account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    await expect(phone.account.beginPhone('+100')).resolves.toEqual({
+      _tag: 'Code',
+      id: 'one',
+    })
+    const coded = scripted([
+      { update: authorization('authorizationStateWaitPassword') },
+    ])
+    coded.account.apply(authorization('authorizationStateWaitCode'))
+    await expect(coded.account.submitCode('11111')).resolves.toEqual({
       _tag: 'Password',
       id: 'one',
     })
-    invoke.mockResolvedValueOnce(
-      new Api.account.Password({
-        newAlgo: new Api.PasswordKdfAlgoUnknown(),
-        newSecureAlgo: new Api.SecurePasswordKdfAlgoUnknown(),
-        secureRandom: Buffer.alloc(32),
-      }),
-    )
-    invoke.mockResolvedValueOnce(new Api.auth.Authorization({ user }))
-    await expect(submitPassword('one', 'password')).resolves.toMatchObject({
+    const unlocked = scripted([
+      { update: authorization('authorizationStateReady') },
+      {
+        response: {
+          '@type': 'user',
+          first_name: 'Ada',
+          last_name: 'Lovelace',
+        },
+      },
+      { response: { '@type': 'chats', chat_ids: [] } },
+    ])
+    unlocked.account.apply(authorization('authorizationStateWaitPassword'))
+    await expect(unlocked.account.submitPassword('secret')).resolves.toMatchObject({
       _tag: 'Authorized',
+      account: { title: 'Ada Lovelace' },
     })
-    expect(invoke.mock.calls.at(-1)?.[0]).toBeInstanceOf(Api.auth.CheckPassword)
+    expect(coded.sent[0]).toMatchObject({
+      '@type': 'checkAuthenticationCode',
+      code: '11111',
+    })
+    expect(unlocked.sent[0]).toMatchObject({
+      '@type': 'checkAuthenticationPassword',
+      password: 'secret',
+    })
   })
 
-  test('QR refresh, migration, and password challenge', async () => {
-    const token = Buffer.from([251, 255])
-    // Exercise the actual browser polyfill rather than Node's richer Buffer API.
-    vi.spyOn(token, 'toString').mockImplementation(encoding =>
-      BrowserBuffer.from([251, 255]).toString(encoding),
-    )
+  test('QR link is rendered and a later poll can demand a password', async () => {
     const renderQr = vi.spyOn(QRCode, 'toDataURL')
-    invoke.mockResolvedValueOnce(
-      new Api.auth.LoginToken({
-        token,
-        expires: 123,
-      }),
-    )
-    await expect(
-      beginLogin('qr', 123, 'hash', '', true),
-    ).resolves.toMatchObject({
+    const { account } = scripted([
+      {
+        update: authorization('authorizationStateWaitOtherDeviceConfirmation', {
+          link: 'tg://login?token=abc',
+        }),
+      },
+    ])
+    account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    const step = await account.beginQr()
+    await expect(toAuthResult(step)).resolves.toMatchObject({
       _tag: 'Qr',
+      id: 'one',
       image: expect.stringContaining('data:image/png;base64,'),
     })
-    expect(renderQr).toHaveBeenCalledWith('tg://login?token=-_8')
-    invoke.mockResolvedValueOnce(
-      new Api.auth.LoginTokenMigrateTo({
-        dcId: 4,
-        token: Buffer.from('migrated'),
-      }),
-    )
-    invoke.mockRejectedValueOnce(new Error('SESSION_PASSWORD_NEEDED'))
-    await expect(pollQr('qr')).resolves.toEqual({ _tag: 'Password', id: 'qr' })
-    expect(switchDc).toHaveBeenCalledWith(4)
-    invoke.mockResolvedValueOnce(
-      new Api.auth.LoginTokenSuccess({
-        authorization: new Api.auth.Authorization({ user }),
-      }),
-    )
-    await expect(pollQr('qr')).resolves.toMatchObject({ _tag: 'Authorized' })
+    expect(renderQr).toHaveBeenCalledWith('tg://login?token=abc')
+    account.apply(authorization('authorizationStateWaitPassword'))
+    await expect(account.poll()).resolves.toEqual({
+      _tag: 'Password',
+      id: 'one',
+    })
   })
 
-  test('failed connection is destroyed and invalid codes remain retryable', async () => {
-    sendCode.mockRejectedValueOnce(new Error('PHONE_NUMBER_INVALID'))
-    await expect(
-      beginLogin('failed', 123, 'hash', 'bad', false),
-    ).rejects.toThrow('PHONE_NUMBER_INVALID')
-    expect(destroy).toHaveBeenCalledOnce()
-    await beginLogin('one', 123, 'hash', '+310001', false)
-    invoke.mockRejectedValueOnce(new Error('PHONE_CODE_INVALID'))
-    await expect(submitCode('one', 'bad')).rejects.toThrow('PHONE_CODE_INVALID')
-    invoke.mockResolvedValueOnce(new Api.auth.Authorization({ user }))
-    await expect(submitCode('one', 'good')).resolves.toMatchObject({
+  test('invalid phone is reported and an invalid code stays retryable', async () => {
+    const { account } = scripted([
+      { response: { '@type': 'error', message: 'PHONE_NUMBER_INVALID' } },
+    ])
+    account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    await expect(account.beginPhone('bad')).rejects.toThrow(
+      'PHONE_NUMBER_INVALID',
+    )
+    const retry = scripted([
+      { response: { '@type': 'error', message: 'PHONE_CODE_INVALID' } },
+      { update: authorization('authorizationStateReady') },
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'chats', chat_ids: [] } },
+    ])
+    retry.account.apply(authorization('authorizationStateWaitCode'))
+    await expect(retry.account.submitCode('bad')).rejects.toThrow(
+      'PHONE_CODE_INVALID',
+    )
+    await expect(retry.account.submitCode('good')).resolves.toMatchObject({
       _tag: 'Authorized',
     })
   })
 
-  test('loads ordinary dialogs through GramJS and excludes migrated basic groups', async () => {
-    await beginLogin('one', 123, 'hash', '+310001', false)
-    getDialogs.mockImplementationOnce(function (this: TelegramClient, params) {
-      return collectDialogs(this, params ?? {})
-    })
-    const peer = new Api.PeerUser({ userId: user.id })
-    const oldGroupPeer = new Api.PeerChat({ chatId: bigInt(3) })
-    invoke.mockResolvedValueOnce(
-      new Api.messages.Dialogs({
-        dialogs: [peer, oldGroupPeer].map(
-          dialogPeer =>
-            new Api.Dialog({
-              peer: dialogPeer,
-              topMessage: 1,
-              readInboxMaxId: 0,
-              readOutboxMaxId: 0,
-              unreadCount: 0,
-              unreadMentionsCount: 0,
-              unreadReactionsCount: 0,
-              notifySettings: new Api.PeerNotifySettings({}),
-            }),
-        ),
-        messages: [peer, oldGroupPeer].map(
-          peerId => new Api.Message({ id: 1, peerId, date: 0, message: '' }),
-        ),
-        chats: [
-          new Api.Chat({
-            id: bigInt(3),
-            title: 'Migrated group',
-            photo: new Api.ChatPhotoEmpty(),
-            participantsCount: 0,
-            date: 0,
-            version: 0,
-            migratedTo: new Api.InputChannel({
-              channelId: bigInt(4),
-              accessHash: bigInt(5),
-            }),
-          }),
-        ],
-        users: [user],
-      }),
-    )
-    const account = await loadAccount('one')
-    expect(Array.from(account.chats)).toEqual([
-      { id: '1:1', title: 'Ada', kind: 'Dialog' },
+  test('maps private chats, groups, and channels and skips unknown peers', async () => {
+    expect(chatKind('chatTypePrivate', false)).toBe('Dialog')
+    expect(chatKind('chatTypeSecret', false)).toBe('Dialog')
+    expect(chatKind('chatTypeBasicGroup', false)).toBe('Group')
+    expect(chatKind('chatTypeSupergroup', false)).toBe('Group')
+    expect(chatKind('chatTypeSupergroup', true)).toBe('Channel')
+    expect(chatKind('chatTypeUnknown', false)).toBeUndefined()
+    const { account } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [7, 8, 9] } },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Ada',
+          type: { '@type': 'chatTypePrivate' },
+        },
+      },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Team',
+          type: { '@type': 'chatTypeSupergroup', is_channel: false },
+        },
+      },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'News',
+          type: { '@type': 'chatTypeSupergroup', is_channel: true },
+        },
+      },
     ])
-    expect(getDialogs).toHaveBeenCalledWith({})
+    await expect(account.readAccount()).resolves.toEqual({
+      id: 'one',
+      title: 'Ada',
+      chats: [
+        { id: 'one:7', title: 'Ada', kind: 'Dialog' },
+        { id: 'one:8', title: 'Team', kind: 'Group' },
+        { id: 'one:9', title: 'News', kind: 'Channel' },
+      ],
+    })
   })
-})
 
-test('users, basic groups, supergroups and broadcasts have distinct core kinds', () => {
-  expect(classifyPeer(user)).toBe('Dialog')
-  expect(
-    classifyPeer(new Api.ChatForbidden({ id: bigInt(2), title: 'Group' })),
-  ).toBe('Group')
-  expect(
-    classifyPeer(
-      new Api.ChannelForbidden({
-        id: bigInt(3),
-        accessHash: bigInt(4),
-        title: 'Supergroup',
-        megagroup: true,
-      }),
-    ),
-  ).toBe('Group')
-  expect(
-    classifyPeer(
-      new Api.ChannelForbidden({
-        id: bigInt(5),
-        accessHash: bigInt(6),
-        title: 'News',
-        broadcast: true,
-      }),
-    ),
-  ).toBe('Channel')
-  expect(classifyPeer(new Api.ChatEmpty({ id: bigInt(7) }))).toBeUndefined()
+  test('desktop commands use Tauri camelCase argument names', async () => {
+    const calls: Array<{
+      command: string
+      args: Record<string, unknown> | undefined
+    }> = []
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {
+      invoke: (command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args })
+        if (command === 'telegram_begin_login') {
+          return Promise.resolve({ _tag: 'Code', id: 'acct' })
+        }
+        return Promise.resolve([])
+      },
+    })
+    const { beginLogin, loadMessages, restoreAccounts } = await import(
+      './telegram'
+    )
+    await beginLogin('acct', 123, 'hash', '+100', false)
+    await restoreAccounts(123, 'hash')
+    await loadMessages('acct', '7')
+    Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+    expect(calls).toEqual([
+      {
+        command: 'telegram_begin_login',
+        args: {
+          id: 'acct',
+          phone: '+100',
+          qr: false,
+          apiId: '123',
+          apiHash: 'hash',
+        },
+      },
+      {
+        command: 'telegram_restore',
+        args: { apiId: '123', apiHash: 'hash' },
+      },
+      {
+        command: 'telegram_messages',
+        args: { id: 'acct', chatId: '7' },
+      },
+    ])
+  })
+
+  test('shows the desktop error string instead of a generic failure', () => {
+    expect(desktopFailure('TDLib: database is locked')).toBe(
+      'TDLib: database is locked',
+    )
+    expect(desktopFailure(new Error('PHONE_CODE_INVALID'))).toBe(
+      'The code is incorrect. Try again.',
+    )
+    expect(desktopFailure({})).toBe(
+      'Telegram could not complete the request. Retry or cancel and start again.',
+    )
+  })
+
+  test('reads message text and drops free-text errors', async () => {
+    expect(
+      publicError({ '@type': 'error', message: 'PHONE_CODE_INVALID' }),
+    ).toBe('PHONE_CODE_INVALID')
+    expect(publicError({ '@type': 'error', message: 'phone +1 secret' })).toBe(
+      'REQUEST_FAILED',
+    )
+    const { account } = scripted([
+      {
+        response: {
+          '@type': 'messages',
+          messages: [
+            {
+              '@type': 'message',
+              id: 2,
+              is_outgoing: false,
+              date: 20,
+              content: { '@type': 'messageText', text: { text: 'later' } },
+            },
+            {
+              '@type': 'message',
+              id: 1,
+              is_outgoing: true,
+              date: 10,
+              content: { '@type': 'messageText', text: { text: 'earlier' } },
+            },
+          ],
+        },
+      },
+    ])
+    await expect(account.messages('one:7')).resolves.toEqual([
+      { id: '1', text: 'earlier', outgoing: true, date: 10 },
+      { id: '2', text: 'later', outgoing: false, date: 20 },
+    ])
+  })
 })

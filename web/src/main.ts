@@ -19,6 +19,7 @@ import {
   Account,
   AuthResult,
   beginLogin,
+  desktopFailure,
   loadAccount,
   pollQr,
   removeConnection,
@@ -75,29 +76,7 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-const loginError = (error: unknown): string => {
-  if (error instanceof Error) {
-    if (error.message.includes('PHONE_CODE_INVALID')) {
-      return 'The code is incorrect. Try again.'
-    }
-    if (error.message.includes('PHONE_CODE_EXPIRED')) {
-      return 'The code expired. Cancel and start again.'
-    }
-    if (error.message.includes('PASSWORD_HASH_INVALID')) {
-      return 'The password is incorrect. Try again.'
-    }
-    if (error.message.includes('FLOOD_WAIT')) {
-      return 'Telegram requires a wait before trying again.'
-    }
-    if (error.message.includes('API_ID_INVALID')) {
-      return 'Check your Telegram API ID and hash.'
-    }
-    if (error.message.includes('PHONE_NUMBER_INVALID')) {
-      return 'Enter your phone number with its country code.'
-    }
-  }
-  return 'Telegram could not complete the request. Retry or cancel and start again.'
-}
+const loginError = desktopFailure
 export const LoadAppCredentials = Command.define('LoadAppCredentials', {
   messages: [Message.CompletedLoadAppCredentials],
   execute: Effect.tryPromise(() => readAppCredentials()).pipe(

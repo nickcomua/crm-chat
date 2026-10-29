@@ -49,6 +49,11 @@
           fenix.packages.${system}.targets.wasm32-unknown-unknown.latest.rust-std
         ];
         tdlib = pkgs.callPackage ./nix/tdlib.nix {};
+        emscripten = pkgs.callPackage ./nix/emscripten.nix {};
+        tdlibWasm = pkgs.callPackage ./nix/tdlib-wasm.nix {
+          inherit emscripten;
+          tdlibSrc = tdlib.src;
+        };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         nixSrc = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -110,6 +115,10 @@
             "--include=dev"
             "--legacy-peer-deps"
           ];
+          preBuild = pkgs.lib.optionalString (system == "x86_64-linux") ''
+            mkdir -p public/tdlib
+            cp ${tdlibWasm}/td_wasm.js ${tdlibWasm}/td_wasm.wasm public/tdlib/
+          '';
           installPhase = ''
             runHook preInstall
             mkdir -p $out
@@ -275,11 +284,15 @@
         );
       in {
         formatter = pkgs.alejandra;
-        packages = {
-          inherit website wasm32 tdlib;
-          inherit desktop;
-          default = desktop;
-        };
+        packages =
+          {
+            inherit website wasm32 tdlib;
+            inherit desktop;
+            default = desktop;
+          }
+          // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+            inherit emscripten tdlibWasm;
+          };
         checks = {
           nix-fmt =
             pkgs.runCommand "crm-chat-nix-fmt" {
@@ -299,6 +312,19 @@
             '';
           inherit website wasm32 coreTypes telegramTests;
           inherit desktop;
+          tdlibWasm =
+            if system == "x86_64-linux"
+            then
+              pkgs.runCommand "tdlib-wasm-check" {} ''
+                test -s ${tdlibWasm}/td_wasm.js
+                test -s ${tdlibWasm}/td_wasm.wasm
+                od -An -tx1 -N4 ${tdlibWasm}/td_wasm.wasm | grep -q '00 61 73 6d'
+                grep -q createTdwebModule ${tdlibWasm}/td_wasm.js
+                grep -q IDBFS ${tdlibWasm}/td_wasm.js
+                grep -q ' 3.1.1 ' ${tdlibWasm}/emscripten-version.txt
+                touch $out
+              ''
+            else pkgs.runCommand "tdlib-wasm-skipped" {} "touch $out";
           desktop-starts =
             pkgs.runCommand "crm-chat-desktop-starts" {
               nativeBuildInputs = [

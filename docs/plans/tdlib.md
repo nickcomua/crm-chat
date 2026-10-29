@@ -30,14 +30,13 @@ session entries. If the directory has no logged-in account, it prints
 writes account `1` or `2` into the same directory. It does not create, delete,
 or change BWS entries.
 
-A pure tdlib-rs wasm32-unknown-unknown build is not possible: tdlib-rs links
-libtdjson. The desktop page calls the native crate through Tauri. The browser
-page still uses GramJS until the emscripten package exists.
+The browser uses the same TDLib version, built with emscripten 3.1.1. The
+pin is `nix/emscripten.nix`: emsdk's linux release
+`5ee64de9809592480da01372880ea11debd6c740`. `nix build .#tdlibWasm` runs
+TDLib's `example/web` scripts: OpenSSL 1.1.0l, then `td_wasm`. The page loads
+`/tdlib/td_wasm.js` and persists each account under IndexedDB by mounting
+Emscripten's IDBFS at `/tdlib/<account-id>`, the same filesystem mount tdweb
+uses. There is no GramJS package and no grammers fallback.
 
-BLOCKED: tdlib wasm. TDLib's `example/web/build-tdlib.sh` requires emscripten
-3.1.1 exactly. The pinned nixpkgs emscripten is 6.0.9, and that script exits
-before configure when the version does not match. Smallest options: pin emsdk
-3.1.1 in the flake and follow `example/web` (OpenSSL 1.1.0l, then `td_wasm`);
-or patch that build for emscripten 6 and cache it; or build `td_wasm` once
-with emsdk 3.1.1 and vendor the artifacts. Do not fall back to GramJS or
-grammers for the browser path.
+`nix flake check` builds that package on x86_64-linux and checks the wasm
+magic, `createTdwebModule`, the IDBFS link, and emscripten 3.1.1.
