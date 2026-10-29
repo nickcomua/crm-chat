@@ -157,6 +157,83 @@ pub fn chat_kind(type_name: &str, is_channel: bool) -> Option<ChatKind> {
     }
 }
 
+/// The desktop `Authorized` value is `{_tag: "Authorized", account}` with the
+/// account id, title, and chats nested. Code and Password carry a top-level id.
+/// Authorized does not.
+pub fn require_desktop_authorized(account: &Account) -> Result<(), String> {
+    let value = serde_json::to_value(&AuthStep::Authorized {
+        account: account.clone(),
+    })
+    .map_err(|_| "could not encode Authorized".to_owned())?;
+    let step = value
+        .as_object()
+        .ok_or("Authorized is not an object".to_owned())?;
+    if step.len() != 2 || step.get("_tag").and_then(Value::as_str) != Some("Authorized") {
+        return Err("desktop auth step is not Authorized".into());
+    }
+    let encoded = step
+        .get("account")
+        .and_then(Value::as_object)
+        .ok_or("Authorized is missing the account".to_owned())?;
+    if encoded.len() != 3 {
+        return Err("Authorized account does not match the desktop shape".into());
+    }
+    let id = encoded
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Authorized account id is missing".to_owned())?;
+    if id != account.id || valid_account_id(id).is_err() {
+        return Err("Authorized account id is not a local identifier".into());
+    }
+    let title = encoded
+        .get("title")
+        .and_then(Value::as_str)
+        .ok_or("Authorized account has no title".to_owned())?;
+    if title.is_empty() || title != account.title {
+        return Err("Authorized account has no title".into());
+    }
+    let chats = encoded
+        .get("chats")
+        .and_then(Value::as_array)
+        .ok_or("Authorized account has no chats".to_owned())?;
+    if chats.len() != account.chats.len() {
+        return Err("Authorized chats do not match the desktop shape".into());
+    }
+    for (chat, expected) in chats.iter().zip(&account.chats) {
+        let chat = chat
+            .as_object()
+            .ok_or("Authorized chat does not match the desktop shape".to_owned())?;
+        if chat.len() != 3 {
+            return Err("Authorized chat does not match the desktop shape".into());
+        }
+        let chat_id = chat
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat id is missing".to_owned())?;
+        let chat_title = chat
+            .get("title")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat has no title".to_owned())?;
+        let kind = chat
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat kind is missing".to_owned())?;
+        if chat_id != expected.id || chat_title != expected.title || chat_title.is_empty() {
+            return Err("Authorized chat does not match the desktop shape".into());
+        }
+        chat_tdlib_id(&account.id, chat_id)?;
+        let expected_kind = match expected.kind {
+            ChatKind::Dialog => "Dialog",
+            ChatKind::Group => "Group",
+            ChatKind::Channel => "Channel",
+        };
+        if kind != expected_kind {
+            return Err("Authorized chat kind is not a desktop kind".into());
+        }
+    }
+    Ok(())
+}
+
 fn valid_account_id(id: &str) -> Result<(), String> {
     let ok = !id.is_empty()
         && id.len() <= 80
@@ -864,8 +941,8 @@ mod tests {
     use super::{
         apply_authorization, apply_parameter_response, chat_kind, chat_tdlib_id,
         database_root_from, phase_from_update_json, public_error, publish, publish_authorization,
-        send_parameters, valid_account_id, Account, AuthStep, Chat, ChatKind, Client, Phase,
-        Shared, Slot, LOG_SILENCE_REQUESTS,
+        require_desktop_authorized, send_parameters, valid_account_id, Account, AuthStep, Chat,
+        ChatKind, Client, Phase, Shared, Slot, LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
@@ -1059,31 +1136,39 @@ mod tests {
     }
 
     #[test]
-    fn desktop_authorized_nests_the_account_and_has_no_top_level_id() {
-        let step = AuthStep::Authorized {
-            account: Account {
-                id: "acct".to_owned(),
-                title: "Ada".to_owned(),
-                chats: vec![Chat {
-                    id: "acct:7".to_owned(),
+    fn desktop_authorized_shape_is_a_nested_account() {
+        let account = Account {
+            id: "account-1".to_owned(),
+            title: "Telegram account".to_owned(),
+            chats: vec![
+                Chat {
+                    id: "account-1:7".to_owned(),
                     title: "Ada".to_owned(),
                     kind: ChatKind::Dialog,
-                }],
-            },
+                },
+                Chat {
+                    id: "account-1:8".to_owned(),
+                    title: "Team".to_owned(),
+                    kind: ChatKind::Group,
+                },
+                Chat {
+                    id: "account-1:9".to_owned(),
+                    title: "News".to_owned(),
+                    kind: ChatKind::Channel,
+                },
+            ],
         };
-        let value = serde_json::to_value(&step).expect("serialize");
-        assert_eq!(
-            value,
-            json!({
-                "_tag": "Authorized",
-                "account": {
-                    "id": "acct",
-                    "title": "Ada",
-                    "chats": [{ "id": "acct:7", "title": "Ada", "kind": "Dialog" }]
-                }
-            })
-        );
+        require_desktop_authorized(&account).unwrap();
+        let value = serde_json::to_value(AuthStep::Authorized {
+            account: account.clone(),
+        })
+        .unwrap();
+        assert_eq!(value["_tag"], "Authorized");
         assert!(value.get("id").is_none());
+        assert_eq!(value["account"]["id"], "account-1");
+        assert_eq!(value["account"]["chats"][0]["kind"], "Dialog");
+        assert_eq!(value["account"]["chats"][1]["kind"], "Group");
+        assert_eq!(value["account"]["chats"][2]["kind"], "Channel");
     }
 
     #[test]

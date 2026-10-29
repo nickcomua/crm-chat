@@ -67,6 +67,8 @@
           (pkgs.lib.fileset.difference
             (craneLib.fileset.commonCargoSources ./.)
             (pkgs.lib.fileset.maybeMissing ./integration))
+          ./integration/desktop/Cargo.toml
+          ./integration/desktop/src
           ./third_party/tdlib-rs/tdlib-rs/tl
         ];
         src = pkgs.lib.fileset.toSource {
@@ -231,6 +233,9 @@
             buildPhaseCargoCommand = ''
               export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
               cargo test -p crm-chat-core -p crm-chat-telegram --locked
+              # Offline half of the desktop integration test. Credentials and
+              # saved accounts stay in the integration-test app (network, BWS).
+              cargo run -p crm-chat-integration-desktop --locked -- shape
             '';
             installPhaseCommand = ''
               mkdir -p $out
@@ -316,6 +321,7 @@
           inherit website wasm32 desktop;
           coreTypes = cargoTests;
           telegramTests = cargoTests;
+          integrationOffline = cargoTests;
           # Same fetch for native and wasm, and the vendored scheme is that
           # commit's td_api.tl. This does not build either library.
           tdlib-pin =
