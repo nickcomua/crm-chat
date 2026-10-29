@@ -24,12 +24,12 @@ Login was phone-code or QR, then dialog sync, history scan, live updates, and me
 
 Public `nickcomua/crm-chat`, empty history. `main` moves only by pull-request merge. A ruleset blocks direct pushes, including from admins, and requires the `check` workflow. Do not merge to `main` and do not push `main`. Do not open or update a pull request until the local CI job has passed: `nix flake check`, `nix build .#website .#desktop`, and `nix develop -c true`.
 
-- `web/` is the web shell: a Foldkit page that renders the fixture chat list. Read `web/FOLDKIT.md` and `web/AGENTS.md` before changing it. No React. Effect code starts at `web/node_modules/effect/AGENTS.md`.
-- `desktop/` is the desktop shell: Tauri 2, packaged with crane as `cargo tauri build --no-bundle`. The Nix package is the app. AppImage and deb are withdrawn. It shows the fixture because it opens the same page.
+- `web/` is the web shell: a Foldkit page with browser Telegram login and real chat lists. Read `web/FOLDKIT.md` and `web/AGENTS.md` before changing it. No React. Effect code starts at `web/node_modules/effect/AGENTS.md`.
+- `desktop/` is the desktop shell: Tauri 2, packaged with crane as `cargo tauri build --no-bundle`. The Nix package is the app. AppImage and deb are withdrawn. It opens the same page; native Telegram TCP is KAM-43.
 - `crates/core` is the shared Rust core (`crm-chat-core`). It compiles for Linux and wasm32. TypeScript types are generated from it and committed at `web/src/generated/core.ts`. The core exports types only: no fixture function, no chat-list API, no sockets, no grammers. Design: `docs/plans/shared-core.md`.
 - Rust checks use crane, fenix, and `cargo clippy --all-targets -- --deny warnings`.
 - One dev shell: `nix develop`. Acceptance is `nix build` of the website and desktop package, plus `nix flake check`. A launched window is not the acceptance test.
 - No Convex, no Clerk, no worker, and no copied Telegram credentials. `secretspec.toml` declares only an optional `CACHIX_AUTH_TOKEN`.
 - Foldkit skills are real files in `.agents/skills/`. `web/repos/foldkit` is an ignored local reference, not a submodule.
 
-The fixture is local page data checked against the generated types. Login, a live chat list, history, send, and media are later tickets.
+The browser adapter is `web/src/telegram.ts` (KAM-42): direct Telegram WSS with GramJS, separate clients per account, phone/QR/2FA, and real dialog loading. Credentials and sessions live in memory for the tab; reloading requires login again. The page collects a Telegram application API ID/hash from the person using it. No credentials are bundled. History, send, and media remain later tickets.

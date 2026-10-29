@@ -15,8 +15,11 @@
   "dependencies": {
     "@effect/platform-browser": "4.0.0",
     "@foldkit/ui": "0.169.0",
+    "buffer": "^6.0.3",
     "effect": "4.0.0",
-    "foldkit": "0.169.0"
+    "foldkit": "0.169.0",
+    "qrcode": "^1.5.4",
+    "telegram": "^2.26.22"
   },
   "devDependencies": {
     "@effect/eslint-plugin": "^0.3.2",
@@ -26,6 +29,7 @@
     "@foldkit/oxlint-plugin": "0.15.3",
     "@foldkit/vite-plugin": "0.28.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/qrcode": "^1.5.6",
     "@typescript-eslint/parser": "^8.72.1",
     "@typescript-eslint/utils": "^8.72.1",
     "@typescript/native": "npm:typescript@^7.0.2",
@@ -37,6 +41,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vite": "^8.3.1",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^5.0.2"
   }
 }
