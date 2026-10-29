@@ -107,6 +107,7 @@ export class TdWasmRuntime {
 
   private functions(): {
     create: () => number
+    execute: (query: string) => string
     send: (clientId: number, query: string) => void
     receive: () => string
   } {
@@ -115,12 +116,17 @@ export class TdWasmRuntime {
       throw new Error('TDLib is not loaded')
     }
     const create = module.cwrap('td_emscripten_create_client_id', 'number', [])
+    const execute = module.cwrap('td_emscripten_execute', 'string', ['string'])
     const send = module.cwrap('td_emscripten_send', null, ['number', 'string'])
     const receive = module.cwrap('td_emscripten_receive', 'string', [])
     return {
       create: () => {
         const id = create()
         return typeof id === 'number' ? id : 0
+      },
+      execute: query => {
+        const value = execute(query)
+        return typeof value === 'string' ? value : ''
       },
       send: (clientId, query) => {
         send(clientId, query)
@@ -129,6 +135,29 @@ export class TdWasmRuntime {
         const value = receive()
         return typeof value === 'string' ? value : ''
       },
+    }
+  }
+
+  private silenceLogs(): void {
+    const execute = this.functions().execute
+    const queries = [
+      { '@type': 'setLogVerbosityLevel', new_verbosity_level: 0 },
+      {
+        '@type': 'setLogStream',
+        log_stream: { '@type': 'logStreamEmpty' },
+      },
+    ]
+    for (const query of queries) {
+      const raw = execute(JSON.stringify(query))
+      let value: unknown
+      try {
+        value = JSON.parse(raw)
+      } catch {
+        throw new Error('could not silence TDLib logs')
+      }
+      if (!isRecord(value) || value['@type'] !== 'ok') {
+        throw new Error('could not silence TDLib logs')
+      }
     }
   }
 
@@ -168,6 +197,7 @@ export class TdWasmRuntime {
     created.FS.mount(filesystem, {}, '/tdlib')
     await syncFs(created.FS, true)
     this.module = created
+    this.silenceLogs()
     this.syncTimer = setInterval(() => {
       void syncFs(created.FS, false).catch(() => undefined)
     }, 5000)
@@ -269,6 +299,7 @@ export class TdWasmRuntime {
       return existing.account
     }
     await this.openModule()
+    this.silenceLogs()
     const clientId = this.functions().create()
     const directory = databaseDirectory(id)
     const sink: TdSink = {
@@ -283,10 +314,6 @@ export class TdWasmRuntime {
     }
     const account = new TdAccount(sink, id)
     this.slots.set(id, { account, apiHash, apiId, clientId, directory })
-    this.functions().send(
-      clientId,
-      JSON.stringify({ '@type': 'setLogVerbosityLevel', new_verbosity_level: 0 }),
-    )
     this.receiveSoon()
     return account
   }
