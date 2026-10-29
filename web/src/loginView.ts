@@ -171,7 +171,7 @@ const manualApplicationFields = (model: Model, h: HtmlBuilder<Message>) =>
       h.p(
         [h.Class('text-center text-[14px] leading-5 text-[#b7b7c4]')],
         [
-          'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
+          'Use your application credentials from my.telegram.org. A signed-in account stays in this browser.',
         ],
       ),
       textField(model, h, {

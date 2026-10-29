@@ -8,7 +8,24 @@ import {
   chatKind,
   publicError,
 } from './tdlibProtocol'
-import { desktopFailure, toAuthResult } from './telegram'
+import {
+  beginLogin,
+  desktopFailure,
+  loadAccount,
+  toAuthResult,
+} from './telegram'
+
+const { openAccount } = vi.hoisted(() => ({
+  openAccount: vi.fn(),
+}))
+
+vi.mock('./tdlibWasm', () => ({
+  browserRuntime: {
+    open: openAccount,
+    restore: () => Promise.resolve([]),
+    sync: () => Promise.resolve(),
+  },
+}))
 
 type Plan = {
   response?: unknown
@@ -43,6 +60,10 @@ const scripted = (
 }
 
 afterEach(() => {
+  if (vi.isFakeTimers()) {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  }
   vi.restoreAllMocks()
 })
 
@@ -91,7 +112,9 @@ describe('TDLib browser protocol', () => {
       { response: { '@type': 'chats', chat_ids: [] } },
     ])
     unlocked.account.apply(authorization('authorizationStateWaitPassword'))
-    await expect(unlocked.account.submitPassword('secret')).resolves.toMatchObject({
+    await expect(
+      unlocked.account.submitPassword('secret'),
+    ).resolves.toMatchObject({
       _tag: 'Authorized',
       account: { title: 'Ada Lovelace' },
     })
@@ -194,6 +217,125 @@ describe('TDLib browser protocol', () => {
         { id: 'one:9', title: 'News', kind: 'Channel' },
       ],
     })
+  })
+
+  test('an authorized session stays signed in when the chat list fails', async () => {
+    const { account, sent } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'error', message: 'CHAT_LIST_FAILED' } },
+    ])
+    account.apply(authorization('authorizationStateReady'))
+    await expect(account.poll()).resolves.toEqual({
+      _tag: 'Authorized',
+      account: { id: 'one', title: 'Ada', chats: [] },
+    })
+    expect(account.chatListError).toBe('CHAT_LIST_FAILED')
+    expect(sent.map(query => query['@type'])).not.toContain('logOut')
+  })
+
+  test('a chat-list failure does not log out the browser session', async () => {
+    const sent: Array<TdQuery> = []
+    let closed = false
+    const sink: TdSink = {
+      send: query => {
+        sent.push(query)
+        if (query['@type'] === 'getMe') {
+          return Promise.resolve({
+            '@type': 'user',
+            first_name: 'Ada',
+          })
+        }
+        if (query['@type'] === 'getChats') {
+          return Promise.resolve({
+            '@type': 'error',
+            message: 'CHAT_LIST_FAILED',
+          })
+        }
+        return Promise.resolve({ '@type': 'ok' })
+      },
+      close: () => {
+        closed = true
+        return Promise.resolve()
+      },
+    }
+    const account = new TdAccount(sink, 'acct')
+    account.apply(authorization('authorizationStateReady'))
+    openAccount.mockResolvedValue(account)
+    await expect(beginLogin('acct', 1, 'hash', '+100', false)).resolves.toEqual(
+      {
+        _tag: 'Authorized',
+        account: { id: 'acct', title: 'Ada', chats: [] },
+      },
+    )
+    expect(sent.map(query => query['@type'])).not.toContain('logOut')
+    expect(closed).toBe(false)
+    await expect(loadAccount('acct')).rejects.toThrow('CHAT_LIST_FAILED')
+    expect(sent.map(query => query['@type'])).not.toContain('logOut')
+    expect(closed).toBe(false)
+  })
+
+  test('an invalid phone still logs out before the account is authorized', async () => {
+    const sent: Array<TdQuery> = []
+    const sink: TdSink = {
+      send: query => {
+        sent.push(query)
+        if (query['@type'] === 'setAuthenticationPhoneNumber') {
+          return Promise.resolve({
+            '@type': 'error',
+            message: 'PHONE_NUMBER_INVALID',
+          })
+        }
+        return Promise.resolve({ '@type': 'ok' })
+      },
+      close: () => Promise.resolve(),
+    }
+    const account = new TdAccount(sink, 'phone')
+    account.apply(authorization('authorizationStateWaitPhoneNumber'))
+    openAccount.mockResolvedValue(account)
+    await expect(beginLogin('phone', 1, 'hash', '+1', false)).rejects.toThrow(
+      'PHONE_NUMBER_INVALID',
+    )
+    expect(sent.map(query => query['@type'])).toContain('logOut')
+  })
+
+  test('a resumed QR login counts as opened and is discarded within 2s', async () => {
+    vi.useFakeTimers()
+    const sent: Array<TdQuery> = []
+    let closed = false
+    const account = new TdAccount(
+      {
+        send: query => {
+          sent.push(query)
+          return new Promise(() => undefined)
+        },
+        close: () => {
+          closed = true
+          return Promise.resolve()
+        },
+      },
+      'qr',
+    )
+    let phase: string | undefined
+    const opened = account.untilOpened(30_000).then(value => {
+      phase = value._tag
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(phase).toBeUndefined()
+    account.apply(
+      authorization('authorizationStateWaitOtherDeviceConfirmation', {
+        link: 'tg://login?token=abc',
+      }),
+    )
+    await opened
+    expect(phase).toBe('WaitQr')
+    const discarded = account.discard()
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await discarded
+    expect(closed).toBe(true)
+    expect(sent.map(query => query['@type'])).toContain('logOut')
   })
 
   test('desktop commands use Tauri camelCase argument names', async () => {
