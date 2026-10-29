@@ -14,6 +14,7 @@ import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
 
 import { readAppCredentials } from './appCredentials'
 import { StoredFace } from './chatFace'
+import { countryByIso, defaultCountryIso, dialFor } from './countries'
 import { Login } from './login'
 import { loginScreen } from './loginView'
 import { Message, RuntimeCredentials, Secret } from './message'
@@ -36,6 +37,9 @@ export const Model = Schema.Struct({
   apiId: Schema.String,
   apiHash: Secret,
   phone: Secret,
+  countryIso: Schema.String,
+  countryOpen: Schema.Boolean,
+  keepSignedIn: Schema.Boolean,
   answer: Secret,
   status: Schema.Literals(['Ready', 'Busy']),
   error: Schema.String,
@@ -47,6 +51,8 @@ export const Model = Schema.Struct({
   menuOpen: Schema.Boolean,
   moreOpen: Schema.Boolean,
   headerMenuOpen: Schema.Boolean,
+  composerTool: Schema.Literals(['Closed', 'Emoji', 'Attach', 'Voice', 'Send']),
+  headerTool: Schema.Literals(['Closed', 'Search', 'Call']),
   autoDeleteOpen: Schema.Boolean,
   autoDelete: Schema.String,
   hiddenChatIds: Schema.Array(Schema.String),
@@ -186,6 +192,13 @@ const closedMenus = {
   headerMenuOpen: () => false,
   autoDeleteOpen: () => false,
 }
+const phoneForLogin = (model: Model) => {
+  const typed = Redacted.value(model.phone).trim()
+  if (typed === '' || typed.startsWith('+')) {
+    return model.phone
+  }
+  return Redacted.make(`${dialFor(model.countryIso)}${typed}`)
+}
 const startLogin = (
   model: Model,
   qr: boolean,
@@ -213,7 +226,7 @@ const startLogin = (
       BeginLogin({
         apiId: model.apiId,
         apiHash: model.apiHash,
-        phone: model.phone,
+        phone: phoneForLogin(model),
         qr,
       }),
     ],
@@ -229,6 +242,24 @@ export const update = (model: Model, message: Message) =>
     }),
     UpdatedPhone: ({ value }) => ({
       model: modifyFields(model, { phone: () => value }),
+    }),
+    ClickedCountry: () => ({
+      model: modifyFields(model, { countryOpen: () => !model.countryOpen }),
+    }),
+    SelectedCountry: ({ iso }) =>
+      Option.isNone(countryByIso(iso))
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              countryIso: () => iso,
+              countryOpen: () => false,
+            }),
+          },
+    // NOTE: The checkbox is the phone-step control. Sessions stay in this tab; reload still signs out.
+    ToggledKeepSignedIn: () => ({
+      model: modifyFields(model, {
+        keepSignedIn: () => !model.keepSignedIn,
+      }),
     }),
     UpdatedAnswer: ({ value }) => ({
       model: modifyFields(model, { answer: () => value }),
@@ -348,6 +379,43 @@ export const update = (model: Model, message: Message) =>
         autoDeleteOpen: () => false,
         menuOpen: () => false,
         moreOpen: () => false,
+      }),
+    }),
+    ClickedHeaderSearch: () => ({
+      model: modifyFields(model, {
+        headerTool: () => (model.headerTool === 'Search' ? 'Closed' : 'Search'),
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
+      }),
+    }),
+    ClickedCall: () => ({
+      model: modifyFields(model, {
+        headerTool: () => (model.headerTool === 'Call' ? 'Closed' : 'Call'),
+        headerMenuOpen: () => false,
+        autoDeleteOpen: () => false,
+      }),
+    }),
+    ClickedEmoji: () => ({
+      model: modifyFields(model, {
+        composerTool: () =>
+          model.composerTool === 'Emoji' ? 'Closed' : 'Emoji',
+      }),
+    }),
+    ClickedAttach: () => ({
+      model: modifyFields(model, {
+        composerTool: () =>
+          model.composerTool === 'Attach' ? 'Closed' : 'Attach',
+      }),
+    }),
+    ClickedVoice: () => ({
+      model: modifyFields(model, {
+        composerTool: () =>
+          model.composerTool === 'Voice' ? 'Closed' : 'Voice',
+      }),
+    }),
+    ClickedSend: () => ({
+      model: modifyFields(model, {
+        composerTool: () => (model.composerTool === 'Send' ? 'Closed' : 'Send'),
       }),
     }),
     ClickedAutoDelete: () => ({
@@ -483,6 +551,9 @@ export const initialModel: Model = {
   apiId: '',
   apiHash: Redacted.make(''),
   phone: Redacted.make(''),
+  countryIso: defaultCountryIso,
+  countryOpen: false,
+  keepSignedIn: true,
   answer: Redacted.make(''),
   status: 'Ready',
   error: '',
@@ -494,6 +565,8 @@ export const initialModel: Model = {
   menuOpen: false,
   moreOpen: false,
   headerMenuOpen: false,
+  composerTool: 'Closed',
+  headerTool: 'Closed',
   autoDeleteOpen: false,
   autoDelete: 'Never',
   hiddenChatIds: [],
@@ -512,7 +585,13 @@ const showLogin = (model: Model): boolean =>
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: '',
   body: h.div(
-    [h.Class('app-wallpaper relative min-h-screen text-white')],
+    [
+      h.Class(
+        showLogin(model)
+          ? 'login-plain relative min-h-screen text-white'
+          : 'app-wallpaper relative min-h-screen text-white',
+      ),
+    ],
     [
       model.error === ''
         ? h.empty

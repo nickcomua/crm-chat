@@ -4,8 +4,14 @@ html {
   color-scheme: dark;
 }
 
+.login-plain {
+  background-color: #212121;
+}
+
 .app-wallpaper {
-  background-color: #0e0e14;
-  background-image: url('/wallpaper.svg?v=4');
-  background-size: 220px 220px;
+  background-color: #0e1621;
+  background-image:
+    url('/wallpaper.svg?v=5'),
+    linear-gradient(165deg, #1b2b3a 0%, #0e1621 46%, #1a2433 100%);
+  background-size: 340px 340px, cover;
 }

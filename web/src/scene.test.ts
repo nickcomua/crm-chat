@@ -156,5 +156,11 @@ test('supplied application credentials are not rendered as inputs', () => {
     expect(role('textbox', { name: 'API hash' })).not.toExist(),
     expect(role('textbox', { name: 'Phone number' })).toExist(),
     expect(role('button', { name: 'Log in with QR' })).toExist(),
+    expect(role('button', { name: 'Country' })).toExist(),
+    expect(role('checkbox', { name: 'Keep me signed in' })).toBeChecked(),
+    expect(role('region', { name: 'Telegram login' })).toContainText('+31'),
+    expect(role('region', { name: 'Telegram login' })).not.toContainText(
+      'Application credentials are supplied',
+    ),
   )
 })

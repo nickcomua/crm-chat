@@ -4,6 +4,15 @@ import { HtmlBuilder } from 'foldkit/html'
 
 import { faceFor, kindStatus, markFor, tintFor } from './chatFace'
 import type { Chat } from './generated/core'
+import {
+  attachIcon,
+  emojiIcon,
+  moreIcon,
+  phoneIcon,
+  searchIcon,
+  sendIcon,
+  voiceIcon,
+} from './icons'
 import type { Model } from './main'
 import { Message } from './message'
 
@@ -89,6 +98,25 @@ const menuButton = (
   h: HtmlBuilder<Message>,
   className = menuItemClass,
 ) => h.button([h.Class(className), h.OnClick(message)], [label])
+
+const iconButton = (
+  label: string,
+  pressed: boolean,
+  message: Message,
+  icon: ReturnType<HtmlBuilder<Message>['span']>,
+  h: HtmlBuilder<Message>,
+) =>
+  h.button(
+    [
+      h.Class(
+        'flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10',
+      ),
+      h.AriaLabel(label),
+      h.AriaPressed(pressed ? 'true' : 'false'),
+      h.OnClick(message),
+    ],
+    [icon],
+  )
 
 export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
   const opened = openChat(model)
@@ -425,23 +453,33 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         ],
                       ),
                       h.span(
+                        [h.Class('flex shrink-0 items-center gap-0.5')],
                         [
-                          h.Class(
-                            'flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0]',
+                          iconButton(
+                            'Search',
+                            model.headerTool === 'Search',
+                            Message.ClickedHeaderSearch(),
+                            searchIcon(h),
+                            h,
                           ),
-                          h.AriaHidden(true),
+                          iconButton(
+                            'Call',
+                            model.headerTool === 'Call',
+                            Message.ClickedCall(),
+                            phoneIcon(h),
+                            h,
+                          ),
                         ],
-                        ['☎'],
                       ),
                       h.button(
                         [
                           h.Class(
-                            'relative flex size-9 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/10',
+                            'relative flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10',
                           ),
                           h.AriaLabel('Chat menu'),
                           h.OnClick(Message.ClickedHeaderMenu()),
                         ],
-                        ['⋮'],
+                        [moreIcon(h)],
                       ),
                       model.headerMenuOpen
                         ? h.div(
@@ -623,16 +661,51 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         ['Replies are off'],
                       )
                     : h.div(
-                        [h.Class('shrink-0')],
                         [
+                          h.Class(
+                            'flex w-full shrink-0 items-center gap-0.5 rounded-full bg-[#1c1c22] px-1.5',
+                          ),
+                        ],
+                        [
+                          iconButton(
+                            'Emoji',
+                            model.composerTool === 'Emoji',
+                            Message.ClickedEmoji(),
+                            emojiIcon(h),
+                            h,
+                          ),
                           h.input([
-                            h.Class(fieldClass),
+                            h.Class(
+                              'min-w-0 flex-1 bg-transparent px-2 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]',
+                            ),
                             h.Type('text'),
                             h.Placeholder('Message'),
                             h.AriaLabel('Message'),
                             h.Value(model.draft),
                             h.OnInput(value => Message.UpdatedDraft({ value })),
                           ]),
+                          iconButton(
+                            'Attach',
+                            model.composerTool === 'Attach',
+                            Message.ClickedAttach(),
+                            attachIcon(h),
+                            h,
+                          ),
+                          model.draft.trim() === ''
+                            ? iconButton(
+                                'Voice message',
+                                model.composerTool === 'Voice',
+                                Message.ClickedVoice(),
+                                voiceIcon(h),
+                                h,
+                              )
+                            : iconButton(
+                                'Send',
+                                model.composerTool === 'Send',
+                                Message.ClickedSend(),
+                                sendIcon(h),
+                                h,
+                              ),
                         ],
                       ),
                 ],

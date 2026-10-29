@@ -4,7 +4,7 @@ Fixture captures of the web shell at 1440×900. No phone numbers, user ids, or s
 
 Regenerate with `nix run .#ui-screenshots` from the repo root.
 
-- `login-phone.png` — sign-in when application credentials are supplied
+- `login-phone.png` — sign-in when application credentials are supplied. The dial code is the selected country's prefix, not a phone number. The number field is empty.
 - `login-manual.png` — the same screen when the page must ask for an API ID and hash
 - `login-code.png` — the code step
 - `login-password.png` — two-step verification
