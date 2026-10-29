@@ -78,7 +78,8 @@ struct Shared {
 pub struct Client {
     root: PathBuf,
     shared: Arc<Shared>,
-    _runtime: Option<tokio::runtime::Runtime>,
+    updates: Option<tokio::task::JoinHandle<()>>,
+    stop_receive: Arc<AtomicBool>,
 }
 
 pub fn database_root_from(data_home: &Path) -> PathBuf {
@@ -129,6 +130,83 @@ pub fn chat_kind(type_name: &str, is_channel: bool) -> Option<ChatKind> {
         "chatTypeSupergroup" => Some(ChatKind::Group),
         _ => None,
     }
+}
+
+/// The desktop `Authorized` value is `{_tag: "Authorized", account}` with the
+/// account id, title, and chats nested. Code and Password carry a top-level id.
+/// Authorized does not.
+pub fn require_desktop_authorized(account: &Account) -> Result<(), String> {
+    let value = serde_json::to_value(&AuthStep::Authorized {
+        account: account.clone(),
+    })
+    .map_err(|_| "could not encode Authorized".to_owned())?;
+    let step = value
+        .as_object()
+        .ok_or("Authorized is not an object".to_owned())?;
+    if step.len() != 2 || step.get("_tag").and_then(Value::as_str) != Some("Authorized") {
+        return Err("desktop auth step is not Authorized".into());
+    }
+    let encoded = step
+        .get("account")
+        .and_then(Value::as_object)
+        .ok_or("Authorized is missing the account".to_owned())?;
+    if encoded.len() != 3 {
+        return Err("Authorized account does not match the desktop shape".into());
+    }
+    let id = encoded
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Authorized account id is missing".to_owned())?;
+    if id != account.id || valid_account_id(id).is_err() {
+        return Err("Authorized account id is not a local identifier".into());
+    }
+    let title = encoded
+        .get("title")
+        .and_then(Value::as_str)
+        .ok_or("Authorized account has no title".to_owned())?;
+    if title.is_empty() || title != account.title {
+        return Err("Authorized account has no title".into());
+    }
+    let chats = encoded
+        .get("chats")
+        .and_then(Value::as_array)
+        .ok_or("Authorized account has no chats".to_owned())?;
+    if chats.len() != account.chats.len() {
+        return Err("Authorized chats do not match the desktop shape".into());
+    }
+    for (chat, expected) in chats.iter().zip(&account.chats) {
+        let chat = chat
+            .as_object()
+            .ok_or("Authorized chat does not match the desktop shape".to_owned())?;
+        if chat.len() != 3 {
+            return Err("Authorized chat does not match the desktop shape".into());
+        }
+        let chat_id = chat
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat id is missing".to_owned())?;
+        let chat_title = chat
+            .get("title")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat has no title".to_owned())?;
+        let kind = chat
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or("Authorized chat kind is missing".to_owned())?;
+        if chat_id != expected.id || chat_title != expected.title || chat_title.is_empty() {
+            return Err("Authorized chat does not match the desktop shape".into());
+        }
+        chat_tdlib_id(&account.id, chat_id)?;
+        let expected_kind = match expected.kind {
+            ChatKind::Dialog => "Dialog",
+            ChatKind::Group => "Group",
+            ChatKind::Channel => "Channel",
+        };
+        if kind != expected_kind {
+            return Err("Authorized chat kind is not a desktop kind".into());
+        }
+    }
+    Ok(())
 }
 
 fn valid_account_id(id: &str) -> Result<(), String> {
@@ -221,48 +299,68 @@ impl Client {
         if RECEIVER_STARTED.swap(true, Ordering::SeqCst) {
             return Err("TDLib receiver is already running".into());
         }
-        std::fs::create_dir_all(&root)
-            .map_err(|_| "could not create the TDLib directory".to_owned())?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_time()
-            .build()
-            .map_err(|_| "could not start the Telegram runtime".to_owned())?;
+        let runtime = match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => runtime,
+            Err(_) => {
+                RECEIVER_STARTED.store(false, Ordering::SeqCst);
+                return Err("Telegram runtime is not running".into());
+            }
+        };
+        if std::fs::create_dir_all(&root).is_err() {
+            RECEIVER_STARTED.store(false, Ordering::SeqCst);
+            return Err("could not create the TDLib directory".into());
+        }
         let shared = Arc::new(Shared {
             slots: Mutex::new(std::collections::HashMap::new()),
             ids: Mutex::new(std::collections::HashMap::new()),
         });
         let (tx, mut rx) = mpsc::channel::<(Update, i32)>(256);
         let handler = Arc::clone(&shared);
-        runtime.spawn(async move {
+        let updates = runtime.spawn(async move {
             while let Some((update, client_id)) = rx.recv().await {
                 if let Update::AuthorizationState(update) = update {
                     apply_authorization(&handler, client_id, update.authorization_state).await;
                 }
             }
         });
-        std::thread::Builder::new()
+        let stop_receive = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&stop_receive);
+        if std::thread::Builder::new()
             .name("tdlib-receive".into())
             .spawn(move || loop {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
                 if let Some(update) = tdlib_rs::receive() {
-                    if tx.blocking_send(update).is_err() {
+                    if stop.load(Ordering::SeqCst) || tx.blocking_send(update).is_err() {
                         break;
                     }
                 }
             })
-            .map_err(|_| "could not start TDLib".to_owned())?;
+            .is_err()
+        {
+            updates.abort();
+            RECEIVER_STARTED.store(false, Ordering::SeqCst);
+            return Err("could not start TDLib".into());
+        }
         Ok(Self {
             root,
             shared,
-            _runtime: Some(runtime),
+            updates: Some(updates),
+            stop_receive,
         })
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if let Some(runtime) = self._runtime.take() {
-            std::thread::spawn(move || drop(runtime)).join().ok();
+        // The caller owns the only Tokio runtime. Dropping a second runtime
+        // here panics: "Cannot drop a runtime in a context where blocking is
+        // not allowed." Abort the update task instead, and let the receive
+        // thread notice `stop_receive` without joining it on this thread.
+        self.stop_receive.store(true, Ordering::SeqCst);
+        if let Some(updates) = self.updates.take() {
+            updates.abort();
         }
     }
 }
@@ -782,10 +880,57 @@ fn message_from_json(value: &Value) -> Option<Message> {
 mod tests {
     use super::{
         chat_kind, chat_tdlib_id, database_root_from, phase_from_update_json, public_error,
-        valid_account_id, ChatKind, Phase,
+        require_desktop_authorized, valid_account_id, Account, AuthStep, Chat, ChatKind, Client,
+        Phase,
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn desktop_authorized_shape_is_a_nested_account() {
+        let account = Account {
+            id: "account-1".to_owned(),
+            title: "Telegram account".to_owned(),
+            chats: vec![
+                Chat {
+                    id: "account-1:7".to_owned(),
+                    title: "Ada".to_owned(),
+                    kind: ChatKind::Dialog,
+                },
+                Chat {
+                    id: "account-1:8".to_owned(),
+                    title: "Team".to_owned(),
+                    kind: ChatKind::Group,
+                },
+                Chat {
+                    id: "account-1:9".to_owned(),
+                    title: "News".to_owned(),
+                    kind: ChatKind::Channel,
+                },
+            ],
+        };
+        require_desktop_authorized(&account).unwrap();
+        let value = serde_json::to_value(AuthStep::Authorized {
+            account: account.clone(),
+        })
+        .unwrap();
+        assert_eq!(value["_tag"], "Authorized");
+        assert!(value.get("id").is_none());
+        assert_eq!(value["account"]["id"], "account-1");
+        assert_eq!(value["account"]["chats"][0]["kind"], "Dialog");
+        assert_eq!(value["account"]["chats"][1]["kind"], "Group");
+        assert_eq!(value["account"]["chats"][2]["kind"], "Channel");
+    }
+
+    #[tokio::test]
+    async fn client_drop_inside_the_caller_runtime_does_not_panic() {
+        let root =
+            std::env::temp_dir().join(format!("crm-chat-client-drop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let client = Client::open(root.clone()).expect("open");
+        drop(client);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn authorization_updates_move_the_phase_from_qr_to_ready() {

@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[workspace]
-
-# Not a workspace member of the repo root. `nix flake check` must not open a
-# Telegram connection. `nix run .#integration-test` builds this binary.
+# `shape` is offline and runs in `nix flake check`. `credentials` and `account`
+# open Telegram and stay in `nix run .#integration-test`.
 
 [dependencies]
 crm-chat-telegram = { path = "../../crates/telegram" }

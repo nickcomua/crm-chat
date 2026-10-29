@@ -152,7 +152,11 @@ already registered is rejected.
 ## Integration test
 
 `nix flake check` does not call Telegram or BWS. Its sandbox has neither
-network nor vault access. From this repository, with `bws` on `PATH` and the
+network nor vault access. The check `integration-offline` runs the integration
+binary's `shape` command, which asserts the desktop `Authorized` JSON and does
+not open a database. `credentials` and `account` stay in the app below.
+
+From this repository, with `bws` on `PATH` and the
 user-local SecretSpec config in place. Use the workstation `secretspec` on
 `PATH` (the one that can reach BWS), not a bare Nix package that has no
 vault token:
@@ -165,10 +169,11 @@ It fails if `TG_ID` or `TG_HASH` do not resolve, or if they are not in the
 shape the apps accept. The app scope must inject only those two Telegram keys.
 The same values are then used for a real TDLib connection. The check opens a
 throwaway database, requests QR login, and requires Telegram to accept the
-application credentials. It does not print the login link. It then looks for
-logged-in accounts in the desktop TDLib directory. If that directory has no
-account, the command prints `NEEDS TEST ACCOUNTS:` and exits 2. It does not
-read BWS session entries.
+application credentials. It does not print the login link. It then copies the
+desktop TDLib directory and restores logged-in accounts from the copy. Each
+account must match the desktop `Authorized` shape. The saved directory is not
+modified. If it has no account, the command prints `NEEDS TEST ACCOUNTS:` and
+exits 2. It does not read BWS session entries.
 
 Tokens and secret values are not printed. Output is pass, or a TDLib error
 code.

@@ -66,6 +66,8 @@
           (pkgs.lib.fileset.difference
             (craneLib.fileset.commonCargoSources ./.)
             (pkgs.lib.fileset.maybeMissing ./integration))
+          ./integration/desktop/Cargo.toml
+          ./integration/desktop/src
           ./third_party/tdlib-rs/tdlib-rs/tl
           ./nix/tdlib.nix
         ];
@@ -282,6 +284,25 @@
             '';
           }
         );
+        # Offline half of the desktop integration test. Credentials and saved
+        # accounts stay in the `integration-test` app, which needs network and BWS.
+        integrationOffline = craneLib.mkCargoDerivation (
+          commonArgs
+          // {
+            pname = "crm-chat-integration-offline";
+            version = "0.1.0";
+            inherit cargoArtifacts;
+            doInstallCargoArtifacts = false;
+            buildPhaseCargoCommand = ''
+              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
+              cargo run -p crm-chat-integration-desktop --locked -- shape
+            '';
+            installPhaseCommand = ''
+              mkdir -p $out
+              touch $out/checked
+            '';
+          }
+        );
       in {
         formatter = pkgs.alejandra;
         packages =
@@ -310,7 +331,7 @@
               statix check $src
               touch $out
             '';
-          inherit website wasm32 coreTypes telegramTests;
+          inherit website wasm32 coreTypes telegramTests integrationOffline;
           inherit desktop;
           tdlibWasm =
             if system == "x86_64-linux"
