@@ -1,0 +1,99 @@
+:root,
+.light {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f3f5;
+  --secondary-foreground: #222222;
+  --muted: #f4f4f5;
+  --muted-foreground: #707579;
+  --accent: #e7f3ff;
+  --accent-foreground: #168acd;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #2c2c2c;
+  --secondary-foreground: #ffffff;
+  --muted: #2a2a2a;
+  --muted-foreground: #aaaaaa;
+  --accent: #2b5278;
+  --accent-foreground: #ffffff;
+  --destructive: #e53935;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: #3390ec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #212121;
+    --foreground: #ffffff;
+    --primary: #3390ec;
+    --primary-foreground: #ffffff;
+    --secondary: #2c2c2c;
+    --secondary-foreground: #ffffff;
+    --muted: #2a2a2a;
+    --muted-foreground: #aaaaaa;
+    --accent: #2b5278;
+    --accent-foreground: #ffffff;
+    --destructive: #e53935;
+    --destructive-foreground: #ffffff;
+    --border: rgba(255, 255, 255, 0.12);
+    --input: rgba(255, 255, 255, 0.16);
+    --ring: #3390ec;
+  }
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
+.ui-badge[data-variant='default'] {
+  background: var(--primary, #3390ec);
+  color: var(--primary-foreground, #ffffff);
+}
+
+.ui-badge[data-variant='secondary'] {
+  background: var(--secondary, #f1f3f5);
+  color: var(--secondary-foreground, #222222);
+}
+
+.ui-badge[data-variant='destructive'] {
+  background: var(--destructive, #e53935);
+  color: var(--destructive-foreground, #ffffff);
+}
+
+.ui-badge[data-variant='outline'] {
+  background: transparent;
+  color: var(--foreground, #222222);
+  border-color: var(--border, #dadce0);
+}
+
+.ui-badge-demo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
