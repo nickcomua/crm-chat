@@ -49,7 +49,10 @@ export const Message = defineMessageUnion({
   ClickedDeleteChat: {},
   ClickedDismissMenu: {},
   CompletedLoadAppCredentials: { credentials: RuntimeCredentials },
-  CompletedRestore: { accounts: Schema.Array(Account) },
+  CompletedRestore: {
+    accounts: Schema.Array(Account),
+    faces: Schema.optional(Schema.Array(StoredFace)),
+  },
   SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
   FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
   SucceededRefresh: {

@@ -293,6 +293,42 @@ describe('TDLib browser protocol', () => {
     expect(sent.filter(query => query['@type'] === 'getChats')).toHaveLength(2)
   })
 
+  test('last-message previews use Telegram Web K wording', async () => {
+    const chat = (id: number, content: Record<string, unknown>): Plan => ({
+      response: {
+        '@type': 'chat',
+        title: 'Ada',
+        type: { '@type': 'chatTypePrivate' },
+        last_message: {
+          '@type': 'message',
+          id,
+          is_outgoing: false,
+          date: 1_700_000_000,
+          content,
+        },
+      },
+    })
+    const { account } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [1, 2, 3, 4] } },
+      chat(1, {
+        '@type': 'messagePhoto',
+        caption: { '@type': 'formattedText', text: 'On the quay' },
+      }),
+      chat(2, { '@type': 'messageContactRegistered' }),
+      chat(3, { '@type': 'messageExpiredPhoto' }),
+      chat(4, { '@type': 'messagePhoto' }),
+    ])
+    await account.readAccount()
+    expect(account.previews.map(preview => preview.preview)).toEqual([
+      'On the quay',
+      'joined Telegram',
+      'Photo has expired',
+      'Photo',
+    ])
+  })
+
   test('an authorized session stays signed in when the chat list fails', async () => {
     const { account, sent } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },

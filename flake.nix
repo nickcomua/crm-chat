@@ -271,14 +271,22 @@
           }:$PATH
           export CRM_CHAT_WEBSITE=${website}
           export CRM_CHAT_SECRETS=${./secretspec.toml}
-          pw_env="''${CRM_CHAT_PW_ENV:-$HOME/.local/state/kam-t3/tools/pw.env}"
-          if [ -f "$pw_env" ]; then
-            set -a
-            . "$pw_env"
-            set +a
+          export PLAYWRIGHT_CORE=${pkgs.playwright-driver}/index.mjs
+          browsers=${pkgs.playwright-driver.browsers}
+          playwright_chrome=
+          for candidate in "$browsers"/chromium-*/chrome-linux64/chrome "$browsers"/chromium-*/chrome-linux/chrome; do
+            if [ -x "$candidate" ]; then
+              playwright_chrome=$candidate
+              break
+            fi
+          done
+          if [ -z "$playwright_chrome" ]; then
+            echo "integration-test-web: Playwright Chromium is missing from the nix package" >&2
+            exit 1
           fi
-          if [ -z "''${PLAYWRIGHT_CORE:-}" ] || [ -z "''${CHROMIUM:-}" ]; then
-            echo "integration-test-web: set PLAYWRIGHT_CORE and CHROMIUM (pw.env)" >&2
+          system_chrome=$(command -v chromium || true)
+          if [ -z "$system_chrome" ] || [ ! -x "$system_chrome" ]; then
+            echo "integration-test-web: system chromium is not on PATH" >&2
             exit 1
           fi
           if ! command -v secretspec >/dev/null 2>&1; then
@@ -293,8 +301,21 @@
             echo "integration-test-web: zbarimg is not on PATH" >&2
             exit 1
           fi
+          export CRM_CHAT_PLAYWRIGHT_CHROMIUM="$playwright_chrome"
+          export CRM_CHAT_SYSTEM_CHROMIUM="$system_chrome"
           exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
-            ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
+            ${pkgs.bash}/bin/bash -c ${pkgs.lib.escapeShellArg ''
+            set -euo pipefail
+            run() {
+              echo "integration-test-web: $1"
+              CRM_CHAT_CHROMIUM_NAME=$1 \
+              CHROMIUM=$2 \
+              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/fix-web-connect/$1" \
+                ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
+            }
+            run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM"
+            run system "$CRM_CHAT_SYSTEM_CHROMIUM"
+          ''}
         '';
         loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
           set -euo pipefail

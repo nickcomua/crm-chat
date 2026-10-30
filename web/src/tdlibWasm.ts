@@ -221,6 +221,7 @@ export class TdWasmRuntime {
   private extra = 0
   private syncTimer: ReturnType<typeof setInterval> | undefined
   private syncTail: Promise<void> = Promise.resolve()
+  private syncing = false
   private lifecycleBound = false
   private opening: Promise<void> | undefined
   private receiveQueued = false
@@ -389,6 +390,13 @@ export class TdWasmRuntime {
   }
 
   private receive(): void {
+    // IndexedDB copies the database files straight out of wasm memory. A
+    // receive turn in the middle of that copy grows the heap and TDLib then
+    // faults with "memory access out of bounds".
+    if (this.syncing) {
+      this.scheduleReceive(50)
+      return
+    }
     this.bindSocketWake()
     const functions = this.functions()
     for (;;) {
@@ -605,6 +613,7 @@ export class TdWasmRuntime {
         return
       }
       this.clearSyncTimer()
+      this.syncing = true
       document.documentElement.dataset['tdlibSync'] = '1'
       try {
         await syncFs(filesystem, populate)
@@ -617,8 +626,10 @@ export class TdWasmRuntime {
         this.syncError = failure
         throw failure
       } finally {
+        this.syncing = false
         document.documentElement.dataset['tdlibSync'] = '0'
         this.armSyncTimer()
+        this.receiveSoon()
       }
     })
     this.syncTail = run.then(

@@ -213,23 +213,107 @@ const accountTitle = (me: unknown): string => {
   return title === '' ? 'Telegram account' : title
 }
 
+const plain = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+  return text(field(value, 'text')).trim()
+}
+
+const nestedText = (content: unknown, key: string, name: string): string =>
+  text(field(field(content, key), name)).trim()
+
+// Chat-list wording from Telegram Web K's English lang pack (AttachPhoto,
+// AttachAudio, Chat.Service.PeerJoinedTelegram, AttachPhotoExpired). A caption
+// wins over the media label, the same way the Web K dialog row does.
+export const messagePreview = (content: unknown): string => {
+  const caption = plain(field(content, 'caption'))
+  switch (typeName(content)) {
+    case 'messageText':
+      return plain(field(content, 'text'))
+    case 'messagePhoto':
+      return caption === '' ? 'Photo' : caption
+    case 'messageVideo':
+      return caption === '' ? 'Video' : caption
+    case 'messageAnimation':
+      return caption === '' ? 'GIF' : caption
+    case 'messageSticker': {
+      const emoji = nestedText(content, 'sticker', 'emoji')
+      return emoji === '' ? 'Sticker' : emoji
+    }
+    case 'messageVoiceNote':
+      return 'Voice message'
+    case 'messageVideoNote':
+      return 'Video message'
+    case 'messageAudio': {
+      const title = nestedText(content, 'audio', 'title')
+      if (title !== '') {
+        return title
+      }
+      const file = nestedText(content, 'audio', 'file_name')
+      return file === '' ? 'Audio file' : file
+    }
+    case 'messageDocument': {
+      if (caption !== '') {
+        return caption
+      }
+      const file = nestedText(content, 'document', 'file_name')
+      return file === '' ? 'File' : file
+    }
+    case 'messageContact':
+      return 'Contact'
+    case 'messageLocation': {
+      const live = field(content, 'live_period')
+      return typeof live === 'number' && live > 0 ? 'Live Location' : 'Location'
+    }
+    case 'messageVenue': {
+      const title = nestedText(content, 'venue', 'title')
+      return title === '' ? 'Location' : title
+    }
+    case 'messagePoll': {
+      const question = plain(field(field(content, 'poll'), 'question'))
+      return question === '' ? 'Poll' : question
+    }
+    case 'messageGame': {
+      const title = nestedText(content, 'game', 'title')
+      return title === '' ? 'Game' : title
+    }
+    case 'messageDice': {
+      const emoji = text(field(content, 'emoji')).trim()
+      return emoji === '' ? '🎲' : emoji
+    }
+    case 'messageContactRegistered':
+      return 'joined Telegram'
+    case 'messageExpiredPhoto':
+      return 'Photo has expired'
+    case 'messageExpiredVideo':
+      return 'Video has expired'
+    case 'messageCall': {
+      const reason = typeName(field(content, 'discard_reason'))
+      if (
+        reason === 'callDiscardReasonMissed' ||
+        reason === 'callDiscardReasonDeclined'
+      ) {
+        return 'Missed call'
+      }
+      return 'Call'
+    }
+    case 'messageUnsupported':
+      return 'Unsupported message'
+    default:
+      return ''
+  }
+}
+
 const messageFrom = (value: unknown): Message | undefined => {
   const id = idValue(field(value, 'id'))
   if (id === undefined) {
     return undefined
   }
-  const content = field(value, 'content')
-  const name = typeName(content)
-  const body =
-    name === 'messageText'
-      ? text(field(field(content, 'text'), 'text'))
-      : name.startsWith('message')
-        ? name.slice('message'.length)
-        : ''
   const date = field(value, 'date')
   return {
     id,
-    text: body,
+    text: messagePreview(field(value, 'content')),
     outgoing: field(value, 'is_outgoing') === true,
     date: typeof date === 'number' ? date : 0,
   }

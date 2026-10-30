@@ -142,7 +142,9 @@ const work = await mkdtemp(join(tmpdir(), 'crm-web-login-'))
 const profile = join(work, 'profile')
 const timingPath = join(shots, 'timing.log')
 const started = Date.now()
+const browserName = process.env.CRM_CHAT_CHROMIUM_NAME ?? 'chromium'
 const timing = {
+  browser: browserName,
   qr_visible_ms: '',
   approve_to_chats_ms: '',
   history_ms: '',
@@ -153,6 +155,7 @@ const timing = {
 
 const writeTiming = async () => {
   const body = [
+    `browser=${timing.browser}`,
     `qr_visible_ms=${timing.qr_visible_ms}`,
     `approve_to_chats_ms=${timing.approve_to_chats_ms}`,
     `history_ms=${timing.history_ms}`,
@@ -167,6 +170,54 @@ const writeTiming = async () => {
 
 let browser
 let failed = false
+const faults = []
+const runtimeFault = text =>
+  /Aborted\(|RuntimeError|memory access out of bounds/i.test(text)
+const watch = page => {
+  page.on('console', message => {
+    const text = message.text()
+    if (
+      text.startsWith('tdlib auth authorizationState') ||
+      text === 'tdlib sync saved'
+    ) {
+      timing.auth.push(redact(text))
+      note(text)
+    }
+    if (!runtimeFault(text)) {
+      return
+    }
+    const line = redact(text).slice(0, 400)
+    faults.push(line)
+    note(`console ${message.type()} ${line}`)
+  })
+  page.on('pageerror', error => {
+    const line = redact(String(error.stack ?? error.message)).slice(0, 400)
+    faults.push(line)
+    note(`pageerror ${line}`)
+  })
+}
+const assertNoFaults = () => {
+  if (faults.length > 0) {
+    throw fail(`page error: ${faults[0]}`)
+  }
+}
+const visiblePreview = async nextPage => {
+  const loading = nextPage.getByText('Loading chats…')
+  if (
+    (await loading.count()) > 0 &&
+    (await loading.first().isVisible().catch(() => false))
+  ) {
+    return ''
+  }
+  const previews = await nextPage
+    .locator('.chat-row .chat-row-meta.truncate')
+    .allTextContents()
+  return (
+    previews
+      .map(text => text.trim())
+      .find(text => text !== '' && !kindPreview.has(text)) ?? ''
+  )
+}
 const shot = async (page, name) => {
   if (page === undefined) {
     return
@@ -183,28 +234,8 @@ try {
     args: ['--disable-dev-shm-usage'],
   })
   const page = browser.pages()[0] ?? (await browser.newPage())
-  page.on('console', message => {
-    const text = message.text()
-    if (
-      text.startsWith('tdlib auth authorizationState') ||
-      text === 'tdlib sync saved'
-    ) {
-      timing.auth.push(redact(text))
-      note(text)
-      return
-    }
-    if (
-      message.type() === 'error' ||
-      text.includes('Aborted') ||
-      text.includes('CHECK') ||
-      text.includes('exception')
-    ) {
-      note(`console ${message.type()} ${text.slice(0, 300)}`)
-    }
-  })
-  page.on('pageerror', error => {
-    note(`pageerror ${String(error.stack ?? error.message).slice(0, 400)}`)
-  })
+  note(`browser ${browserName}`)
+  watch(page)
   await page.goto(pageUrl, { waitUntil: 'domcontentloaded' })
 
   const qr = page.locator('img[alt="Telegram login QR code"]')
@@ -212,6 +243,7 @@ try {
   const qrDeadline = Date.now() + 30_000
   let qrVisible = false
   while (Date.now() < qrDeadline) {
+    assertNoFaults()
     if ((await qr.count()) > 0 && (await qr.first().isVisible().catch(() => false))) {
       qrVisible = true
       break
@@ -304,6 +336,7 @@ try {
   let rows = 0
   let realPreview = ''
   while (Date.now() < deadline) {
+    assertNoFaults()
     const password = page.getByRole('textbox', { name: '2FA password' })
     if ((await password.count()) > 0) {
       timing.approve_to_chats_ms = String(Date.now() - approvedAt)
@@ -426,27 +459,35 @@ try {
   })
 
   const stillLoggedIn = async (nextPage, label, shotName) => {
-    const shell = nextPage.locator('[aria-label="Telegram chats"]')
-    try {
-      await shell.waitFor({ state: 'visible', timeout: reloadBudgetMs })
-      await nextPage.locator('.chat-row').first().waitFor({
-        state: 'visible',
-        timeout: reloadBudgetMs,
-      })
-    } catch {
+    const deadline = Date.now() + reloadBudgetMs
+    let preview = ''
+    let qrVisible = false
+    while (Date.now() < deadline) {
+      assertNoFaults()
+      const shell = nextPage.locator('[aria-label="Telegram chats"]')
+      const rows = await nextPage.locator('.chat-row').count()
+      const code = nextPage.locator('img[alt="Telegram login QR code"]')
+      qrVisible =
+        (await code.count()) > 0 &&
+        (await code.first().isVisible().catch(() => false))
+      if ((await shell.count()) > 0 && rows > 0 && !qrVisible) {
+        preview = await visiblePreview(nextPage)
+        if (preview !== '') {
+          break
+        }
+      }
+      await delay(100)
+    }
+    assertNoFaults()
+    if (preview === '') {
       await shot(nextPage, shotName)
       throw fail(
-        `${label} did not keep the chat list within ${reloadBudgetMs}ms`,
+        qrVisible
+          ? `${label} returned to the QR screen`
+          : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`,
       )
     }
-    const code = nextPage.locator('img[alt="Telegram login QR code"]')
-    if (
-      (await code.count()) > 0 &&
-      (await code.first().isVisible().catch(() => false))
-    ) {
-      await shot(nextPage, shotName)
-      throw fail(`${label} returned to the QR screen`)
-    }
+    note(`${label} preview_chars=${preview.length}`)
   }
 
   const reloadStart = Date.now()
@@ -475,19 +516,7 @@ try {
     args: ['--disable-dev-shm-usage'],
   })
   const reopened = browser.pages()[0] ?? (await browser.newPage())
-  reopened.on('console', message => {
-    const text = message.text()
-    if (
-      text.startsWith('tdlib auth authorizationState') ||
-      text === 'tdlib sync saved'
-    ) {
-      timing.auth.push(redact(text))
-      note(text)
-    }
-  })
-  reopened.on('pageerror', error => {
-    note(`pageerror ${String(error.stack ?? error.message).slice(0, 400)}`)
-  })
+  watch(reopened)
   await reopened.goto(pageUrl, { waitUntil: 'domcontentloaded' })
   try {
     await stillLoggedIn(reopened, 'reopen', '05-reopened.png')
@@ -498,6 +527,7 @@ try {
   timing.reopen_ms = String(Date.now() - reopenStart)
   await shot(reopened, '05-reopened.png')
   note(`reopen persisted at ${timing.reopen_ms}ms`)
+  assertNoFaults()
   note('PASS')
 } catch (error) {
   failed = true

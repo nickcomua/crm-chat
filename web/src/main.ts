@@ -159,7 +159,12 @@ export const Restore = Command.define('Restore', {
     Effect.tryPromise(() =>
       restoreAccounts(Number(apiId), Redacted.value(apiHash)),
     ).pipe(
-      Effect.map(accounts => Message.CompletedRestore({ accounts })),
+      Effect.map(accounts =>
+        Message.CompletedRestore({
+          accounts,
+          faces: accounts.flatMap(account => accountFaces(account.id)),
+        }),
+      ),
       Effect.catch(() =>
         Effect.succeed(Message.CompletedRestore({ accounts: [] })),
       ),
@@ -588,18 +593,22 @@ export const update = (model: Model, message: Message) =>
               }),
             ],
           },
-    CompletedRestore: ({ accounts }) => {
+    CompletedRestore: ({ accounts, faces }) => {
       const first = accounts[0]
       if (first !== undefined && model.login._tag === 'Editing') {
         return {
           model: modifyFields(model, {
             login: () => Login.Closed(),
-            status: () => 'Busy',
+            // readAccount already filled these previews. Leaving status Busy
+            // until a second Refresh kept the list on "Loading chats…" and
+            // kind labels whenever that refresh never finished.
+            status: () => 'Ready',
             error: () => '',
             accounts: () => accounts,
             selectedAccountId: () => first.id,
+            faces: current =>
+              faces === undefined ? current : mergeFaces(current, faces),
           }),
-          commands: [Refresh({ id: first.id })],
         }
       }
       if (
