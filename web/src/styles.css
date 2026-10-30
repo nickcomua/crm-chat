@@ -1,7 +1,45 @@
 @import 'tailwindcss';
 
+html {
+  color-scheme: dark;
+}
+
+.login-plain {
+  background-color: #212121;
+}
+
 .app-wallpaper {
-  background-color: #0e0e14;
-  background-image: url('/wallpaper.svg?v=4');
-  background-size: 220px 220px;
+  background-color: #0e1621;
+  background-image:
+    url('/wallpaper.svg?v=6'),
+    linear-gradient(165deg, #1b2b3a 0%, #0e1621 46%, #1a2433 100%);
+  background-repeat: repeat, no-repeat;
+  background-size: 400px 400px, cover;
+}
+
+.bubble-tail {
+  position: absolute;
+  z-index: -1;
+  width: 11px;
+  height: 20px;
+  pointer-events: none;
+}
+
+.bubble-tail-in {
+  bottom: 0;
+  left: -8px;
+  background-color: #2a2a32;
+  clip-path: path(
+    'M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z'
+  );
+  transform: translateY(1px);
+}
+
+.bubble-tail-out {
+  right: -8px;
+  bottom: -1px;
+  background-color: #8774e1;
+  clip-path: path(
+    'M8 19H2V2c.193 2.84.876 5.767 2.05 8.782.904 2.325 2.446 4.485 4.625 6.48A1 1 0 0 1 8 19z'
+  );
 }
