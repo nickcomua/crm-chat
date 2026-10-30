@@ -517,6 +517,18 @@ export class TdAccount {
     await this.sink.close()
   }
 
+  async release(): Promise<void> {
+    const closed = this.waitFor(
+      phase => phase._tag === 'Closed' || phase._tag === 'Failed',
+      DISCARD_TIMEOUT,
+    ).catch(() => undefined)
+    await this.send({ '@type': 'close' }).catch(() => undefined)
+    await closed
+    if (this.sink.drop !== undefined) {
+      await this.sink.drop()
+    }
+  }
+
   async discard(): Promise<void> {
     const tag = this.phase._tag
     const inProgress =

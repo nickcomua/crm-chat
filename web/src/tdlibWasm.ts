@@ -42,6 +42,8 @@ type SyncFs = {
   filesystems: { IDBFS?: unknown }
   syncfs: (populate: boolean, callback: (error: unknown) => void) => void
   readdir: (path: string) => Array<string>
+  stat?: (path: string) => { mode?: number; mtime?: Date }
+  unlink?: (path: string) => void
 }
 
 type TdModule = {
@@ -90,6 +92,85 @@ const syncFailure = (error: unknown): Error => {
     return new Error('could not sync the TDLib database')
   }
   return new Error(`could not sync the TDLib database: ${detail}`)
+}
+
+const DIRECTORY_MODE = 16384
+const MODE_TYPE = 61440
+
+const directoryTime = (filesystem: SyncFs, id: string): number => {
+  const stat = filesystem.stat
+  if (stat === undefined) {
+    return 0
+  }
+  let newest = 0
+  const visit = (path: string, depth: number): void => {
+    if (depth > 6) {
+      return
+    }
+    let info: { mode?: number; mtime?: Date }
+    try {
+      info = stat(path)
+    } catch {
+      return
+    }
+    const time = info.mtime instanceof Date ? info.mtime.getTime() : 0
+    if (time > newest) {
+      newest = time
+    }
+    if (((info.mode ?? 0) & MODE_TYPE) !== DIRECTORY_MODE) {
+      return
+    }
+    let names: Array<string> = []
+    try {
+      names = filesystem.readdir(path)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      if (name === '.' || name === '..') {
+        continue
+      }
+      visit(`${path}/${name}`, depth + 1)
+    }
+  }
+  visit(databaseDirectory(id), 0)
+  return newest
+}
+
+// SQLite's -shm file is shared memory from the last process. Copying it into
+// a new browser makes TDLib abort after Ready. The wal is enough to recover.
+const dropSharedMemory = (filesystem: SyncFs): void => {
+  const unlink = filesystem.unlink
+  if (unlink === undefined) {
+    return
+  }
+  const visit = (path: string, depth: number): void => {
+    if (depth > 6) {
+      return
+    }
+    let names: Array<string> = []
+    try {
+      names = filesystem.readdir(path)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      if (name === '.' || name === '..') {
+        continue
+      }
+      const child = `${path}/${name}`
+      if (name.endsWith('-shm')) {
+        try {
+          unlink(child)
+        } catch {
+          // The file can already be gone after a previous populate.
+        }
+        continue
+      }
+      visit(child, depth + 1)
+    }
+  }
+  visit('/tdlib', 0)
 }
 
 const syncFs = (fs: SyncFs, populate: boolean): Promise<void> =>
@@ -238,6 +319,7 @@ export class TdWasmRuntime {
     created.FS.mount(filesystem, {}, '/tdlib')
     this.module = created
     await this.enqueueSync(true)
+    dropSharedMemory(created.FS)
     this.silenceLogs()
     this.armSyncTimer()
     this.bindLifecycle()
@@ -447,23 +529,33 @@ export class TdWasmRuntime {
       return []
     }
     await this.enqueueSync(true)
+    dropSharedMemory(filesystem)
     const ids = filesystem
       .readdir('/tdlib')
       .filter(name => name !== '.' && name !== '..' && validAccountId(name))
-      .sort()
-    const accounts: Array<TdAccount> = []
+      .sort((left, right) => {
+        const newer =
+          directoryTime(filesystem, right) - directoryTime(filesystem, left)
+        if (newer !== 0) {
+          return newer
+        }
+        return left < right ? -1 : left > right ? 1 : 0
+      })
+    // Each login keeps its own directory. Opening a leftover and logging it
+    // out used to discard the signed-in database and return the page to the QR
+    // screen. Keep the newest one that is already authorized, and close the
+    // others without logOut so their files stay put.
     for (const id of ids) {
       const account = await this.open(id, apiId, apiHash)
       const phase = await account
         .untilOpened(OPEN_TIMEOUT)
         .catch(() => account.phase)
       if (phase._tag === 'Ready') {
-        accounts.push(account)
-      } else {
-        await account.discard()
+        return [account]
       }
+      await account.release()
     }
-    return accounts
+    return []
   }
 
   private flushSoon(): void {

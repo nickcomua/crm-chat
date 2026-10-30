@@ -22,14 +22,20 @@ type Harness = {
 const install = (
   ids: Array<string>,
   authorization: Record<string, unknown>,
+  options?: {
+    states?: Array<Record<string, unknown>>
+    mtimes?: Record<string, number>
+  },
 ): Harness => {
   const syncs: Array<boolean> = []
   const sent: Array<Record<string, unknown>> = []
   const responses: Array<string> = []
   const deliverAuth = { current: false }
   const creates = { current: 0 }
+  const states = options?.states ?? [authorization]
+  const mtimes = options?.mtimes ?? {}
   let clientId = 0
-  let delivered = false
+  const deliveredClients = new Set<number>()
   let syncFailure: unknown = undefined
   let hold = false
   const held: Array<(error: unknown) => void> = []
@@ -41,12 +47,18 @@ const install = (
     return querySelector(selector)
   })
   const receive = (): string => {
-    if (deliverAuth.current && !delivered && clientId !== 0) {
-      delivered = true
+    if (
+      deliverAuth.current &&
+      clientId !== 0 &&
+      !deliveredClients.has(clientId) &&
+      deliveredClients.size < states.length
+    ) {
+      const state = states[deliveredClients.size]
+      deliveredClients.add(clientId)
       return JSON.stringify({
         '@type': 'updateAuthorizationState',
         '@client_id': clientId,
-        authorization_state: authorization,
+        authorization_state: state,
       })
     }
     return responses.shift() ?? ''
@@ -94,7 +106,12 @@ const install = (
           }
           callback(syncFailure)
         },
-        readdir: () => ['.', '..', ...ids],
+        stat: (path: string) => ({
+          mode: 16895,
+          mtime: new Date(mtimes[path] ?? 0),
+        }),
+        readdir: (path: string) =>
+          path === '/tdlib' ? ['.', '..', ...ids] : ['.', '..'],
       },
     }),
   )
@@ -195,10 +212,11 @@ test('a restored QR login is discarded instead of blocking the page', async () =
   const pending = harness.runtime.restore(1, HASH).then(accounts => {
     restored = accounts
   })
-  await vi.advanceTimersByTimeAsync(3_000)
+  await vi.advanceTimersByTimeAsync(5_000)
   expect(restored).toEqual([])
   await pending
-  expect(harness.sent.map(query => query['@type'])).toContain('logOut')
+  expect(harness.sent.map(query => query['@type'])).toContain('close')
+  expect(harness.sent.map(query => query['@type'])).not.toContain('logOut')
   const creates = harness.creates.current
   await harness.runtime.open('qr-acct', 1, HASH)
   expect(harness.creates.current).toBe(creates + 1)
@@ -232,7 +250,7 @@ test('an opening timeout drops the saved database without logout or flush', asyn
   const pending = harness.runtime.restore(1, HASH).then(accounts => {
     restored = accounts
   })
-  await vi.advanceTimersByTimeAsync(30_000)
+  await vi.advanceTimersByTimeAsync(35_000)
   await pending
   expect(restored).toEqual([])
   expect(harness.sent.map(query => query['@type'])).not.toContain('logOut')
@@ -258,6 +276,36 @@ test('a freeze and a hidden tab do not flush IndexedDB', async () => {
   expect(hiddenSyncs(harness.syncs)).toBe(0)
   await harness.runtime.sync()
   expect(hiddenSyncs(harness.syncs)).toBe(1)
+})
+
+test('restore keeps the signed-in database and does not log another one out', async () => {
+  vi.useFakeTimers()
+  const harness = install(
+    ['old-ready', 'new-phone'],
+    { '@type': 'authorizationStateReady' },
+    {
+      states: [
+        { '@type': 'authorizationStateWaitPhoneNumber' },
+        { '@type': 'authorizationStateReady' },
+      ],
+      mtimes: {
+        '/tdlib/new-phone': 2_000,
+        '/tdlib/old-ready': 1_000,
+      },
+    },
+  )
+  harness.deliverAuth.current = true
+  let restored: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const pending = harness.runtime.restore(1, HASH).then(accounts => {
+    restored = accounts
+  })
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(restored).toHaveLength(1)
+  await pending
+  expect(restored?.[0]?.id).toBe('old-ready')
+  const sent = harness.sent.map(query => query['@type'])
+  expect(sent).toContain('close')
+  expect(sent).not.toContain('logOut')
 })
 
 test('a restored ready account stays signed in', async () => {

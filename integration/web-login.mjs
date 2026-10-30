@@ -147,6 +147,7 @@ const timing = {
   approve_to_chats_ms: '',
   history_ms: '',
   reload_ms: '',
+  reopen_ms: '',
   auth: [],
 }
 
@@ -156,6 +157,7 @@ const writeTiming = async () => {
     `approve_to_chats_ms=${timing.approve_to_chats_ms}`,
     `history_ms=${timing.history_ms}`,
     `reload_ms=${timing.reload_ms}`,
+    `reopen_ms=${timing.reopen_ms}`,
     ...timing.auth.map(line => `auth ${line}`),
     ...logLines.map(line => `# ${line}`),
     '',
@@ -369,7 +371,10 @@ try {
   await shot(page, '03-open-chat.png')
   note(`history at ${timing.history_ms}ms bubble_chars=${bubbleText.length}`)
 
-  const reloadStart = Date.now()
+  // A real profile keeps every earlier login as its own directory. Give the
+  // signed-in database time to flush, then add a newer leftover the way a
+  // later visit does, and only then reload.
+  await delay(2_000)
   const saveDeadline = Date.now() + reloadBudgetMs
   while (!timing.auth.includes('tdlib sync saved') && Date.now() < saveDeadline) {
     await delay(100)
@@ -388,27 +393,111 @@ try {
     await shot(page, '04-after-reload.png')
     throw fail('session save was still running at reload')
   }
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  const shell = page.locator('[aria-label="Telegram chats"]')
-  try {
-    await shell.waitFor({ state: 'visible', timeout: reloadBudgetMs })
-    await page.locator('.chat-row').first().waitFor({
-      state: 'visible',
-      timeout: reloadBudgetMs,
+  await page.evaluate(async () => {
+    const opened = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('/tdlib', 21)
+      request.onerror = () => {
+        reject(request.error)
+      }
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
     })
-  } catch {
-    timing.reload_ms = String(Date.now() - reloadStart)
-    await shot(page, '04-after-reload.png')
-    throw fail(`session did not persist across reload within ${reloadBudgetMs}ms`)
+    const transaction = opened.transaction('FILE_DATA', 'readwrite')
+    const store = transaction.objectStore('FILE_DATA')
+    const stamp = new Date()
+    const leftover = '00000000-0000-4000-8000-000000000001'
+    const directory = {
+      timestamp: stamp,
+      mode: 16895,
+      contents: new Uint8Array(),
+    }
+    store.put(directory, `/tdlib/${leftover}`)
+    store.put(directory, `/tdlib/${leftover}/files`)
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = () => {
+        resolve()
+      }
+      transaction.onerror = () => {
+        reject(transaction.error)
+      }
+    })
+    opened.close()
+  })
+
+  const stillLoggedIn = async (nextPage, label, shotName) => {
+    const shell = nextPage.locator('[aria-label="Telegram chats"]')
+    try {
+      await shell.waitFor({ state: 'visible', timeout: reloadBudgetMs })
+      await nextPage.locator('.chat-row').first().waitFor({
+        state: 'visible',
+        timeout: reloadBudgetMs,
+      })
+    } catch {
+      await shot(nextPage, shotName)
+      throw fail(
+        `${label} did not keep the chat list within ${reloadBudgetMs}ms`,
+      )
+    }
+    const code = nextPage.locator('img[alt="Telegram login QR code"]')
+    if (
+      (await code.count()) > 0 &&
+      (await code.first().isVisible().catch(() => false))
+    ) {
+      await shot(nextPage, shotName)
+      throw fail(`${label} returned to the QR screen`)
+    }
   }
-  if ((await qr.count()) > 0 && (await qr.first().isVisible().catch(() => false))) {
+
+  const reloadStart = Date.now()
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  try {
+    await stillLoggedIn(page, 'reload', '04-after-reload.png')
+  } catch (error) {
     timing.reload_ms = String(Date.now() - reloadStart)
-    await shot(page, '04-after-reload.png')
-    throw fail('reload returned to the QR screen')
+    throw error
   }
   timing.reload_ms = String(Date.now() - reloadStart)
   await shot(page, '04-after-reload.png')
   note(`reload persisted at ${timing.reload_ms}ms`)
+  await page.waitForFunction(
+    () => document.documentElement.dataset.tdlibSync === '0',
+    undefined,
+    { timeout: reloadBudgetMs },
+  )
+
+  const reopenStart = Date.now()
+  await browser.close()
+  browser = await playwright.launchPersistentContext(profile, {
+    executablePath: chromium,
+    headless: process.env.CRM_CHAT_WEB_HEADED !== '1',
+    viewport: { width: 1440, height: 900 },
+    args: ['--disable-dev-shm-usage'],
+  })
+  const reopened = browser.pages()[0] ?? (await browser.newPage())
+  reopened.on('console', message => {
+    const text = message.text()
+    if (
+      text.startsWith('tdlib auth authorizationState') ||
+      text === 'tdlib sync saved'
+    ) {
+      timing.auth.push(redact(text))
+      note(text)
+    }
+  })
+  reopened.on('pageerror', error => {
+    note(`pageerror ${String(error.stack ?? error.message).slice(0, 400)}`)
+  })
+  await reopened.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  try {
+    await stillLoggedIn(reopened, 'reopen', '05-reopened.png')
+  } catch (error) {
+    timing.reopen_ms = String(Date.now() - reopenStart)
+    throw error
+  }
+  timing.reopen_ms = String(Date.now() - reopenStart)
+  await shot(reopened, '05-reopened.png')
+  note(`reopen persisted at ${timing.reopen_ms}ms`)
   note('PASS')
 } catch (error) {
   failed = true
