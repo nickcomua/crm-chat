@@ -6,6 +6,7 @@ import {
   type TdQuery,
   type TdSink,
   chatKind,
+  clockTime,
   publicError,
 } from './tdlibProtocol'
 import {
@@ -217,6 +218,79 @@ describe('TDLib browser protocol', () => {
         { id: 'one:9', title: 'News', kind: 'Channel' },
       ],
     })
+  })
+
+  test('keeps a last-message preview beside the desktop chat shape', async () => {
+    const { account } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [7] } },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Ada',
+          unread_count: 2,
+          type: { '@type': 'chatTypePrivate' },
+          last_message: {
+            '@type': 'message',
+            id: 3,
+            is_outgoing: true,
+            date: 1_700_000_000,
+            content: {
+              '@type': 'messageText',
+              text: { '@type': 'formattedText', text: 'Bring the notes.' },
+            },
+          },
+        },
+      },
+    ])
+    await expect(account.readAccount()).resolves.toEqual({
+      id: 'one',
+      title: 'Ada',
+      chats: [{ id: 'one:7', title: 'Ada', kind: 'Dialog' }],
+    })
+    expect(account.previews).toEqual([
+      {
+        id: 'one:7',
+        time: clockTime(1_700_000_000),
+        preview: 'Bring the notes.',
+        unread: 2,
+        receipt: 'sent',
+      },
+    ])
+  })
+
+  test('retries the chat list once after a timed-out load', async () => {
+    const { account, sent } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'error', message: 'REQUEST_FAILED' } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [7] } },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Ada',
+          type: { '@type': 'chatTypePrivate' },
+          last_message: {
+            '@type': 'message',
+            id: 4,
+            is_outgoing: false,
+            date: 1_700_000_100,
+            content: {
+              '@type': 'messageText',
+              text: { text: 'hello' },
+            },
+          },
+        },
+      },
+    ])
+    await expect(account.readAccount()).resolves.toMatchObject({
+      chats: [{ id: 'one:7', title: 'Ada', kind: 'Dialog' }],
+    })
+    expect(account.chatListError).toBeUndefined()
+    expect(account.previews[0]?.preview).toBe('hello')
+    expect(sent.filter(query => query['@type'] === 'getChats')).toHaveLength(2)
   })
 
   test('an authorized session stays signed in when the chat list fails', async () => {

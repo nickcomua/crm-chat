@@ -261,6 +261,41 @@
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
         '';
+        integrationTestWeb = pkgs.writeShellScript "crm-chat-integration-test-web" ''
+          set -euo pipefail
+          export PATH=${
+            pkgs.lib.makeBinPath [
+              pkgs.nodejs
+              pkgs.zbar
+            ]
+          }:$PATH
+          export CRM_CHAT_WEBSITE=${website}
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          pw_env="''${CRM_CHAT_PW_ENV:-$HOME/.local/state/kam-t3/tools/pw.env}"
+          if [ -f "$pw_env" ]; then
+            set -a
+            . "$pw_env"
+            set +a
+          fi
+          if [ -z "''${PLAYWRIGHT_CORE:-}" ] || [ -z "''${CHROMIUM:-}" ]; then
+            echo "integration-test-web: set PLAYWRIGHT_CORE and CHROMIUM (pw.env)" >&2
+            exit 1
+          fi
+          if ! command -v secretspec >/dev/null 2>&1; then
+            echo "integration-test-web: secretspec is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v bws >/dev/null 2>&1; then
+            echo "integration-test-web: bws is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v zbarimg >/dev/null 2>&1; then
+            echo "integration-test-web: zbarimg is not on PATH" >&2
+            exit 1
+          fi
+          exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
+            ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
+        '';
         loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
           set -euo pipefail
           export PATH=${
@@ -433,6 +468,10 @@
           integration-test = {
             type = "app";
             program = "${integrationTest}";
+          };
+          integration-test-web = {
+            type = "app";
+            program = "${integrationTestWeb}";
           };
           login-test-account = {
             type = "app";

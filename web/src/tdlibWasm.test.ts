@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { TdWasmRuntime } from './tdlibWasm'
+import { TdWasmRuntime, nextReceiveDelay } from './tdlibWasm'
 
 type Call = { name: string; query?: string }
 
@@ -59,6 +59,75 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, 'createTdwebModule')
+})
+
+describe('TDLib wasm receive delay', () => {
+  test('runs a due scheduler turn immediately and caps the idle poll at 100ms', () => {
+    expect(nextReceiveDelay(undefined)).toBe(100)
+    expect(nextReceiveDelay(Number.NaN)).toBe(100)
+    expect(nextReceiveDelay(0)).toBe(0)
+    expect(nextReceiveDelay(-1)).toBe(0)
+    expect(nextReceiveDelay(0.02)).toBe(20)
+    expect(nextReceiveDelay(30)).toBe(100)
+  })
+
+  test('a due scheduler turn pumps receive before the idle poll', async () => {
+    vi.useFakeTimers()
+    let receives = 0
+    let timeouts = 0
+    const cwrap = (name: string) => {
+      if (name === 'td_emscripten_execute') {
+        return () => ok
+      }
+      if (name === 'td_emscripten_create_client_id') {
+        return () => 7
+      }
+      if (name === 'td_emscripten_send') {
+        return () => undefined
+      }
+      if (name === 'td_emscripten_receive') {
+        return () => {
+          receives += 1
+          return ''
+        }
+      }
+      if (name === 'td_emscripten_get_timeout') {
+        return () => {
+          timeouts += 1
+          return timeouts === 1 ? 0 : 30
+        }
+      }
+      throw new Error(name)
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    Reflect.set(globalThis, 'createTdwebModule', () =>
+      Promise.resolve({
+        cwrap,
+        FS: {
+          mkdir: () => undefined,
+          mount: () => undefined,
+          syncfs: (_populate: boolean, callback: (error: unknown) => void) => {
+            callback(null)
+          },
+          readdir: () => [],
+          filesystems: { IDBFS: {} },
+        },
+      }),
+    )
+    const runtime = new TdWasmRuntime()
+    await runtime.open('one', 1, 'a'.repeat(32))
+    await vi.advanceTimersToNextTimerAsync()
+    const afterFirst = receives
+    expect(afterFirst).toBeGreaterThan(0)
+    expect(timeouts).toBe(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(receives).toBeGreaterThan(afterFirst)
+    const hurried = receives
+    await vi.advanceTimersByTimeAsync(50)
+    expect(receives).toBe(hurried)
+  })
 })
 
 describe('TDLib wasm log silence', () => {
@@ -179,7 +248,14 @@ describe('TDLib wasm log silence', () => {
   test('a websocket message pumps receive before the idle poll', async () => {
     vi.useFakeTimers()
     let receives = 0
+    let owner: unknown
     const handlers = new Map<string, () => void>()
+    const socket = {
+      on(this: unknown, event: string, callback: () => void) {
+        owner = this
+        handlers.set(event, callback)
+      },
+    }
     const cwrap = (name: string) => {
       if (name === 'td_emscripten_execute') {
         return () => ok
@@ -204,11 +280,7 @@ describe('TDLib wasm log silence', () => {
     Reflect.set(globalThis, 'createTdwebModule', () =>
       Promise.resolve({
         cwrap,
-        websocket: {
-          on: (event: string, callback: () => void) => {
-            handlers.set(event, callback)
-          },
-        },
+        websocket: socket,
         FS: {
           mkdir: () => undefined,
           mount: () => undefined,
@@ -222,6 +294,7 @@ describe('TDLib wasm log silence', () => {
     )
     const runtime = new TdWasmRuntime()
     await runtime.open('one', 1, 'a'.repeat(32))
+    expect(owner).toBe(socket)
     await vi.advanceTimersByTimeAsync(0)
     const afterKick = receives
     expect(afterKick).toBeGreaterThan(0)

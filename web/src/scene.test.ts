@@ -6,6 +6,7 @@ import {
   expect,
   expectAll,
   given,
+  nth,
   role,
   scene,
   type,
@@ -15,6 +16,7 @@ import { test } from 'vitest'
 
 import {
   BeginLogin,
+  LoadHistory,
   Message,
   Refresh,
   SubmitAnswer,
@@ -81,6 +83,48 @@ test('phone login requests 2FA then loads distinct chat types', () => {
     expect(role('region', { name: 'Telegram chats' })).toContainText('channel'),
     expect(role('region', { name: 'Open chat' })).toContainText(
       'Select a chat to start messaging',
+    ),
+  )
+})
+
+test('opening a chat loads its message history', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        login: () => ({ _tag: 'Closed' }),
+        accounts: () => [account],
+        selectedAccountId: () => 'one',
+        faces: () => [
+          {
+            id: 'one:1',
+            time: '12:00',
+            preview: 'Bring the notes.',
+            unread: 0,
+            receipt: 'none',
+            lines: [],
+          },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'Bring the notes.',
+    ),
+    click(nth(all.role('listitem'), 0)),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'one:1',
+        lines: [
+          { text: 'See you at the station.', mine: false, time: '12:04' },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'See you at the station.',
+    ),
+    expect(role('region', { name: 'Open chat' })).not.toContainText(
+      'No messages yet',
     ),
   )
 })

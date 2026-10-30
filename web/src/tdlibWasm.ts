@@ -9,6 +9,22 @@ import {
 
 const WASM_JS = '/tdlib/td_wasm.js'
 const OPEN_TIMEOUT = 30_000
+const IDLE_RECEIVE_MS = 100
+
+// A timeout at or below zero means TDLib's scheduler is already due. The
+// official worker runs that turn immediately. Parking it on the idle poll
+// stretches a few hundred turns into the long pause after QR approval.
+export const nextReceiveDelay = (
+  timeoutSeconds: number | undefined,
+): number => {
+  if (timeoutSeconds === undefined || Number.isNaN(timeoutSeconds)) {
+    return IDLE_RECEIVE_MS
+  }
+  if (timeoutSeconds <= 0) {
+    return 0
+  }
+  return Math.min(timeoutSeconds * 1000, IDLE_RECEIVE_MS)
+}
 
 type Cwrap = (
   name: string,
@@ -233,8 +249,9 @@ export class TdWasmRuntime {
   // reads them inside td_emscripten_receive, so a socket event has to pump
   // the loop instead of waiting for the idle poll.
   private bindSocketWake(): void {
-    const wake = this.module?.websocket?.on
-    if (wake === undefined) {
+    const socket = this.module?.websocket
+    const wake = socket?.on
+    if (socket === undefined || wake === undefined) {
       return
     }
     const pump = () => {
@@ -248,7 +265,9 @@ export class TdWasmRuntime {
       'connection',
       'listen',
     ]) {
-      wake(event, pump)
+      // SOCKFS.mount stores one callback on the socket object. A bare call
+      // would file it on the wrong `this`, and a later mount clears it.
+      wake.call(socket, event, pump)
     }
   }
 
@@ -273,7 +292,22 @@ export class TdWasmRuntime {
     this.scheduleReceive(0)
   }
 
+  private mainTimeout(): number | undefined {
+    const module = this.module
+    if (module === undefined) {
+      return undefined
+    }
+    try {
+      const wrapped = module.cwrap('td_emscripten_get_timeout', 'number', [])
+      const value = wrapped()
+      return typeof value === 'number' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private receive(): void {
+    this.bindSocketWake()
     const functions = this.functions()
     for (;;) {
       const raw = functions.receive()
@@ -302,7 +336,7 @@ export class TdWasmRuntime {
         }
       }
     }
-    this.scheduleReceive(100)
+    this.scheduleReceive(nextReceiveDelay(this.mainTimeout()))
   }
 
   // TDLib creates the client on the first request and emits nothing before
@@ -333,6 +367,12 @@ export class TdWasmRuntime {
 
   private onUpdate(slot: ClientSlot, value: Record<string, unknown>): void {
     const state = value['authorization_state']
+    if (value['@type'] === 'updateAuthorizationState' && isRecord(state)) {
+      const name = state['@type']
+      if (typeof name === 'string' && name.startsWith('authorizationState')) {
+        console.info(`tdlib auth ${name}`)
+      }
+    }
     if (
       value['@type'] === 'updateAuthorizationState' &&
       isRecord(state) &&
@@ -341,11 +381,7 @@ export class TdWasmRuntime {
       this.sendParameters(slot)
       return
     }
-    const wasReady = slot.account.phase._tag === 'Ready'
     slot.account.apply(value)
-    if (!wasReady && slot.account.phase._tag === 'Ready') {
-      this.flushSoon()
-    }
   }
 
   private dispatch(clientId: number, query: TdQuery): Promise<unknown> {
@@ -387,6 +423,7 @@ export class TdWasmRuntime {
       drop: async () => {
         this.slots.delete(id)
       },
+      sync: () => this.sync(),
     }
     const account = new TdAccount(sink, id)
     const slot: ClientSlot = {
@@ -440,16 +477,9 @@ export class TdWasmRuntime {
       return
     }
     this.lifecycleBound = true
-    const flush = () => {
-      this.flushSoon()
-    }
-    window.addEventListener('pagehide', flush)
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        flush()
-      }
-    })
-    document.addEventListener('freeze', flush)
+    // A sync that starts while the document is unloading writes a partial
+    // IndexedDB. The next visit then opens a torn database and TDLib aborts.
+    // The login sync and the interval below finish while the page is alive.
   }
 
   private clearSyncTimer(): void {
@@ -483,16 +513,19 @@ export class TdWasmRuntime {
         return
       }
       this.clearSyncTimer()
+      document.documentElement.dataset['tdlibSync'] = '1'
       try {
         await syncFs(filesystem, populate)
         if (!populate) {
           this.syncError = undefined
+          console.info('tdlib sync saved')
         }
       } catch (error) {
         const failure = error instanceof Error ? error : syncFailure(error)
         this.syncError = failure
         throw failure
       } finally {
+        document.documentElement.dataset['tdlibSync'] = '0'
         this.armSyncTimer()
       }
     })

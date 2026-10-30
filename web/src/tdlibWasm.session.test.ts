@@ -132,7 +132,7 @@ afterEach(() => {
   Reflect.deleteProperty(globalThis, 'createTdwebModule')
 })
 
-test('IndexedDB flushes on ready, page hide, and a hidden tab, then keeps flushing', async () => {
+test('a ready account does not flush on page hide, then keeps flushing', async () => {
   vi.useFakeTimers()
   const harness = install([], {
     '@type': 'authorizationStateReady',
@@ -142,7 +142,7 @@ test('IndexedDB flushes on ready, page hide, and a hidden tab, then keeps flushi
 
   window.dispatchEvent(new Event('pagehide'))
   await vi.advanceTimersByTimeAsync(0)
-  expect(hiddenSyncs(harness.syncs)).toBe(1)
+  expect(hiddenSyncs(harness.syncs)).toBe(0)
 
   Object.defineProperty(document, 'visibilityState', {
     configurable: true,
@@ -150,7 +150,7 @@ test('IndexedDB flushes on ready, page hide, and a hidden tab, then keeps flushi
   })
   document.dispatchEvent(new Event('visibilitychange'))
   await vi.advanceTimersByTimeAsync(0)
-  expect(hiddenSyncs(harness.syncs)).toBe(1)
+  expect(hiddenSyncs(harness.syncs)).toBe(0)
 
   Object.defineProperty(document, 'visibilityState', {
     configurable: true,
@@ -158,14 +158,14 @@ test('IndexedDB flushes on ready, page hide, and a hidden tab, then keeps flushi
   })
   document.dispatchEvent(new Event('visibilitychange'))
   await vi.advanceTimersByTimeAsync(0)
-  expect(hiddenSyncs(harness.syncs)).toBe(2)
+  expect(hiddenSyncs(harness.syncs)).toBe(0)
 
   harness.deliverAuth.current = true
   await vi.advanceTimersByTimeAsync(100)
-  expect(hiddenSyncs(harness.syncs)).toBe(3)
+  expect(hiddenSyncs(harness.syncs)).toBe(0)
 
   await harness.runtime.sync()
-  expect(hiddenSyncs(harness.syncs)).toBe(4)
+  expect(hiddenSyncs(harness.syncs)).toBe(1)
 
   const beforeInterval = harness.syncs.length
   await vi.advanceTimersByTimeAsync(5_000)
@@ -242,14 +242,21 @@ test('an opening timeout drops the saved database without logout or flush', asyn
   expect(harness.creates.current).toBe(creates + 1)
 })
 
-test('a freeze and a hidden tab both flush through the serialized sync', async () => {
+test('a freeze and a hidden tab do not flush IndexedDB', async () => {
   vi.useFakeTimers()
   const harness = install([], {
     '@type': 'authorizationStateReady',
   })
   await harness.runtime.open('acct', 1, HASH)
   document.dispatchEvent(new Event('freeze'))
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => 'hidden',
+  })
+  document.dispatchEvent(new Event('visibilitychange'))
   await vi.advanceTimersByTimeAsync(0)
+  expect(hiddenSyncs(harness.syncs)).toBe(0)
+  await harness.runtime.sync()
   expect(hiddenSyncs(harness.syncs)).toBe(1)
 })
 

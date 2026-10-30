@@ -2,6 +2,7 @@ import * as Schema from 'effect/Schema'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 
+import { ChatLine, StoredFace } from './chatFace'
 import { Account, AuthResult } from './telegram'
 
 export const Secret = Schema.Redacted(Schema.String)
@@ -51,7 +52,11 @@ export const Message = defineMessageUnion({
   CompletedRestore: { accounts: Schema.Array(Account) },
   SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
   FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
-  SucceededRefresh: { account: Account },
+  SucceededRefresh: {
+    account: Account,
+    faces: Schema.optional(Schema.Array(StoredFace)),
+  },
+  LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
   FailedRefresh: {},
   CompletedDisconnect: {},
 })

@@ -19,6 +19,24 @@ export type Message = {
   date: number
 }
 
+export type ChatPreview = {
+  id: string
+  time: string
+  preview: string
+  unread: number
+  receipt: 'none' | 'sent' | 'read'
+}
+
+export const clockTime = (unix: number): string => {
+  if (!Number.isFinite(unix) || unix <= 0) {
+    return ''
+  }
+  const date = new Date(unix * 1000)
+  const hours = date.getHours().toString().padStart(2, '0')
+  const minutes = date.getMinutes().toString().padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
 export type AuthStep =
   | { _tag: 'Code'; id: string }
   | { _tag: 'Password'; id: string }
@@ -42,6 +60,8 @@ export type TdSink = {
   close: () => Promise<void>
   // Drops the client without writing the in-memory filesystem back.
   drop?: () => Promise<void>
+  // Copies the in-memory database to IndexedDB. Absent on the desktop sink.
+  sync?: () => Promise<void>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -221,6 +241,7 @@ const DISCARD_TIMEOUT = 2_000
 export class TdAccount {
   phase: Phase = { _tag: 'Opening' }
   chatListError: string | undefined = undefined
+  previews: Array<ChatPreview> = []
   private readonly waiters: Array<() => void> = []
 
   constructor(
@@ -370,9 +391,7 @@ export class TdAccount {
     return this.step()
   }
 
-  async readAccount(): Promise<Account> {
-    this.chatListError = undefined
-    const me = await this.send({ '@type': 'getMe' })
+  private async loadChatIds(): Promise<Array<unknown> | undefined> {
     await this.send({
       '@type': 'loadChats',
       chat_list: { '@type': 'chatListMain' },
@@ -390,38 +409,75 @@ export class TdAccount {
       return undefined
     })
     if (chats === undefined) {
-      return { id: this.id, title: accountTitle(me), chats: [] }
+      return undefined
     }
     const ids = field(chats, 'chat_ids')
+    return Array.isArray(ids) ? ids : []
+  }
+
+  async readAccount(): Promise<Account> {
+    this.chatListError = undefined
+    this.previews = []
+    const me = await this.send({ '@type': 'getMe' })
+    let ids = await this.loadChatIds()
+    const timedOut = this.chatListError === 'REQUEST_FAILED'
+    const empty = ids !== undefined && ids.length === 0
+    if (timedOut || empty) {
+      this.chatListError = undefined
+      const again = await this.loadChatIds()
+      if (again !== undefined) {
+        ids = again
+      }
+    }
+    if (ids === undefined) {
+      return { id: this.id, title: accountTitle(me), chats: [] }
+    }
     const parsed: Array<Chat> = []
-    if (Array.isArray(ids)) {
-      for (const chatId of ids) {
-        const raw = idValue(chatId)
-        if (raw === undefined) {
-          continue
-        }
-        const chat = await this.send({
-          '@type': 'getChat',
-          chat_id: chatIdArgument(raw),
-        }).catch(() => undefined)
-        if (chat === undefined) {
-          continue
-        }
-        const chatType = field(chat, 'type')
-        const kind = chatKind(
-          typeName(chatType),
-          field(chatType, 'is_channel') === true,
-        )
-        if (kind === undefined) {
-          continue
-        }
-        const title = text(field(chat, 'title'))
-        parsed.push({
-          id: `${this.id}:${raw}`,
-          title: title === '' ? 'Unnamed chat' : title,
-          kind,
+    const previews: Array<ChatPreview> = []
+    for (const chatId of ids) {
+      const raw = idValue(chatId)
+      if (raw === undefined) {
+        continue
+      }
+      const chat = await this.send({
+        '@type': 'getChat',
+        chat_id: chatIdArgument(raw),
+      }).catch(() => undefined)
+      if (chat === undefined) {
+        continue
+      }
+      const chatType = field(chat, 'type')
+      const kind = chatKind(
+        typeName(chatType),
+        field(chatType, 'is_channel') === true,
+      )
+      if (kind === undefined) {
+        continue
+      }
+      const title = text(field(chat, 'title'))
+      const id = `${this.id}:${raw}`
+      parsed.push({
+        id,
+        title: title === '' ? 'Unnamed chat' : title,
+        kind,
+      })
+      const last = messageFrom(field(chat, 'last_message'))
+      if (last !== undefined && last.text !== '') {
+        const unread = field(chat, 'unread_count')
+        previews.push({
+          id,
+          time: clockTime(last.date),
+          preview: last.text,
+          unread: typeof unread === 'number' && unread > 0 ? unread : 0,
+          receipt: last.outgoing ? 'sent' : 'none',
         })
       }
+    }
+    this.previews = previews
+    // Sync after the chat rows are loaded. The Ready transition's files are
+    // still an incomplete database and crash TDLib on the next visit.
+    if (this.sink.sync !== undefined) {
+      await this.sink.sync()
     }
     return { id: this.id, title: accountTitle(me), chats: parsed }
   }

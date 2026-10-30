@@ -19,11 +19,14 @@ import { Login } from './login'
 import { loginScreen } from './loginView'
 import { Message, RuntimeCredentials, Secret } from './message'
 import { chatShell } from './shellView'
+import { clockTime } from './tdlibProtocol'
 import {
   Account,
+  accountFaces,
   beginLogin,
   desktopFailure,
   loadAccount,
+  loadMessages,
   pollAccount,
   removeConnection,
   restoreAccounts,
@@ -166,9 +169,42 @@ export const Refresh = Command.define('Refresh', {
   args: { id: Schema.String },
   messages: [Message.SucceededRefresh, Message.FailedRefresh],
   execute: ({ id }) =>
-    Effect.tryPromise(() => loadAccount(id)).pipe(
-      Effect.map(account => Message.SucceededRefresh({ account })),
+    Effect.tryPromise(() =>
+      loadAccount(id).then(account => ({
+        account,
+        faces: accountFaces(id),
+      })),
+    ).pipe(
+      Effect.map(({ account, faces }) =>
+        Message.SucceededRefresh({ account, faces }),
+      ),
       Effect.catch(() => Effect.succeed(Message.FailedRefresh())),
+    ),
+})
+export const LoadHistory = Command.define('LoadHistory', {
+  args: { accountId: Schema.String, chatId: Schema.String },
+  messages: [Message.LoadedHistory],
+  execute: ({ accountId, chatId }) =>
+    Effect.tryPromise(() => loadMessages(accountId, chatId)).pipe(
+      Effect.map(messages =>
+        Message.LoadedHistory({
+          id: chatId,
+          lines: messages.flatMap(message =>
+            message.text === ''
+              ? []
+              : [
+                  {
+                    text: message.text,
+                    mine: message.outgoing,
+                    time: clockTime(message.date),
+                  },
+                ],
+          ),
+        }),
+      ),
+      Effect.catch(() =>
+        Effect.succeed(Message.LoadedHistory({ id: chatId, lines: [] })),
+      ),
     ),
 })
 export const Disconnect = Command.define('Disconnect', {
@@ -182,6 +218,25 @@ export const Disconnect = Command.define('Disconnect', {
       }),
     ),
 })
+const mergeFaces = (
+  current: ReadonlyArray<StoredFace>,
+  incoming: ReadonlyArray<StoredFace>,
+): Array<StoredFace> => {
+  const next = [...current]
+  for (const face of incoming) {
+    const index = next.findIndex(item => item.id === face.id)
+    const previous = index < 0 ? undefined : next[index]
+    if (previous === undefined) {
+      next.push(face)
+      continue
+    }
+    next[index] = {
+      ...face,
+      lines: face.lines.length > 0 ? face.lines : previous.lines,
+    }
+  }
+  return next
+}
 const closedMenus = {
   menuOpen: () => false,
   moreOpen: () => false,
@@ -259,7 +314,8 @@ export const update = (model: Model, message: Message) =>
         authEntry: () => 'Phone',
         passkeyNote: () => false,
         error: () => '',
-        login: () => (model.login._tag === 'Qr' ? Login.Editing() : model.login),
+        login: () =>
+          model.login._tag === 'Qr' ? Login.Editing() : model.login,
       })
       if (!model.fixturePreview && model.login._tag === 'Qr') {
         return { model: next, commands: [Disconnect({ id: model.login.id })] }
@@ -388,13 +444,27 @@ export const update = (model: Model, message: Message) =>
             }),
             commands: [Refresh({ id: model.selectedAccountId })],
           },
-    ClickedChat: ({ id }) => ({
-      model: modifyFields(model, {
-        maybeOpenChatId: () => Option.some(id),
-        draft: () => '',
-        ...closedMenus,
-      }),
-    }),
+    ClickedChat: ({ id }) => {
+      const face = model.faces.find(item => item.id === id)
+      const known = face !== undefined && face.lines.length > 0
+      return {
+        model: modifyFields(model, {
+          maybeOpenChatId: () => Option.some(id),
+          draft: () => '',
+          ...closedMenus,
+        }),
+        ...(model.fixturePreview || model.selectedAccountId === '' || known
+          ? {}
+          : {
+              commands: [
+                LoadHistory({
+                  accountId: model.selectedAccountId,
+                  chatId: id,
+                }),
+              ],
+            }),
+      }
+    },
     ClickedBack: () => ({
       model: modifyFields(model, {
         maybeOpenChatId: () => Option.none(),
@@ -572,6 +642,10 @@ export const update = (model: Model, message: Message) =>
             phone: () => Redacted.make(''),
             accounts: accounts => Array.append(accounts, result.account),
             selectedAccountId: () => result.account.id,
+            faces: current =>
+              result.faces === undefined
+                ? current
+                : mergeFaces(current, result.faces),
             query: () => '',
             draft: () => '',
             maybeOpenChatId: () => Option.none(),
@@ -612,12 +686,37 @@ export const update = (model: Model, message: Message) =>
               error: () => error,
             }),
           },
-    SucceededRefresh: ({ account }) => ({
+    SucceededRefresh: ({ account, faces }) => ({
       model: modifyFields(model, {
         accounts: Array.map(current =>
           current.id === account.id ? account : current,
         ),
         status: () => 'Ready',
+        faces: current =>
+          faces === undefined ? current : mergeFaces(current, faces),
+      }),
+    }),
+    LoadedHistory: ({ id, lines }) => ({
+      model: modifyFields(model, {
+        faces: current => {
+          const index = current.findIndex(face => face.id === id)
+          if (index < 0) {
+            return [
+              ...current,
+              {
+                id,
+                time: '',
+                preview: '',
+                unread: 0,
+                receipt: 'none' as const,
+                lines,
+              },
+            ]
+          }
+          return current.map(face =>
+            face.id === id ? { ...face, lines } : face,
+          )
+        },
       }),
     }),
     FailedRefresh: () => ({
@@ -730,7 +829,7 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
         id === ''
           ? Stream.empty
           : Stream.fromEffectSchedule(
-              Effect.sleep('2 seconds').pipe(
+              Effect.sleep('200 millis').pipe(
                 Effect.andThen(Effect.tryPromise(() => pollAccount(id))),
                 Effect.map(result =>
                   Message.SucceededAuthenticate({ result, sourceId: id }),
@@ -744,7 +843,7 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
                   ),
                 ),
               ),
-              Schedule.spaced('1 second'),
+              Schedule.spaced('200 millis'),
             ),
     },
   ),
