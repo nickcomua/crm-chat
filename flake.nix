@@ -56,9 +56,13 @@
             (pkgs.lib.fileset.fileFilter (file: file.hasExt "nix") ./.)
             (pkgs.lib.fileset.maybeMissing ./web/repos);
         };
+        cargoFiles =
+          pkgs.lib.fileset.difference
+          (craneLib.fileset.commonCargoSources ./.)
+          (pkgs.lib.fileset.maybeMissing ./integration);
         src = pkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = craneLib.fileset.commonCargoSources ./.;
+          fileset = cargoFiles;
         };
         commonArgs = {
           inherit src;
@@ -80,7 +84,7 @@
         appSrc = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
-            (craneLib.fileset.commonCargoSources ./.)
+            cargoFiles
             ./desktop/tauri.conf.json
             ./desktop/capabilities
             ./desktop/icons
@@ -185,7 +189,7 @@
             src = pkgs.lib.fileset.toSource {
               root = ./.;
               fileset = pkgs.lib.fileset.unions [
-                (craneLib.fileset.commonCargoSources ./.)
+                cargoFiles
                 ./web/src/generated/core.ts
               ];
             };
@@ -199,6 +203,46 @@
             '';
           }
         );
+        integrationNodeModules = pkgs.importNpmLock.buildNodeModules {
+          npmRoot = ./web;
+          inherit (pkgs) nodejs;
+        };
+        integrationTest = pkgs.writeShellScript "crm-chat-integration-test" ''
+          set -euo pipefail
+          export PATH=${
+            pkgs.lib.makeBinPath [
+              rustToolchain
+              pkgs.nodejs
+              pkgs.pkg-config
+              pkgs.gcc
+            ]
+          }:$PATH
+          export PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig
+          export CRM_CHAT_INVOCATION_DIR="$PWD"
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          export CRM_CHAT_WEB_CHECK=${./integration/web-check.cjs}
+          export CRM_CHAT_NODE_MODULES=${integrationNodeModules}
+          export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
+          exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
+        '';
+        loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
+          set -euo pipefail
+          export PATH=${
+            pkgs.lib.makeBinPath [
+              rustToolchain
+              pkgs.nodejs
+              pkgs.pkg-config
+              pkgs.gcc
+              pkgs.coreutils
+            ]
+          }:$PATH
+          export PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig
+          export CRM_CHAT_INVOCATION_DIR="$PWD"
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          export CRM_CHAT_DESKTOP_MANIFEST=${./integration/desktop}/Cargo.toml
+          export CRM_CHAT_SECRET_STATE=${./integration/secret-state.cjs}
+          exec ${pkgs.bash}/bin/bash ${./integration/login.sh} "$@"
+        '';
       in {
         formatter = pkgs.alejandra;
         packages = {
@@ -299,6 +343,14 @@
             inherit (pkgs) nodejs;
           };
         };
+        apps.integration-test = {
+          type = "app";
+          program = "${integrationTest}";
+        };
+        apps.login-test-account = {
+          type = "app";
+          program = "${loginTestAccount}";
+        };
       }
     );
   in {
@@ -306,5 +358,6 @@
     packages = nixpkgs.lib.mapAttrs (_: v: v.packages) perSystem;
     checks = nixpkgs.lib.mapAttrs (_: v: v.checks) perSystem;
     devShells = nixpkgs.lib.mapAttrs (_: v: {default = v.devShells.default;}) perSystem;
+    apps = nixpkgs.lib.mapAttrs (_: v: v.apps) perSystem;
   };
 }

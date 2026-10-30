@@ -160,3 +160,32 @@ test('a successful QR poll clears a transient authentication error', () => {
     }),
   )
 })
+
+test('runtime application credentials replace manual entry and are kept in the model', () => {
+  story(
+    update,
+    given(initialModel),
+    message(
+      Message.CompletedLoadAppCredentials({
+        credentials: {
+          _tag: 'Present',
+          apiId: '12345',
+          apiHash: Redacted.make('0123456789abcdef0123456789abcdef'),
+        },
+      }),
+    ),
+    model(current => {
+      expect(current.appCredentials).toBe('Supplied')
+      expect(current.apiId).toBe('12345')
+    }),
+    message(
+      Message.CompletedLoadAppCredentials({
+        credentials: { _tag: 'Absent' },
+      }),
+    ),
+    model(current => {
+      expect(current.appCredentials).toBe('Supplied')
+      expect(current.apiId).toBe('12345')
+    }),
+  )
+})

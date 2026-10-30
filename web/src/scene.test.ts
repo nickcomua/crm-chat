@@ -136,3 +136,20 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
     expect(role('heading', { name: 'Telegram chats' })).toExist(),
   )
 })
+
+test('supplied application credentials are not rendered as inputs', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        appCredentials: () => 'Supplied',
+        apiId: () => '12345',
+        apiHash: () => Redacted.make('0123456789abcdef0123456789abcdef'),
+      }),
+    ),
+    expect(role('textbox', { name: 'API ID' })).not.toExist(),
+    expect(role('textbox', { name: 'API hash' })).not.toExist(),
+    expect(role('textbox', { name: 'Phone number' })).toExist(),
+    expect(role('button', { name: 'Log in with QR' })).toExist(),
+  )
+})

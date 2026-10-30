@@ -4,7 +4,7 @@ Read this before changing shells, the Rust core, or Telegram behavior. The produ
 
 ## Do not revive the legacy stack
 
-The old product lives at `~/Documents/crm-chat-legacy`. Use it as a reference. Do not import its history, copy its credentials, or port its architecture.
+The old product lives at `~/Documents/crm-chat-legacy`. Use it as a reference. Do not import its history or port its architecture. Do not copy Clerk, Convex, or other legacy credentials into this repo. Telegram application credentials are the exception in KAM-56: the same BWS-held values are declared for runtime injection, not committed. See `docs/secrets.md`.
 
 Legacy shape: a React + Vite page talked to self-hosted Convex over WebSocket. A Rust worker talked to Telegram with grammers and to Convex with the Rust SDK. Clerk authenticated humans. The worker used Clerk machine-to-machine JWTs. Convex was the database, file store, and queue: worker jobs subscribed to `pendingWork` queries and spawned a tokio task per entity. There was no separate durable-workflow runtime and no worker HTTP API.
 
@@ -29,7 +29,7 @@ Public `nickcomua/crm-chat`, empty history. `main` moves only by pull-request me
 - `crates/core` is the shared Rust core (`crm-chat-core`). It compiles for Linux and wasm32. TypeScript types are generated from it and committed at `web/src/generated/core.ts`. The core exports types only: no fixture function, no chat-list API, no sockets, no grammers. Design: `docs/plans/shared-core.md`.
 - Rust checks use crane, fenix, and `cargo clippy --all-targets -- --deny warnings`.
 - One dev shell: `nix develop`. Acceptance is `nix build` of the website and desktop package, plus `nix flake check`. A launched window is not the acceptance test.
-- No Convex, no Clerk, no worker, and no copied Telegram credentials. `secretspec.toml` declares only an optional `CACHIX_AUTH_TOKEN`.
+- No Convex, no Clerk, and no worker. Telegram application credentials are declared in `secretspec.toml` and injected at runtime by `secretspec run --provider bws`. They are not copied into the repo, not bundled, and not Vite build variables. See `docs/secrets.md`.
 - Foldkit skills are real files in `.agents/skills/`. `web/repos/foldkit` is an ignored local reference, not a submodule.
 
-The browser adapter is `web/src/telegram.ts` (KAM-42): direct Telegram WSS with GramJS, separate clients per account, phone/QR/2FA, and real dialog loading. Credentials and sessions live in memory for the tab; reloading requires login again. The page collects a Telegram application API ID/hash from the person using it. No credentials are bundled. History, send, and media remain later tickets.
+The browser adapter is `web/src/telegram.ts` (KAM-42): direct Telegram WSS with GramJS, separate clients per account, phone/QR/2FA, and real dialog loading. Account sessions live in memory for the tab; reloading requires login again. Application API ID and hash come from SecretSpec at runtime when the shell is started with `secretspec run`; otherwise the page collects them for that tab. No credentials are bundled. History, send, and media remain later tickets.
