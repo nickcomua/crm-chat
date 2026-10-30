@@ -31,6 +31,7 @@ type SyncFs = {
 type TdModule = {
   cwrap: Cwrap
   FS: SyncFs
+  websocket?: SocketWake
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -103,12 +104,17 @@ const loadScript = (src: string): Promise<void> =>
     document.head.appendChild(script)
   })
 
+type SocketWake = {
+  on?: (event: string, callback: () => void) => void
+}
+
 type ClientSlot = {
   account: TdAccount
   apiHash: string
   apiId: number
   clientId: number
   directory: string
+  parametersSent: boolean
 }
 
 export class TdWasmRuntime {
@@ -120,6 +126,8 @@ export class TdWasmRuntime {
   private syncTail: Promise<void> = Promise.resolve()
   private lifecycleBound = false
   private opening: Promise<void> | undefined
+  private receiveQueued = false
+  private receiveTimer: ReturnType<typeof setTimeout> | undefined
   syncError: unknown = undefined
 
   private functions(): {
@@ -217,13 +225,52 @@ export class TdWasmRuntime {
     this.silenceLogs()
     this.armSyncTimer()
     this.bindLifecycle()
+    this.bindSocketWake()
     this.receiveSoon()
   }
 
-  private receiveSoon(): void {
-    setTimeout(() => {
+  // Emscripten 3.1.1 delivers socket bytes on Module.websocket. TDLib only
+  // reads them inside td_emscripten_receive, so a socket event has to pump
+  // the loop instead of waiting for the idle poll.
+  private bindSocketWake(): void {
+    const wake = this.module?.websocket?.on
+    if (wake === undefined) {
+      return
+    }
+    const pump = () => {
+      this.receiveSoon()
+    }
+    for (const event of [
+      'open',
+      'message',
+      'error',
+      'close',
+      'connection',
+      'listen',
+    ]) {
+      wake(event, pump)
+    }
+  }
+
+  private scheduleReceive(delay: number): void {
+    if (this.receiveQueued) {
+      return
+    }
+    this.receiveQueued = true
+    this.receiveTimer = setTimeout(() => {
+      this.receiveTimer = undefined
+      this.receiveQueued = false
       this.receive()
-    }, 0)
+    }, delay)
+  }
+
+  private receiveSoon(): void {
+    if (this.receiveTimer !== undefined) {
+      clearTimeout(this.receiveTimer)
+      this.receiveTimer = undefined
+      this.receiveQueued = false
+    }
+    this.scheduleReceive(0)
   }
 
   private receive(): void {
@@ -255,9 +302,33 @@ export class TdWasmRuntime {
         }
       }
     }
-    setTimeout(() => {
-      this.receive()
-    }, 100)
+    this.scheduleReceive(100)
+  }
+
+  // TDLib creates the client on the first request and emits nothing before
+  // that, including authorizationStateWaitTdlibParameters. Parameters have to
+  // be that first request; waiting for the update never opens a socket.
+  private sendParameters(slot: ClientSlot): void {
+    if (slot.parametersSent) {
+      return
+    }
+    slot.parametersSent = true
+    const filesystem = this.module?.FS
+    if (filesystem !== undefined) {
+      mkdir(filesystem, slot.directory)
+      mkdir(filesystem, `${slot.directory}/files`)
+    }
+    void this.dispatch(
+      slot.clientId,
+      parametersQuery(slot.directory, slot.apiId, slot.apiHash),
+    ).catch(() => {
+      slot.account.apply({
+        '@type': 'updateAuthorizationState',
+        authorization_state: {
+          '@type': 'authorizationStateClosed',
+        },
+      })
+    })
   }
 
   private onUpdate(slot: ClientSlot, value: Record<string, unknown>): void {
@@ -267,22 +338,7 @@ export class TdWasmRuntime {
       isRecord(state) &&
       state['@type'] === 'authorizationStateWaitTdlibParameters'
     ) {
-      const filesystem = this.module?.FS
-      if (filesystem !== undefined) {
-        mkdir(filesystem, slot.directory)
-        mkdir(filesystem, `${slot.directory}/files`)
-      }
-      void this.dispatch(
-        slot.clientId,
-        parametersQuery(slot.directory, slot.apiId, slot.apiHash),
-      ).catch(() => {
-        slot.account.apply({
-          '@type': 'updateAuthorizationState',
-          authorization_state: {
-            '@type': 'authorizationStateClosed',
-          },
-        })
-      })
+      this.sendParameters(slot)
       return
     }
     const wasReady = slot.account.phase._tag === 'Ready'
@@ -333,7 +389,16 @@ export class TdWasmRuntime {
       },
     }
     const account = new TdAccount(sink, id)
-    this.slots.set(id, { account, apiHash, apiId, clientId, directory })
+    const slot: ClientSlot = {
+      account,
+      apiHash,
+      apiId,
+      clientId,
+      directory,
+      parametersSent: false,
+    }
+    this.slots.set(id, slot)
+    this.sendParameters(slot)
     this.receiveSoon()
     return account
   }
