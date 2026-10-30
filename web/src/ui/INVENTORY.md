@@ -16,18 +16,18 @@ shadcn names match [ui.shadcn.com](https://ui.shadcn.com). "Composed" means the 
 | Component                 | Status  | shadcn                                                            | Page use                                                                              |
 | ------------------------- | ------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Theme tokens and switcher | ready   | theming (CSS variables). Switcher follows the Radio Group pattern | System, light, and dark. Telegram blue `#3390ec`, Web K surfaces. `web/src/ui/theme/` |
-| Button                    | missing | Button                                                            | Send, login, header actions                                                           |
-| Icon button               | missing | Button                                                            | Attach, emoji, mute, more                                                             |
-| Label                     | missing | Label                                                             | Fields                                                                                |
-| Input                     | missing | Input, Field                                                      | Phone, code, search, case and contact fields                                          |
-| Textarea                  | missing | Textarea                                                          | Composer, notes                                                                       |
-| Checkbox                  | missing | Checkbox                                                          | Select messages, table rows, filters                                                  |
-| Radio group               | missing | Radio Group                                                       | One-of settings                                                                       |
-| Switch                    | missing | Switch                                                            | Notifications, mute                                                                   |
+| Button                    | ready   | Button                                                            | Send, login, header actions. `web/src/ui/button/`                                     |
+| Icon button               | missing | Button                                                            | Attach, emoji, mute, more. No separate kit folder yet                                |
+| Label                     | ready   | Label                                                             | Fields. `web/src/ui/label/`                                                           |
+| Input                     | ready   | Input, Field                                                      | Phone, code, search, case and contact fields. `web/src/ui/input/`                     |
+| Textarea                  | ready   | Textarea                                                          | Composer, notes. `web/src/ui/textarea/`                                               |
+| Checkbox                  | ready   | Checkbox                                                          | Select messages, table rows, filters. `web/src/ui/checkbox/`                          |
+| Radio group               | ready   | Radio Group                                                       | One-of settings. `web/src/ui/radio-group/`                                            |
+| Switch                    | ready   | Switch                                                            | Notifications, mute. `web/src/ui/switch/`                                             |
 | Select                    | missing | Select                                                            | Case status, assignee                                                                 |
 | Combobox                  | missing | Combobox                                                          | Contact picker, tag picker                                                            |
 | Slider                    | missing | Slider                                                            | Not required for the current page                                                     |
-| Form                      | missing | Form, Field                                                       | Login and case editors                                                                |
+| Form                      | ready   | Form, Field                                                       | Login and case editors. `web/src/ui/form-field/`                                      |
 
 ## Overlays and menus
 
@@ -50,18 +50,18 @@ shadcn names match [ui.shadcn.com](https://ui.shadcn.com). "Composed" means the 
 
 | Component    | Status  | shadcn       | Page use                                            |
 | ------------ | ------- | ------------ | --------------------------------------------------- |
-| Avatar       | missing | Avatar       | Chats, contacts, accounts                           |
-| Badge        | missing | Badge        | Unread count, tags, case status                     |
-| Card         | missing | Card         | Kanban card, case, contact                          |
+| Avatar       | ready   | Avatar       | Chats, contacts, accounts. `web/src/ui/avatar/`     |
+| Badge        | ready   | Badge        | Unread count, tags, case status. `web/src/ui/badge/` |
+| Card         | ready   | Card         | Kanban card, case, contact. `web/src/ui/card/`      |
 | Table        | missing | Table        | Cases, contacts                                     |
 | Data table   | missing | Data Table   | Sort and filter those tables                        |
 | Scroll area  | missing | Scroll Area  | Chat list, message history, kanban column, timeline |
-| Separator    | missing | Separator    | Rows and sections                                   |
-| Skeleton     | missing | Skeleton     | Loading chats and cases                             |
+| Separator    | ready   | Separator    | Rows and sections. `web/src/ui/separator/`          |
+| Skeleton     | ready   | Skeleton     | Loading chats and cases. `web/src/ui/skeleton/`     |
 | Empty        | missing | Empty        | No chats, no cases, no notes                        |
 | Progress     | missing | Progress     | File upload and download                            |
-| Spinner      | missing | Spinner      | Connecting                                          |
-| Tabs         | missing | Tabs         | Chat folders, case sections                         |
+| Spinner      | ready   | Spinner      | Connecting. `web/src/ui/spinner/`                   |
+| Tabs         | missing | Tabs         | Chat folders, case sections. The page folder bar is in `web/src/shellView.ts` (All, Personal, Groups, Channels), not a kit Tabs component |
 | Accordion    | missing | Accordion    | Chat info and settings groups                       |
 | Resizable    | missing | Resizable    | Chat list column and history column                 |
 | Sidebar      | missing | Sidebar      | Chat list column                                    |
@@ -77,11 +77,11 @@ shadcn names match [ui.shadcn.com](https://ui.shadcn.com). "Composed" means the 
 
 | Component                 | Status  | shadcn                                                            | Page use                                                        |
 | ------------------------- | ------- | ----------------------------------------------------------------- | --------------------------------------------------------------- |
-| Login                     | missing | Composed: Field, Input, Button, Alert                             | Phone, code, 2FA, QR. Ad hoc version lives in `web/src/main.ts` |
+| Login                     | missing | Composed: Field, Input, Button, Alert                             | QR first, then phone, code, and 2FA. Day theme by default, with a theme toggle. No "Keep me signed in" control: a signed-in account always persists in IndexedDB. Page view is `web/src/loginView.ts` |
 | Account switcher          | missing | Composed: Dropdown Menu, Avatar                                   | Signed-in accounts                                              |
 | Chat list                 | missing | Composed: Scroll Area, Sidebar, Button                            | Dialogs, groups, channels, Saved Messages                       |
 | Chat list search          | missing | Composed: Input                                                   | Filter the chat list                                            |
-| Chat folders              | missing | Tabs                                                              | Folder bar                                                      |
+| Chat folders              | missing | Tabs                                                              | Folder bar is implemented on the page in `web/src/shellView.ts` |
 | Chat row                  | missing | Composed: Avatar, Badge                                           | Title, last message, unread, muted                              |
 | Message history           | missing | Composed: Scroll Area                                             | Incoming and outgoing bubbles                                   |
 | Message bubble            | missing | Custom. Tokens: `--telegram-message-in`, `--telegram-message-out` | Text, meta, reply, reactions                                    |
@@ -102,7 +102,7 @@ shadcn names match [ui.shadcn.com](https://ui.shadcn.com). "Composed" means the 
 | Case detail      | missing | Composed: Card, Tabs, Field             | One case                                  |
 | Contacts table   | missing | Data Table, Avatar                      | Contact list                              |
 | Contact detail   | missing | Card, Field                             | One contact                               |
-| Kanban           | missing | Composed: Card, Scroll Area, Badge      | Cases by status. No shadcn kanban         |
+| Kanban           | ready   | Composed: Card, Scroll Area, Badge      | Cases by status. `web/src/ui/kanban/`     |
 | Tags             | missing | Composed: Badge, Combobox               | Labels on chats and cases                 |
 | Reminders        | missing | Composed: Date Picker, Popover, Sonner  | Due date and fired notice                 |
 | Notes editor     | missing | Composed: Textarea now. Rich text later | Case and contact notes                    |

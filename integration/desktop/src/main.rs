@@ -67,6 +67,30 @@ fn needs_accounts(detail: String) -> Result<(), String> {
     Err(format!("NEEDS TEST ACCOUNTS: {detail}"))
 }
 
+fn lexical_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// True when either path is the other, or one lies inside the other.
+/// `Path::starts_with` alone misses a destination that normalizes back into
+/// the saved tree (`tdlib/../tdlib/copy`) and a saved tree that sits inside
+/// the directory `remove_dir_all` would delete.
+fn copies_into_saved_tree(source: &Path, dest: &Path) -> bool {
+    let source = lexical_normal(source);
+    let dest = lexical_normal(dest);
+    source == dest || dest.starts_with(&source) || source.starts_with(&dest)
+}
+
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|_| "could not copy the TDLib directory".to_owned())?;
     for entry in
@@ -112,12 +136,13 @@ fn child_dirs(root: &Path) -> Result<Vec<String>, String> {
 /// reads, and the saved account directories must stay untouched.
 fn isolated_database(source: &Path) -> Result<(PathBuf, RemovedOnDrop), String> {
     let dest = std::env::temp_dir().join(format!("crm-chat-tdlib-accounts-{}", std::process::id()));
-    if dest.starts_with(source) {
+    if copies_into_saved_tree(source, &dest) {
         return Err("refusing to open the saved TDLib directory".into());
     }
     let _ = std::fs::remove_dir_all(&dest);
-    copy_tree(source, &dest)?;
-    Ok((dest.clone(), RemovedOnDrop(dest)))
+    let guard = RemovedOnDrop(dest.clone());
+    copy_tree(source, &guard.0)?;
+    Ok((dest, guard))
 }
 
 fn shape() -> Result<(), String> {
@@ -237,5 +262,60 @@ async fn main() {
         }
         eprintln!("desktop tdlib: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copies_into_saved_tree, isolated_database};
+    use std::path::Path;
+
+    #[test]
+    fn a_destination_that_normalizes_into_the_saved_tree_is_refused() {
+        let source = Path::new("/data/tdlib");
+        let dest = Path::new("/data/tdlib/../tdlib/copy");
+        assert!(copies_into_saved_tree(source, dest));
+        assert!(copies_into_saved_tree(source, source));
+    }
+
+    #[test]
+    fn a_saved_tree_inside_the_destination_is_refused() {
+        let dest = Path::new("/tmp/crm-chat-tdlib-accounts-7");
+        let source = Path::new("/tmp/crm-chat-tdlib-accounts-7/saved");
+        assert!(copies_into_saved_tree(source, dest));
+    }
+
+    #[test]
+    fn a_temp_copy_outside_the_saved_tree_is_allowed() {
+        let source = Path::new("/home/me/.local/share/app.crmchat.desktop/tdlib");
+        let dest = Path::new("/tmp/crm-chat-tdlib-accounts-7");
+        assert!(!copies_into_saved_tree(source, dest));
+        assert!(!copies_into_saved_tree(
+            Path::new("/tmp/crm-chat-tdlib-accounts-7"),
+            Path::new("/tmp/crm-chat-tdlib-accounts-70"),
+        ));
+    }
+
+    #[test]
+    fn the_cleanup_guard_removes_a_partial_copy() {
+        let root = std::env::temp_dir().join(format!(
+            "crm-chat-iso-src-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("acct")).expect("source");
+        std::fs::write(root.join("acct").join("db"), b"x").expect("db");
+        let (dest, guard) = isolated_database(&root).expect("copy");
+        assert!(dest.join("acct").join("db").is_file());
+        assert!(root.join("acct").join("db").is_file());
+        assert_ne!(dest, root);
+        drop(guard);
+        assert!(!dest.exists());
+        assert!(root.join("acct").join("db").is_file());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

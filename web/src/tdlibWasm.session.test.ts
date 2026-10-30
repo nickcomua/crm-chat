@@ -15,6 +15,8 @@ type Harness = {
   failSync: (error: unknown) => void
   deliverAuth: { current: boolean }
   creates: { current: number }
+  holdSync: () => void
+  releaseSync: () => void
 }
 
 const install = (
@@ -29,6 +31,8 @@ const install = (
   let clientId = 0
   let delivered = false
   let syncFailure: unknown = undefined
+  let hold = false
+  const held: Array<(error: unknown) => void> = []
   const querySelector = document.querySelector.bind(document)
   vi.spyOn(document, 'querySelector').mockImplementation(selector => {
     if (selector === `script[src="${WASM_JS}"]`) {
@@ -84,6 +88,10 @@ const install = (
         filesystems: { IDBFS: {} },
         syncfs: (populate: boolean, callback: (error: unknown) => void) => {
           syncs.push(populate)
+          if (hold) {
+            held.push(callback)
+            return
+          }
           callback(syncFailure)
         },
         readdir: () => ['.', '..', ...ids],
@@ -99,6 +107,16 @@ const install = (
     },
     deliverAuth,
     creates,
+    holdSync: () => {
+      hold = true
+    },
+    releaseSync: () => {
+      hold = false
+      const callback = held.shift()
+      if (callback !== undefined) {
+        callback(syncFailure)
+      }
+    },
   }
 }
 
@@ -184,6 +202,55 @@ test('a restored QR login is discarded instead of blocking the page', async () =
   const creates = harness.creates.current
   await harness.runtime.open('qr-acct', 1, HASH)
   expect(harness.creates.current).toBe(creates + 1)
+})
+
+test('sync flushes one at a time, including a second call started mid-flush', async () => {
+  vi.useFakeTimers()
+  const harness = install([], {
+    '@type': 'authorizationStateReady',
+  })
+  await harness.runtime.open('acct', 1, HASH)
+  harness.holdSync()
+  const first = harness.runtime.sync()
+  const second = harness.runtime.sync()
+  await Promise.resolve()
+  expect(hiddenSyncs(harness.syncs)).toBe(1)
+  harness.releaseSync()
+  await first
+  expect(hiddenSyncs(harness.syncs)).toBe(2)
+  harness.releaseSync()
+  await second
+  expect(hiddenSyncs(harness.syncs)).toBe(2)
+})
+
+test('an opening timeout drops the saved database without logout or flush', async () => {
+  vi.useFakeTimers()
+  const harness = install(['saved-acct'], {
+    '@type': 'authorizationStateReady',
+  })
+  let restored: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const pending = harness.runtime.restore(1, HASH).then(accounts => {
+    restored = accounts
+  })
+  await vi.advanceTimersByTimeAsync(30_000)
+  await pending
+  expect(restored).toEqual([])
+  expect(harness.sent.map(query => query['@type'])).not.toContain('logOut')
+  expect(harness.syncs.every(populate => populate)).toBe(true)
+  const creates = harness.creates.current
+  await harness.runtime.open('saved-acct', 1, HASH)
+  expect(harness.creates.current).toBe(creates + 1)
+})
+
+test('a freeze and a hidden tab both flush through the serialized sync', async () => {
+  vi.useFakeTimers()
+  const harness = install([], {
+    '@type': 'authorizationStateReady',
+  })
+  await harness.runtime.open('acct', 1, HASH)
+  document.dispatchEvent(new Event('freeze'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(hiddenSyncs(harness.syncs)).toBe(1)
 })
 
 test('a restored ready account stays signed in', async () => {

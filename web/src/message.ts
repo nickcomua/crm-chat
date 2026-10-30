@@ -15,7 +15,12 @@ export const Message = defineMessageUnion({
   UpdatedPhone: { value: Secret },
   ClickedCountry: {},
   SelectedCountry: { iso: Schema.String },
-  ToggledKeepSignedIn: {},
+  ClickedPhoneForm: {},
+  ClickedPasskey: {},
+  ClickedTheme: {},
+  ClickedFolder: {
+    folder: Schema.Literals(['All', 'Personal', 'Groups', 'Channels']),
+  },
   UpdatedAnswer: { value: Secret },
   UpdatedQuery: { value: Schema.String },
   UpdatedDraft: { value: Schema.String },

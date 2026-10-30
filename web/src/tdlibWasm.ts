@@ -212,8 +212,8 @@ export class TdWasmRuntime {
     }
     mkdir(created.FS, '/tdlib')
     created.FS.mount(filesystem, {}, '/tdlib')
-    await syncFs(created.FS, true)
     this.module = created
+    await this.enqueueSync(true)
     this.silenceLogs()
     this.armSyncTimer()
     this.bindLifecycle()
@@ -326,10 +326,10 @@ export class TdWasmRuntime {
       send: query => this.dispatch(clientId, query),
       close: async () => {
         this.slots.delete(id)
-        const filesystem = this.module?.FS
-        if (filesystem !== undefined) {
-          await syncFs(filesystem, false)
-        }
+        await this.sync()
+      },
+      drop: async () => {
+        this.slots.delete(id)
       },
     }
     const account = new TdAccount(sink, id)
@@ -344,7 +344,7 @@ export class TdWasmRuntime {
     if (filesystem === undefined) {
       return []
     }
-    await syncFs(filesystem, true)
+    await this.enqueueSync(true)
     const ids = filesystem
       .readdir('/tdlib')
       .filter(name => name !== '.' && name !== '..' && validAccountId(name))
@@ -375,14 +375,16 @@ export class TdWasmRuntime {
       return
     }
     this.lifecycleBound = true
-    window.addEventListener('pagehide', () => {
+    const flush = () => {
       this.flushSoon()
-    })
+    }
+    window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        this.flushSoon()
+        flush()
       }
     })
+    document.addEventListener('freeze', flush)
   }
 
   private clearSyncTimer(): void {
@@ -399,11 +401,17 @@ export class TdWasmRuntime {
       return
     }
     this.syncTimer = setInterval(() => {
+      const ready = [...this.slots.values()].some(
+        slot => slot.account.phase._tag === 'Ready',
+      )
+      if (!ready) {
+        return
+      }
       this.flushSoon()
     }, 5000)
   }
 
-  async sync(): Promise<void> {
+  private enqueueSync(populate: boolean): Promise<void> {
     const run = this.syncTail.then(async () => {
       const filesystem = this.module?.FS
       if (filesystem === undefined) {
@@ -411,8 +419,10 @@ export class TdWasmRuntime {
       }
       this.clearSyncTimer()
       try {
-        await syncFs(filesystem, false)
-        this.syncError = undefined
+        await syncFs(filesystem, populate)
+        if (!populate) {
+          this.syncError = undefined
+        }
       } catch (error) {
         const failure = error instanceof Error ? error : syncFailure(error)
         this.syncError = failure
@@ -426,6 +436,10 @@ export class TdWasmRuntime {
       () => undefined,
     )
     return run
+  }
+
+  async sync(): Promise<void> {
+    return this.enqueueSync(false)
   }
 }
 

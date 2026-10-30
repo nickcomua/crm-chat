@@ -40,6 +40,8 @@ export type TdQuery = Record<string, unknown>
 export type TdSink = {
   send: (query: TdQuery) => Promise<unknown>
   close: () => Promise<void>
+  // Drops the client without writing the in-memory filesystem back.
+  drop?: () => Promise<void>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -256,16 +258,21 @@ export class TdAccount {
       return Promise.resolve(this.phase)
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error('Telegram did not answer in time'))
-      }, timeout)
       const check = () => {
         if (!predicate(this.phase)) {
+          this.waiters.push(check)
           return
         }
         clearTimeout(timer)
         resolve(this.phase)
       }
+      const timer = setTimeout(() => {
+        const index = this.waiters.indexOf(check)
+        if (index >= 0) {
+          this.waiters.splice(index, 1)
+        }
+        reject(new Error('Telegram did not answer in time'))
+      }, timeout)
       this.waiters.push(check)
     })
   }
@@ -455,6 +462,20 @@ export class TdAccount {
   }
 
   async discard(): Promise<void> {
+    const tag = this.phase._tag
+    const inProgress =
+      tag === 'WaitPhone' ||
+      tag === 'WaitCode' ||
+      tag === 'WaitPassword' ||
+      tag === 'WaitQr'
+    if (!inProgress) {
+      // Opening, Failed, Closed, or an open that never left Opening. Do not
+      // log out and do not sync: that would replace the saved IndexedDB copy.
+      if (this.sink.drop !== undefined) {
+        await this.sink.drop()
+      }
+      return
+    }
     await Promise.race([
       this.send({ '@type': 'logOut' }).catch(() => undefined),
       new Promise<void>(resolve => {

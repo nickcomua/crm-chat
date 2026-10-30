@@ -54,7 +54,13 @@ const previewModel = (screen: string): Model => {
   }
   if (screen === 'qr') {
     return modifyFields(base, {
+      authEntry: () => 'Qr',
       login: () => Login.Qr({ id: 'preview', image: previewQrImage }),
+    })
+  }
+  if (screen === 'phone') {
+    return modifyFields(base, {
+      authEntry: () => 'Phone',
     })
   }
   if (screen === 'thread') {

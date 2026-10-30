@@ -16,10 +16,10 @@ import {
 import type { Model } from './main'
 import { Message } from './message'
 
-const fieldClass =
-  'w-full rounded-full border border-[#8774e1]/40 bg-[#1c1c22] px-4 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]'
+const folders = ['All', 'Personal', 'Groups', 'Channels'] as const
 
-const panelClass = 'relative bg-[#1c1c22] md:rounded-2xl'
+const folderFor = (kind: Chat['kind']): 'Personal' | 'Groups' | 'Channels' =>
+  kind === 'Group' ? 'Groups' : kind === 'Channel' ? 'Channels' : 'Personal'
 
 const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
@@ -37,18 +37,10 @@ const isLastInGroup = (
   return next === undefined || next.mine !== line.mine
 }
 
-const bubbleClass = (mine: boolean, tail: boolean): string => {
-  const corners = mine
-    ? tail
-      ? 'rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-none'
-      : 'rounded-2xl'
-    : tail
-      ? 'rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-none'
-      : 'rounded-2xl'
-  return `relative z-0 w-fit max-w-[80%] px-3 py-2 text-[15px] leading-5 ${corners} ${
-    mine ? 'bg-[#8774e1]' : 'bg-[#2a2a32]'
+const bubbleClass = (mine: boolean, tail: boolean): string =>
+  `tg-bubble ${mine ? 'tg-bubble-out' : 'tg-bubble-in'} ${
+    tail ? (mine ? 'tg-bubble-tail-out' : 'tg-bubble-tail-in') : ''
   }`
-}
 
 const messageTail = <Message>(mine: boolean, h: HtmlBuilder<Message>) =>
   h.span([
@@ -56,8 +48,7 @@ const messageTail = <Message>(mine: boolean, h: HtmlBuilder<Message>) =>
     h.Class(mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in'),
   ])
 
-const menuItemClass =
-  'flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10'
+const menuItemClass = 'tg-menu-item'
 
 const selectedAccount = (model: Model) =>
   Array.findFirst(
@@ -77,6 +68,7 @@ const shownChats = (model: Model): ReadonlyArray<Chat> => {
     accountChats(model),
     chat =>
       !model.hiddenChatIds.includes(chat.id) &&
+      (model.folder === 'All' || folderFor(chat.kind) === model.folder) &&
       (needle === '' || chat.title.toLowerCase().includes(needle)),
   )
 }
@@ -97,9 +89,7 @@ const receipt = (
   if (unread > 0) {
     return h.div(
       [
-        h.Class(
-          'flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#8774e1] px-1.5 text-[11px] font-medium text-white',
-        ),
+        h.Class('tg-unread'),
       ],
       [String(unread)],
     )
@@ -139,9 +129,7 @@ const iconButton = (
 ) =>
   h.button(
     [
-      h.Class(
-        'flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10',
-      ),
+      h.Class('tg-icon-button'),
       h.AriaLabel(label),
       h.AriaPressed(pressed ? 'true' : 'false'),
       h.OnClick(message),
@@ -156,12 +144,12 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
   const account = selectedAccount(model)
 
   return h.section(
-    [h.Class('flex h-screen gap-2 px-2 py-5'), h.AriaLabel('Telegram chats')],
+    [h.Class('tg-shell'), h.AriaLabel('Telegram chats')],
     [
       h.aside(
         [
           h.Class(
-            `${listHidden(isOpen)} ${panelClass} w-full shrink-0 flex-col md:w-[26rem]`,
+            `${listHidden(isOpen)} tg-panel tg-list w-full shrink-0 flex-col md:w-[22.5rem]`,
           ),
         ],
         [
@@ -173,19 +161,22 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                 [
                   h.button(
                     [
-                      h.Class(
-                        'flex size-10 shrink-0 items-center justify-center rounded-full text-lg text-[#d7d7e0] hover:bg-white/5',
-                      ),
+                      h.Class('tg-avatar-button'),
                       h.AriaLabel('Menu'),
                       h.OnClick(Message.ClickedMenu()),
                     ],
-                    ['☰'],
+                    [
+                      Option.match(account, {
+                        onNone: () => 'Y',
+                        onSome: current => markFor(current.title),
+                      }),
+                    ],
                   ),
                   model.menuOpen
                     ? h.div(
                         [
                           h.Class(
-                            'absolute left-0 top-12 z-40 w-64 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
+                            'tg-menu absolute left-0 top-12 z-40 w-64 py-2',
                           ),
                           h.Role('menu'),
                           h.AriaLabel('Menu'),
@@ -196,9 +187,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             [
                               h.div(
                                 [
-                                  h.Class(
-                                    'flex size-9 items-center justify-center rounded-full bg-[#8774e1] text-sm font-medium',
-                                  ),
+                                  h.Class('tg-avatar-button size-9 text-sm'),
                                 ],
                                 [
                                   Option.match(account, {
@@ -256,7 +245,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                           h.button(
                             [
                               h.Class(
-                                'flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10',
+                                'tg-menu-item justify-between',
                               ),
                               h.AriaLabel('Add account'),
                               h.Disabled(model.status === 'Busy'),
@@ -281,9 +270,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             [
                               h.button(
                                 [
-                                  h.Class(
-                                    'flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                                  ),
+                                  h.Class('tg-menu-item justify-between'),
                                   h.AriaLabel('More'),
                                   h.OnClick(Message.ClickedMore()),
                                 ],
@@ -296,7 +283,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                 ? h.div(
                                     [
                                       h.Class(
-                                        'absolute left-full top-0 z-40 ml-2 w-52 rounded-xl bg-[#2a2a32] py-2 shadow-2xl',
+                                        'tg-menu absolute left-full top-0 z-40 ml-2 w-52 py-2',
                                       ),
                                       h.Role('menu'),
                                       h.AriaLabel('More menu'),
@@ -317,7 +304,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                 ],
               ),
               h.input([
-                h.Class(fieldClass),
+                h.Class('tg-search'),
                 h.Type('search'),
                 h.Placeholder('Search'),
                 h.AriaLabel('Search chats'),
@@ -325,6 +312,25 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                 h.OnInput(value => Message.UpdatedQuery({ value })),
               ]),
             ],
+          ),
+          h.div(
+            [h.Class('tg-folders'), h.Role('tablist'), h.AriaLabel('Chat folders')],
+            folders.map(folder =>
+              h.keyed('button')(
+                folder,
+                [
+                  h.Class(
+                    model.folder === folder
+                      ? 'tg-folder tg-folder-active'
+                      : 'tg-folder',
+                  ),
+                  h.Role('tab'),
+                  h.AriaSelected(model.folder === folder),
+                  h.OnClick(Message.ClickedFolder({ folder })),
+                ],
+                [folder],
+              ),
+            ),
           ),
           model.status === 'Busy'
             ? h.p(
@@ -354,7 +360,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                     chat.id,
                     [
                       h.Class(
-                        `flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 ${selected ? 'bg-[#5c4d86]' : 'hover:bg-white/5'}`,
+                        selected ? 'chat-row chat-row-selected' : 'chat-row',
                       ),
                       h.OnClick(Message.ClickedChat({ id: chat.id })),
                     ],
@@ -382,7 +388,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                 [chat.title],
                               ),
                               h.div(
-                                [h.Class('shrink-0 text-xs text-[#9a9aa8]')],
+                                [h.Class('chat-row-meta shrink-0 text-xs')],
                                 [
                                   model.mutedChatIds.includes(chat.id)
                                     ? 'Muted'
@@ -400,9 +406,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             [
                               h.div(
                                 [
-                                  h.Class(
-                                    'truncate text-[13px] text-[#9a9aa8]',
-                                  ),
+                                  h.Class('chat-row-meta truncate text-[13px]'),
                                 ],
                                 [preview],
                               ),
@@ -427,12 +431,13 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
           Option.match(opened, {
             onNone: () =>
               h.div(
+                [h.Class('flex flex-1 items-center justify-center')],
                 [
-                  h.Class(
-                    'flex flex-1 items-center justify-center text-sm text-[#9a9aa8]',
+                  h.p(
+                    [h.Class('tg-empty-pill')],
+                    ['Select a chat to start messaging'],
                   ),
                 ],
-                ['Select a chat to start messaging'],
               ),
             onSome: chat => {
               const face = faceFor(model.faces, chat.id)
@@ -443,14 +448,14 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                   h.header(
                     [
                       h.Class(
-                        'relative z-30 flex h-14 shrink-0 items-center gap-2 rounded-2xl bg-[#1c1c22] px-2',
+                        'tg-header relative z-30 flex h-14 shrink-0 items-center gap-2 px-2',
                       ),
                     ],
                     [
                       h.button(
                         [
                           h.Class(
-                            'rounded-full px-3 py-2 text-sm text-[#8774e1] md:hidden',
+                            'rounded-full px-3 py-2 text-sm text-[var(--tg-primary)] md:hidden',
                           ),
                           h.OnClick(Message.ClickedBack()),
                         ],
@@ -504,9 +509,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                       ),
                       h.button(
                         [
-                          h.Class(
-                            'relative flex size-9 shrink-0 items-center justify-center rounded-full text-[#d7d7e0] hover:bg-white/10',
-                          ),
+                          h.Class('tg-icon-button relative'),
                           h.AriaLabel('Chat menu'),
                           h.OnClick(Message.ClickedHeaderMenu()),
                         ],
@@ -516,7 +519,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         ? h.div(
                             [
                               h.Class(
-                                'absolute right-2 top-12 z-40 w-52 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl',
+                                'tg-menu absolute right-2 top-12 z-40 w-52 py-1.5',
                               ),
                               h.Role('menu'),
                               h.AriaLabel('Chat menu'),
@@ -527,9 +530,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                 [
                                   h.button(
                                     [
-                                      h.Class(
-                                        'flex w-full items-center justify-between px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                                      ),
+                                      h.Class('tg-menu-item justify-between'),
                                       h.AriaLabel('Auto-delete'),
                                       h.OnClick(Message.ClickedAutoDelete()),
                                     ],
@@ -545,7 +546,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                     ? h.div(
                                         [
                                           h.Class(
-                                            'absolute right-full top-0 z-40 mr-2 w-40 rounded-xl bg-[#2a2a32] py-1.5 shadow-2xl',
+                                            'tg-menu absolute right-full top-0 z-40 mr-2 w-40 py-1.5',
                                           ),
                                           h.Role('menu'),
                                           h.AriaLabel('Auto-delete menu'),
@@ -560,9 +561,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                           h.keyed('button')(
                                             label,
                                             [
-                                              h.Class(
-                                                'block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                                              ),
+                                              h.Class('tg-menu-item'),
                                               h.OnClick(
                                                 Message.ClickedAutoDeleteChoice(
                                                   {
@@ -580,18 +579,14 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                               ),
                               h.button(
                                 [
-                                  h.Class(
-                                    'block w-full px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                                  ),
+                                  h.Class('tg-menu-item'),
                                   h.OnClick(Message.ClickedMute()),
                                 ],
                                 [muted ? 'Unmute' : 'Mute'],
                               ),
                               h.button(
                                 [
-                                  h.Class(
-                                    'block w-full px-3 py-2 text-left text-[15px] text-[#e25c5c] hover:bg-white/10',
-                                  ),
+                                  h.Class('tg-menu-item text-[#e25c5c]'),
                                   h.OnClick(Message.ClickedDeleteChat()),
                                 ],
                                 ['Delete chat'],
@@ -622,9 +617,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                           const tail = isLastInGroup(lines, index)
                           const time = h.span(
                             [
-                              h.Class(
-                                'ml-3 align-bottom text-[11px] text-white/70',
-                              ),
+                              h.Class('bubble-time'),
                             ],
                             [line.time],
                           )
@@ -685,7 +678,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                     ? h.div(
                         [
                           h.Class(
-                            'flex h-12 shrink-0 items-center justify-center rounded-full bg-[#1c1c22] text-sm text-[#9a9aa8]',
+                            'tg-composer flex h-12 shrink-0 items-center justify-center text-sm text-[var(--tg-muted)]',
                           ),
                         ],
                         ['Replies are off'],
@@ -693,7 +686,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                     : h.div(
                         [
                           h.Class(
-                            'flex w-full shrink-0 items-center gap-0.5 rounded-full bg-[#1c1c22] px-1.5',
+                            'tg-composer flex w-full shrink-0 items-center gap-0.5 px-1.5',
                           ),
                         ],
                         [
@@ -705,9 +698,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             h,
                           ),
                           h.input([
-                            h.Class(
-                              'min-w-0 flex-1 bg-transparent px-2 py-2.5 text-[15px] text-white outline-none placeholder:text-[#9a9aa8]',
-                            ),
+                            h.Class('tg-composer-input'),
                             h.Type('text'),
                             h.Placeholder('Message'),
                             h.AriaLabel('Message'),

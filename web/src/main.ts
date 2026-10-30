@@ -41,7 +41,10 @@ export const Model = Schema.Struct({
   phone: Secret,
   countryIso: Schema.String,
   countryOpen: Schema.Boolean,
-  keepSignedIn: Schema.Boolean,
+  authEntry: Schema.Literals(['Qr', 'Phone']),
+  theme: Schema.Literals(['Day', 'Night']),
+  folder: Schema.Literals(['All', 'Personal', 'Groups', 'Channels']),
+  passkeyNote: Schema.Boolean,
   answer: Secret,
   status: Schema.Literals(['Ready', 'Busy']),
   error: Schema.String,
@@ -248,10 +251,40 @@ export const update = (model: Model, message: Message) =>
               countryOpen: () => false,
             }),
           },
-    // NOTE: The checkbox is the phone-step control. Sessions stay in this tab; reload still signs out.
-    ToggledKeepSignedIn: () => ({
+    ClickedPhoneForm: () => {
+      if (model.status === 'Busy') {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        authEntry: () => 'Phone',
+        passkeyNote: () => false,
+        error: () => '',
+        login: () => (model.login._tag === 'Qr' ? Login.Editing() : model.login),
+      })
+      if (!model.fixturePreview && model.login._tag === 'Qr') {
+        return { model: next, commands: [Disconnect({ id: model.login.id })] }
+      }
+      return { model: next }
+    },
+    ClickedPasskey: () => ({
+      model: modifyFields(model, { passkeyNote: () => true }),
+    }),
+    ClickedTheme: () => {
+      const theme = model.theme === 'Day' ? 'Night' : 'Day'
+      try {
+        localStorage.setItem(
+          'crm-chat.theme',
+          theme === 'Night' ? 'Dark' : 'Light',
+        )
+      } catch {
+        // The toggle still applies to this view when storage is blocked.
+      }
+      return { model: modifyFields(model, { theme: () => theme }) }
+    },
+    ClickedFolder: ({ folder }) => ({
       model: modifyFields(model, {
-        keepSignedIn: () => !model.keepSignedIn,
+        folder: () => folder,
+        maybeOpenChatId: () => Option.none(),
       }),
     }),
     UpdatedAnswer: ({ value }) => ({
@@ -264,7 +297,14 @@ export const update = (model: Model, message: Message) =>
       model: modifyFields(model, { draft: () => value }),
     }),
     ClickedPhoneLogin: () => startLogin(model, false),
-    ClickedQrLogin: () => startLogin(model, true),
+    ClickedQrLogin: () =>
+      startLogin(
+        modifyFields(model, {
+          authEntry: () => 'Qr',
+          passkeyNote: () => false,
+        }),
+        true,
+      ),
     SubmittedAnswer: () => {
       if (
         model.fixturePreview ||
@@ -288,16 +328,22 @@ export const update = (model: Model, message: Message) =>
         ],
       }
     },
-    ClickedAddAccount: () =>
-      model.status === 'Busy'
-        ? { model }
-        : {
-            model: modifyFields(model, {
-              login: () => Login.Editing(),
-              error: () => '',
-              ...closedMenus,
-            }),
-          },
+    ClickedAddAccount: () => {
+      if (model.status === 'Busy') {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        login: () => Login.Editing(),
+        authEntry: () => 'Qr',
+        passkeyNote: () => false,
+        error: () => '',
+        ...closedMenus,
+      })
+      if (model.fixturePreview || model.appCredentials !== 'Supplied') {
+        return { model: next }
+      }
+      return startLogin(next, true)
+    },
     ClickedCancel: () => {
       if (model.status === 'Busy') {
         return { model }
@@ -474,19 +520,40 @@ export const update = (model: Model, message: Message) =>
           },
     CompletedRestore: ({ accounts }) => {
       const first = accounts[0]
-      if (first === undefined || model.login._tag !== 'Editing') {
-        return { model: modifyFields(model, { status: () => 'Ready' }) }
+      if (first !== undefined && model.login._tag === 'Editing') {
+        return {
+          model: modifyFields(model, {
+            login: () => Login.Closed(),
+            status: () => 'Busy',
+            error: () => '',
+            accounts: () => accounts,
+            selectedAccountId: () => first.id,
+          }),
+          commands: [Refresh({ id: first.id })],
+        }
       }
-      return {
-        model: modifyFields(model, {
-          login: () => Login.Closed(),
-          status: () => 'Busy',
-          error: () => '',
-          accounts: () => accounts,
-          selectedAccountId: () => first.id,
-        }),
-        commands: [Refresh({ id: first.id })],
+      if (
+        first === undefined &&
+        model.login._tag === 'Editing' &&
+        model.authEntry === 'Qr' &&
+        !model.fixturePreview &&
+        model.appCredentials === 'Supplied' &&
+        /^[1-9]\d*$/.test(model.apiId) &&
+        /^[a-f\d]{32}$/i.test(Redacted.value(model.apiHash))
+      ) {
+        return {
+          model: modifyFields(model, { status: () => 'Busy', error: () => '' }),
+          commands: [
+            BeginLogin({
+              apiId: model.apiId,
+              apiHash: model.apiHash,
+              phone: phoneForLogin(model),
+              qr: true,
+            }),
+          ],
+        }
       }
+      return { model: modifyFields(model, { status: () => 'Ready' }) }
     },
     SucceededAuthenticate: ({ result, sourceId }) => {
       if (
@@ -569,7 +636,10 @@ export const initialModel: Model = {
   phone: Redacted.make(''),
   countryIso: defaultCountryIso,
   countryOpen: false,
-  keepSignedIn: true,
+  authEntry: 'Qr',
+  theme: 'Day',
+  folder: 'All',
+  passkeyNote: false,
   answer: Redacted.make(''),
   status: 'Ready',
   error: '',
@@ -590,8 +660,16 @@ export const initialModel: Model = {
   faces: [],
   fixturePreview: false,
 }
+const storedTheme = (): Model['theme'] => {
+  try {
+    return localStorage.getItem('crm-chat.theme') === 'Dark' ? 'Night' : 'Day'
+  } catch {
+    return 'Day'
+  }
+}
+
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: initialModel,
+  model: modifyFields(initialModel, { theme: () => storedTheme() }),
   commands: [LoadAppCredentials()],
 })
 
@@ -602,9 +680,23 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: '',
   body: h.div(
     [
-      h.Class('app-wallpaper relative min-h-screen text-white'),
+      h.Class(
+        `app-wallpaper relative min-h-screen ${model.theme === 'Night' ? 'theme-night' : 'theme-day'}`,
+      ),
     ],
     [
+      h.button(
+        [
+          h.Class('tg-theme-toggle'),
+          h.AriaLabel(
+            model.theme === 'Night'
+              ? 'Switch to day theme'
+              : 'Switch to night theme',
+          ),
+          h.OnClick(Message.ClickedTheme()),
+        ],
+        [model.theme === 'Night' ? '☀' : '☾'],
+      ),
       model.error === ''
         ? h.empty
         : h.p(

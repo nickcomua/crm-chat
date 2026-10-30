@@ -299,6 +299,47 @@ describe('TDLib browser protocol', () => {
     expect(sent.map(query => query['@type'])).toContain('logOut')
   })
 
+  test('untilOpened stays subscribed through an Opening update', async () => {
+    const account = new TdAccount(
+      {
+        send: () => Promise.resolve({ '@type': 'ok' }),
+        close: () => Promise.resolve(),
+      },
+      'acct',
+    )
+    const pending = account.untilOpened(200)
+    account.apply(authorization('authorizationStateWaitTdlibParameters'))
+    account.apply(authorization('authorizationStateReady'))
+    await expect(pending).resolves.toEqual({ _tag: 'Ready' })
+  })
+
+  test('discard during Opening does not log out or sync the saved database', async () => {
+    const sent: Array<TdQuery> = []
+    let closed = false
+    let dropped = false
+    const account = new TdAccount(
+      {
+        send: query => {
+          sent.push(query)
+          return Promise.resolve({ '@type': 'ok' })
+        },
+        close: () => {
+          closed = true
+          return Promise.resolve()
+        },
+        drop: () => {
+          dropped = true
+          return Promise.resolve()
+        },
+      },
+      'acct',
+    )
+    await account.discard()
+    expect(sent.map(query => query['@type'])).not.toContain('logOut')
+    expect(closed).toBe(false)
+    expect(dropped).toBe(true)
+  })
+
   test('a resumed QR login counts as opened and is discarded within 2s', async () => {
     vi.useFakeTimers()
     const sent: Array<TdQuery> = []

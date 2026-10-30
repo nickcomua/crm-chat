@@ -235,6 +235,7 @@
               cargo test -p crm-chat-core -p crm-chat-telegram --locked
               # Offline half of the desktop integration test. Credentials and
               # saved accounts stay in the integration-test app (network, BWS).
+              cargo test -p crm-chat-integration-desktop --locked
               cargo run -p crm-chat-integration-desktop --locked -- shape
             '';
             installPhaseCommand = ''
