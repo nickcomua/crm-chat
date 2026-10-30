@@ -1,3 +1,4 @@
+import type { StoredFace } from './chatFace'
 import type { Chat, ChatKind } from './generated/core'
 
 export const fixtureChats: ReadonlyArray<Chat> = [
@@ -30,7 +31,12 @@ export type ChatFace = {
   readonly lines: ReadonlyArray<ChatLine>
 }
 
-const line = (text: string, time: string, mine = false, caption?: string): ChatLine => ({
+const line = (
+  text: string,
+  time: string,
+  mine = false,
+  caption?: string,
+): ChatLine => ({
   text,
   mine,
   time,
@@ -48,7 +54,12 @@ const faces: Record<string, ChatFace> = {
       line('I saved a seat.', '18:33'),
       line('On the tram now.', '18:36', true),
       line('See you at the station.', '18:40'),
-      line('The sketch from this morning. Print is fine.', '18:41', false, 'Station sketch'),
+      line(
+        'The sketch from this morning. Print is fine.',
+        '18:41',
+        false,
+        'Station sketch',
+      ),
       line('Bring the notes.', '18:42', true),
     ],
   },
@@ -137,11 +148,27 @@ const faces: Record<string, ChatFace> = {
   },
 }
 
-const emptyFace: ChatFace = { time: '', preview: '', unread: 0, receipt: 'none', lines: [] }
+const emptyFace: ChatFace = {
+  time: '',
+  preview: '',
+  unread: 0,
+  receipt: 'none',
+  lines: [],
+}
 
 export const faceFor = (id: string): ChatFace => faces[id] ?? emptyFace
 
-export const markFor = (title: string): string => title.slice(0, 1).toUpperCase()
+export const fixtureFaces = (): ReadonlyArray<StoredFace> =>
+  fixtureChats.flatMap(chat => {
+    const face = faces[chat.id]
+    if (face === undefined) {
+      return []
+    }
+    return [{ id: chat.id, ...face }]
+  })
+
+export const markFor = (title: string): string =>
+  title.slice(0, 1).toUpperCase()
 
 export const tintFor = (kind: ChatKind): string => {
   if (kind === 'Group') {

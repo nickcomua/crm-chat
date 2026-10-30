@@ -72,10 +72,13 @@ test('phone login requests 2FA then loads distinct chat types', () => {
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('region', { name: 'Telegram login' })).not.toExist(),
+    expect(role('region', { name: 'Telegram chats' })).toExist(),
     expectAll(all.role('listitem')).toHaveCount(3),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Dialog'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Group'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Channel'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'personal chat',
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('group'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('channel'),
   )
 })
 
@@ -133,7 +136,9 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('alert')).not.toExist(),
-    expect(role('heading', { name: 'Telegram chats' })).toExist(),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'Saved Messages',
+    ),
   )
 })
 
@@ -151,5 +156,11 @@ test('supplied application credentials are not rendered as inputs', () => {
     expect(role('textbox', { name: 'API hash' })).not.toExist(),
     expect(role('textbox', { name: 'Phone number' })).toExist(),
     expect(role('button', { name: 'Log in with QR' })).toExist(),
+    expect(role('button', { name: 'Country' })).toExist(),
+    expect(role('checkbox', { name: 'Keep me signed in' })).toBeChecked(),
+    expect(role('region', { name: 'Telegram login' })).toContainText('+31'),
+    expect(role('region', { name: 'Telegram login' })).not.toContainText(
+      'Application credentials are supplied',
+    ),
   )
 })
