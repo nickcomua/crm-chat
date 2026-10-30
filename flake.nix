@@ -10,6 +10,10 @@
       url = "https://flakehub.com/f/nix-community/fenix/0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # PR #9 base, nick/kam-43-tdlib. The web test logs in on this website,
+    # then redeploys the current one on the same origin.
+    prBase.url = "github:nickcomua/crm-chat/d4770a4e547d610cc5868908c24071f275ded4cf";
   };
 
   nixConfig = {
@@ -30,6 +34,7 @@
     nixpkgs,
     crane,
     fenix,
+    prBase,
   }: let
     systems = [
       "x86_64-linux"
@@ -270,6 +275,13 @@
             ]
           }:$PATH
           export CRM_CHAT_WEBSITE=${website}
+          export CRM_CHAT_WEBSITE_PREVIOUS=${
+            if system == "x86_64-linux"
+            then prBase.packages.${system}.website
+            else website
+          }
+          export CRM_CHAT_WEBSITE_SERVE=${./integration/website_serve.py}
+          export CRM_CHAT_PYTHON=${pkgs.python3}/bin/python3
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           export PLAYWRIGHT_CORE=${pkgs.playwright-driver}/index.mjs
           browsers=${pkgs.playwright-driver.browsers}
@@ -335,6 +347,24 @@
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           exec ${pkgs.bash}/bin/bash ${./integration/login.sh} "$@"
         '';
+        websiteServe = pkgs.writeShellScript "crm-chat-website-serve" ''
+          set -euo pipefail
+          if [ "$#" -ne 2 ]; then
+            echo "usage: website-serve ROOT PORT" >&2
+            exit 1
+          fi
+          if ! command -v secretspec >/dev/null 2>&1; then
+            echo "website-serve: secretspec is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v bws >/dev/null 2>&1; then
+            echo "website-serve: bws is not on PATH" >&2
+            exit 1
+          fi
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
+            ${pkgs.python3}/bin/python3 ${./integration/website_serve.py} "$1" "$2"
+        '';
         regenerateTdlibBindings = pkgs.writeShellScript "regenerate-tdlib-bindings" ''
           set -euo pipefail
           if [ ! -f third_party/tdlib-rs/tdlib-rs/tl/api.tl ]; then
@@ -365,6 +395,13 @@
               src = nixSrc;
             } ''
               alejandra --check $src
+              touch $out
+            '';
+          website-serve =
+            pkgs.runCommand "crm-chat-website-serve-test" {
+              nativeBuildInputs = [pkgs.python3];
+            } ''
+              python3 ${./integration/website_serve_test.py} ${./integration/website_serve.py}
               touch $out
             '';
           nix-lint =
@@ -501,6 +538,10 @@
           regenerate-tdlib-bindings = {
             type = "app";
             program = "${regenerateTdlibBindings}";
+          };
+          website-serve = {
+            type = "app";
+            program = "${websiteServe}";
           };
         };
       }

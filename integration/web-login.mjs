@@ -1,16 +1,23 @@
 #!/usr/bin/env node
-// Production-website QR login. Serves CRM_CHAT_WEBSITE, approves the QR with a
-// copy of a saved test-account session, and checks the chat list, a real
-// last-message preview, opened history, and a reload. Never prints secrets.
+// Production-website QR login. Serves the website with integration/website_serve.py,
+// approves the QR with a copy of a saved test-account session, and checks the
+// chat list, a real last-message preview, opened history, a reload, and a
+// redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. Never prints
+// secrets.
 import { spawn } from 'node:child_process'
-import { createServer } from 'node:http'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { existsSync, createReadStream, statSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { extname, join, normalize, sep } from 'node:path'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const root = process.env.CRM_CHAT_WEBSITE
+const previous = process.env.CRM_CHAT_WEBSITE_PREVIOUS
+const python = process.env.CRM_CHAT_PYTHON ?? 'python3'
+const serveScript =
+  process.env.CRM_CHAT_WEBSITE_SERVE ??
+  fileURLToPath(new URL('./website_serve.py', import.meta.url))
 const playwrightCore = process.env.PLAYWRIGHT_CORE
 const chromium = process.env.CHROMIUM
 const shots =
@@ -24,18 +31,7 @@ const listBudgetMs = 5_000
 const historyBudgetMs = 10_000
 const reloadBudgetMs = 15_000
 const kindPreview = new Set(['personal chat', 'group', 'channel'])
-
-const mime = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.wasm': 'application/wasm',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.json': 'application/json',
-  '.woff2': 'font/woff2',
-  '.ico': 'image/x-icon',
-}
+const previousSignInBudgetMs = 120_000
 
 const redact = text =>
   String(text)
@@ -59,8 +55,23 @@ const fail = message => {
   return new Error(message)
 }
 
+const bundleName = html => {
+  const match = String(html).match(/assets\/index-[^"' ]+\.js/)
+  return match === null ? '' : match[0].split('/').pop()
+}
+
 if (!root || !existsSync(join(root, 'index.html'))) {
   console.error('integration-test-web: CRM_CHAT_WEBSITE is not a website build')
+  process.exit(1)
+}
+if (!previous || !existsSync(join(previous, 'index.html'))) {
+  console.error(
+    'integration-test-web: CRM_CHAT_WEBSITE_PREVIOUS is not a website build',
+  )
+  process.exit(1)
+}
+if (!existsSync(serveScript)) {
+  console.error('integration-test-web: website server is missing')
   process.exit(1)
 }
 if (!playwrightCore || !chromium || !existsSync(chromium)) {
@@ -79,69 +90,45 @@ if (!/^[1-9]\d*$/.test(apiId) || !/^[a-fA-F\d]{32}$/.test(apiHash)) {
   process.exit(1)
 }
 
-const credentials = Buffer.from(
-  JSON.stringify({ apiId, apiHash }),
-  'utf8',
+const newBundle = bundleName(await readFile(join(root, 'index.html'), 'utf8'))
+const previousBundle = bundleName(
+  await readFile(join(previous, 'index.html'), 'utf8'),
 )
-
-const serveFile = (request, response) => {
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-  if (url.pathname === '/runtime/telegram-app') {
-    response.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-      'Content-Length': String(credentials.length),
-    })
-    response.end(credentials)
-    return
-  }
-  const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-  const candidate = normalize(join(root, relative))
-  const inside = candidate === root || candidate.startsWith(`${root}${sep}`)
-  let file = inside && existsSync(candidate) && statSync(candidate).isFile()
-    ? candidate
-    : join(root, 'index.html')
-  if (!existsSync(file)) {
-    response.writeHead(404, { 'Cache-Control': 'no-store' })
-    response.end()
-    return
-  }
-  const type = mime[extname(file)] ?? 'application/octet-stream'
-  const cache =
-    url.pathname.startsWith('/assets/')
-      ? 'public, max-age=31536000, immutable'
-      : 'no-cache'
-  response.writeHead(200, {
-    'Content-Type': type,
-    'Cache-Control': cache,
-    'Content-Length': String(statSync(file).size),
-  })
-  createReadStream(file).pipe(response)
+if (newBundle === '' || previousBundle === '' || newBundle === previousBundle) {
+  console.error(
+    'integration-test-web: previous and new website bundles are not distinct',
+  )
+  process.exit(1)
 }
-
-const server = createServer((request, response) => {
-  try {
-    serveFile(request, response)
-  } catch (error) {
-    note(`http ${redact(error instanceof Error ? error.message : 'error')}`)
-    response.writeHead(500)
-    response.end()
-  }
-})
-await new Promise((resolve, reject) => {
-  server.once('error', reject)
-  server.listen(0, '127.0.0.1', resolve)
-})
-const address = server.address()
-const port = typeof address === 'object' && address !== null ? address.port : 0
-const pageUrl = `http://127.0.0.1:${port}/`
-note(`serving website on ${pageUrl}`)
 
 await mkdir(shots, { recursive: true })
 const work = await mkdtemp(join(tmpdir(), 'crm-web-login-'))
 const profile = join(work, 'profile')
+const redeployProfile = join(work, 'redeploy-profile')
+const serveLink = join(work, 'site')
+await symlink(previous, serveLink)
+const server = spawn(python, [serveScript, serveLink, '0'], {
+  env: process.env,
+  stdio: ['ignore', 'pipe', 'inherit'],
+})
+const pageUrl = await new Promise((resolve, reject) => {
+  let buffer = ''
+  const onExit = code => reject(new Error(`website server exited ${code}`))
+  server.once('exit', onExit)
+  server.once('error', reject)
+  server.stdout.on('data', chunk => {
+    buffer += String(chunk)
+    const line = buffer.split('\n')[0]
+    if (!buffer.includes('\n') || !line.startsWith('serving website on ')) {
+      return
+    }
+    server.off('exit', onExit)
+    resolve(line.slice('serving website on '.length).trim())
+  })
+})
+note(`serving website on ${pageUrl}`)
 const timingPath = join(shots, 'timing.log')
-const started = Date.now()
+let started = Date.now()
 const browserName = process.env.CRM_CHAT_CHROMIUM_NAME ?? 'chromium'
 const timing = {
   browser: browserName,
@@ -150,6 +137,8 @@ const timing = {
   history_ms: '',
   reload_ms: '',
   reopen_ms: '',
+  previous_signed_in_ms: '',
+  redeploy_ms: '',
   auth: [],
 }
 
@@ -161,6 +150,8 @@ const writeTiming = async () => {
     `history_ms=${timing.history_ms}`,
     `reload_ms=${timing.reload_ms}`,
     `reopen_ms=${timing.reopen_ms}`,
+    `previous_signed_in_ms=${timing.previous_signed_in_ms}`,
+    `redeploy_ms=${timing.redeploy_ms}`,
     ...timing.auth.map(line => `auth ${line}`),
     ...logLines.map(line => `# ${line}`),
     '',
@@ -224,113 +215,235 @@ const shot = async (page, name) => {
   }
   await page.screenshot({ path: join(shots, name), fullPage: true }).catch(() => undefined)
 }
+const stillLoggedIn = async (nextPage, label, shotName) => {
+  const deadline = Date.now() + reloadBudgetMs
+  let preview = ''
+  let qrVisible = false
+  while (Date.now() < deadline) {
+    assertNoFaults()
+    const shell = nextPage.locator('[aria-label="Telegram chats"]')
+    const rows = await nextPage.locator('.chat-row').count()
+    const code = nextPage.locator('img[alt="Telegram login QR code"]')
+    qrVisible =
+      (await code.count()) > 0 &&
+      (await code.first().isVisible().catch(() => false))
+    if ((await shell.count()) > 0 && rows > 0 && !qrVisible) {
+      preview = await visiblePreview(nextPage)
+      if (preview !== '') {
+        break
+      }
+    }
+    await delay(100)
+  }
+  assertNoFaults()
+  if (preview === '') {
+    await shot(nextPage, shotName)
+    throw fail(
+      qrVisible
+        ? `${label} returned to the QR screen`
+        : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`,
+    )
+  }
+  note(`${label} preview_chars=${preview.length}`)
+}
+const scriptNames = async page => {
+  const srcs = await page.evaluate(() =>
+    [...document.scripts].map(script => script.src),
+  )
+  return srcs.map(src => src.split('/').pop() ?? '')
+}
 
 try {
   const { chromium: playwright } = await import(playwrightCore)
-  browser = await playwright.launchPersistentContext(profile, {
-    executablePath: chromium,
-    headless: process.env.CRM_CHAT_WEB_HEADED !== '1',
-    viewport: { width: 1440, height: 900 },
-    args: ['--disable-dev-shm-usage'],
-  })
+  const launch = profileDir =>
+    playwright.launchPersistentContext(profileDir, {
+      executablePath: chromium,
+      headless: process.env.CRM_CHAT_WEB_HEADED !== '1',
+      viewport: { width: 1440, height: 900 },
+      args: ['--disable-dev-shm-usage'],
+    })
+  const retarget = async next => {
+    await unlink(serveLink)
+    await symlink(next, serveLink)
+  }
+  const approveQr = async (page, shotName, recordQr, qrBudgetMs = 30_000) => {
+    const qr = page.locator('img[alt="Telegram login QR code"]')
+    // The PR base says "Log in with QR". The current site says "Log in by QR code".
+    const qrButton = page.getByRole('button', { name: /log in (by|with) qr/i })
+    const qrDeadline = Date.now() + qrBudgetMs
+    let qrVisible = false
+    while (Date.now() < qrDeadline) {
+      assertNoFaults()
+      if ((await qr.count()) > 0 && (await qr.first().isVisible().catch(() => false))) {
+        qrVisible = true
+        break
+      }
+      if (
+        (await qrButton.count()) > 0 &&
+        (await qrButton.first().isEnabled().catch(() => false))
+      ) {
+        await qrButton.first().click().catch(() => undefined)
+      }
+      await delay(200)
+    }
+    if (!qrVisible) {
+      await shot(page, shotName)
+      throw fail(`QR was not visible within ${qrBudgetMs}ms`)
+    }
+    if (recordQr) {
+      timing.qr_visible_ms = String(Date.now() - started)
+      note(`qr visible at ${timing.qr_visible_ms}ms`)
+    } else {
+      note('qr visible on the previous build')
+    }
+    const qrFile = join(work, 'qr.png')
+    await qr.first().screenshot({ path: qrFile })
+    const decoded = await new Promise((resolve, reject) => {
+      const child = spawn('zbarimg', ['-q', '--raw', qrFile], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let out = ''
+      child.stdout.on('data', chunk => {
+        out += String(chunk)
+      })
+      child.on('error', reject)
+      child.on('close', code => {
+        if (code !== 0) {
+          reject(new Error(`zbarimg exited ${code}`))
+          return
+        }
+        resolve(out)
+      })
+    })
+    await rm(qrFile, { force: true })
+    const link = String(decoded)
+      .split('\n')
+      .map(line => line.trim())
+      .find(line => line.startsWith('tg://login?token='))
+    if (link === undefined || link.length < 'tg://login?token='.length + 8) {
+      throw fail('QR did not decode to a login link')
+    }
+    await qr.first().evaluate(element => {
+      element.style.filter = 'blur(18px)'
+    })
+    await shot(page, shotName)
+    return await new Promise((resolve, reject) => {
+      const child = spawn('python3', [tdqr, slot, 'confirm'], {
+        env: { ...process.env, TDQR_LINK: link },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let sawConfirm = false
+      const take = chunk => {
+        for (const line of String(chunk).split('\n')) {
+          const trimmed = line.trim()
+          if (trimmed === '') {
+            continue
+          }
+          note(trimmed)
+          if (!trimmed.includes('confirm ->')) {
+            continue
+          }
+          sawConfirm = true
+          if (trimmed.includes('confirm -> error')) {
+            reject(fail(trimmed))
+            return
+          }
+          resolve(Date.now())
+        }
+      }
+      child.stdout.on('data', take)
+      child.stderr.on('data', take)
+      child.on('error', reject)
+      child.on('close', code => {
+        if (!sawConfirm) {
+          reject(fail(`approver exited ${code} before confirm`))
+        }
+      })
+      setTimeout(() => {
+        child.kill()
+        if (!sawConfirm) {
+          reject(fail('approver timed out before confirm'))
+        }
+      }, 60_000).unref()
+    })
+  }
+
+  note(`redeploy previous=${previousBundle} next=${newBundle}`)
+  browser = await launch(redeployProfile)
+  const previousPage = browser.pages()[0] ?? (await browser.newPage())
+  note(`browser ${browserName}`)
+  watch(previousPage)
+  await previousPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  const previousApproved = await approveQr(
+    previousPage,
+    'redeploy-qr.png',
+    false,
+    60_000,
+  )
+  const signedDeadline = previousApproved + previousSignInBudgetMs
+  let signedIn = false
+  while (Date.now() < signedDeadline) {
+    // The PR base wasm aborts on Chromium 155 after approval. That page is only
+    // the previous deployment. Page errors start counting once the new bundle loads.
+    const code = previousPage.locator('img[alt="Telegram login QR code"]')
+    const qrStill =
+      (await code.count()) > 0 &&
+      (await code.first().isVisible().catch(() => false))
+    const heading = previousPage.getByRole('heading', { name: 'Telegram chats' })
+    const shell = previousPage.locator('[aria-label="Telegram chats"]')
+    const headingVisible =
+      (await heading.count()) > 0 &&
+      (await heading.first().isVisible().catch(() => false))
+    const shellVisible =
+      (await shell.count()) > 0 &&
+      (await shell.first().isVisible().catch(() => false))
+    if (!qrStill && (headingVisible || shellVisible)) {
+      signedIn = true
+      break
+    }
+    await delay(200)
+  }
+  if (!signedIn) {
+    await shot(previousPage, '06-after-redeploy.png')
+    throw fail('previous build did not leave the QR screen')
+  }
+  timing.previous_signed_in_ms = String(Date.now() - previousApproved)
+  note(`previous build signed in at ${timing.previous_signed_in_ms}ms`)
+  note('waiting 10s for the previous build to flush')
+  await delay(10_000)
+  await browser.close()
+  browser = undefined
+  const redeployAt = Date.now()
+  await retarget(root)
+  faults.length = 0
+  browser = await launch(redeployProfile)
+  const redeployed = browser.pages()[0] ?? (await browser.newPage())
+  watch(redeployed)
+  await redeployed.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+  const names = await scriptNames(redeployed)
+  note(`redeploy scripts ${names.filter(name => name !== '').join(',')}`)
+  if (!names.includes(newBundle)) {
+    await shot(redeployed, '06-after-redeploy.png')
+    throw fail(
+      names.includes(previousBundle)
+        ? 'redeploy kept the previous bundle'
+        : `redeploy did not load ${newBundle}`,
+    )
+  }
+  await stillLoggedIn(redeployed, 'redeploy', '06-after-redeploy.png')
+  timing.redeploy_ms = String(Date.now() - redeployAt)
+  await shot(redeployed, '06-after-redeploy.png')
+  note(`redeploy persisted at ${timing.redeploy_ms}ms bundle=${newBundle}`)
+  await browser.close()
+  browser = undefined
+
+  started = Date.now()
+  browser = await launch(profile)
   const page = browser.pages()[0] ?? (await browser.newPage())
   note(`browser ${browserName}`)
   watch(page)
   await page.goto(pageUrl, { waitUntil: 'domcontentloaded' })
-
-  const qr = page.locator('img[alt="Telegram login QR code"]')
-  const qrButton = page.getByRole('button', { name: 'Log in by QR code' })
-  const qrDeadline = Date.now() + 30_000
-  let qrVisible = false
-  while (Date.now() < qrDeadline) {
-    assertNoFaults()
-    if ((await qr.count()) > 0 && (await qr.first().isVisible().catch(() => false))) {
-      qrVisible = true
-      break
-    }
-    if ((await qrButton.count()) > 0 && (await qrButton.first().isEnabled().catch(() => false))) {
-      await qrButton.first().click().catch(() => undefined)
-    }
-    await delay(200)
-  }
-  if (!qrVisible) {
-    await shot(page, '01-qr-blurred.png')
-    throw fail('QR was not visible within 30s')
-  }
-  timing.qr_visible_ms = String(Date.now() - started)
-  note(`qr visible at ${timing.qr_visible_ms}ms`)
-
-  const qrFile = join(work, 'qr.png')
-  await qr.first().screenshot({ path: qrFile })
-  const decoded = await new Promise((resolve, reject) => {
-    const child = spawn('zbarimg', ['-q', '--raw', qrFile], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let out = ''
-    child.stdout.on('data', chunk => {
-      out += String(chunk)
-    })
-    child.on('error', reject)
-    child.on('close', code => {
-      if (code !== 0) {
-        reject(new Error(`zbarimg exited ${code}`))
-        return
-      }
-      resolve(out)
-    })
-  })
-  await rm(qrFile, { force: true })
-  const link = String(decoded)
-    .split('\n')
-    .map(line => line.trim())
-    .find(line => line.startsWith('tg://login?token='))
-  if (link === undefined || link.length < 'tg://login?token='.length + 8) {
-    throw fail('QR did not decode to a login link')
-  }
-  await qr.first().evaluate(element => {
-    element.style.filter = 'blur(18px)'
-  })
-  await shot(page, '01-qr-blurred.png')
-
-  const approvedAt = await new Promise((resolve, reject) => {
-    const child = spawn('python3', [tdqr, slot, 'confirm'], {
-      env: { ...process.env, TDQR_LINK: link },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let sawConfirm = false
-    const take = chunk => {
-      for (const line of String(chunk).split('\n')) {
-        const trimmed = line.trim()
-        if (trimmed === '') {
-          continue
-        }
-        note(trimmed)
-        if (!trimmed.includes('confirm ->')) {
-          continue
-        }
-        sawConfirm = true
-        if (trimmed.includes('confirm -> error')) {
-          reject(fail(trimmed))
-          return
-        }
-        resolve(Date.now())
-      }
-    }
-    child.stdout.on('data', take)
-    child.stderr.on('data', take)
-    child.on('error', reject)
-    child.on('close', code => {
-      if (!sawConfirm) {
-        reject(fail(`approver exited ${code} before confirm`))
-      }
-    })
-    setTimeout(() => {
-      child.kill()
-      if (!sawConfirm) {
-        reject(fail('approver timed out before confirm'))
-      }
-    }, 60_000).unref()
-  })
+  const approvedAt = await approveQr(page, '01-qr-blurred.png', true)
 
   const deadline = approvedAt + listBudgetMs
   let rows = 0
@@ -458,38 +571,6 @@ try {
     opened.close()
   })
 
-  const stillLoggedIn = async (nextPage, label, shotName) => {
-    const deadline = Date.now() + reloadBudgetMs
-    let preview = ''
-    let qrVisible = false
-    while (Date.now() < deadline) {
-      assertNoFaults()
-      const shell = nextPage.locator('[aria-label="Telegram chats"]')
-      const rows = await nextPage.locator('.chat-row').count()
-      const code = nextPage.locator('img[alt="Telegram login QR code"]')
-      qrVisible =
-        (await code.count()) > 0 &&
-        (await code.first().isVisible().catch(() => false))
-      if ((await shell.count()) > 0 && rows > 0 && !qrVisible) {
-        preview = await visiblePreview(nextPage)
-        if (preview !== '') {
-          break
-        }
-      }
-      await delay(100)
-    }
-    assertNoFaults()
-    if (preview === '') {
-      await shot(nextPage, shotName)
-      throw fail(
-        qrVisible
-          ? `${label} returned to the QR screen`
-          : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`,
-      )
-    }
-    note(`${label} preview_chars=${preview.length}`)
-  }
-
   const reloadStart = Date.now()
   await page.reload({ waitUntil: 'domcontentloaded' })
   try {
@@ -544,7 +625,7 @@ try {
   if (browser !== undefined) {
     await browser.close().catch(() => undefined)
   }
-  server.close()
+  server.kill('SIGTERM')
   await rm(work, { recursive: true, force: true })
 }
 
