@@ -416,6 +416,19 @@
           coreTypes = cargoTests;
           telegramTests = cargoTests;
           integrationOffline = cargoTests;
+          integration-desktop-skip = pkgs.runCommand "crm-chat-integration-desktop-skip" {} ''
+            CRM_CHAT_SECRET_GATE=env env -u TG_ID -u TG_HASH bash ${./integration/run.sh} >"$TMPDIR/skip.out"
+            grep -q 'integration-test: skip (TG_ID and TG_HASH are absent)' "$TMPDIR/skip.out"
+            if CRM_CHAT_SECRET_GATE=env env TG_ID=1 TG_HASH= bash ${./integration/run.sh} >"$TMPDIR/bad.out" 2>&1; then
+              echo "malformed credentials should fail" >&2
+              exit 1
+            fi
+            if grep -q 'integration-test: skip' "$TMPDIR/bad.out"; then
+              echo "malformed credentials skipped" >&2
+              exit 1
+            fi
+            touch $out
+          '';
           # Same fetch for native and wasm, and the vendored scheme is that
           # commit's td_api.tl. This does not build either library.
           tdlib-pin =

@@ -1,5 +1,9 @@
 //! Desktop-path Telegram check and one-time login through TDLib.
 //!
+//! `account` follows the Tauri commands `telegram_restore`,
+//! `telegram_begin_login`, and `telegram_load_account`: it opens a copy of the
+//! saved desktop database, restores each logged-in account, reads that chat
+//! list, then starts a QR login and approves it from one saved account.
 //! Prints pass lines and TDLib error codes only. Never print secrets,
 //! database contents, phone numbers, login links, or user ids.
 
@@ -7,6 +11,8 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use crm_chat_telegram::{database_root, AuthStep, Client};
+
+const LOGIN_PROBE: &str = "login-probe";
 
 struct RemovedOnDrop(PathBuf);
 
@@ -172,6 +178,77 @@ fn shape() -> Result<(), String> {
     Ok(())
 }
 
+fn require_listed_chats(account: &crm_chat_telegram::Account) -> Result<(), String> {
+    if account.chats.is_empty() {
+        return Err("chat list is empty".into());
+    }
+    crm_chat_telegram::require_desktop_authorized(account)
+}
+
+async fn await_chat_list(
+    client: &Client,
+    mut account: crm_chat_telegram::Account,
+) -> Result<crm_chat_telegram::Account, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if !account.chats.is_empty() {
+            require_listed_chats(&account)?;
+            return Ok(account);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("chat list is empty".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        account = client.load_account(&account.id).await?;
+    }
+}
+
+async fn qr_login(
+    client: &Client,
+    approver: &str,
+    api_id: i32,
+    api_hash: &str,
+) -> Result<crm_chat_telegram::Account, String> {
+    if approver == LOGIN_PROBE {
+        return Err("saved account uses the login probe id".into());
+    }
+    let started = client.begin_qr(LOGIN_PROBE, api_id, api_hash).await?;
+    let link = match started {
+        AuthStep::Qr { link, .. } => link,
+        AuthStep::Authorized { account } => return await_chat_list(client, account).await,
+        AuthStep::Password { .. } => {
+            return Err("test account is waiting for a 2FA password and none is stored".into());
+        }
+        AuthStep::Code { .. } => {
+            return Err("Telegram asked for a phone code during a QR login".into());
+        }
+    };
+    let confirmed = client.confirm_qr(approver, &link).await;
+    drop(link);
+    confirmed?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        match client.poll(LOGIN_PROBE).await {
+            Ok(AuthStep::Authorized { account }) => return await_chat_list(client, account).await,
+            Ok(AuthStep::Password { .. }) => {
+                return Err("test account is waiting for a 2FA password and none is stored".into());
+            }
+            Ok(AuthStep::Code { .. }) => {
+                return Err("Telegram asked for a phone code during a QR login".into());
+            }
+            Ok(AuthStep::Qr { .. }) => {}
+            Err(error)
+                if error == "Telegram is still starting"
+                    || error == "Telegram did not answer in time" => {}
+            Err(error) => return Err(error),
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Telegram did not finish QR login in time".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
 async fn accounts() -> Result<(), String> {
     let (api_id, api_hash) = credentials_from_env()?;
     let source = database_root();
@@ -206,12 +283,31 @@ async fn accounts() -> Result<(), String> {
             missing.join(", ")
         ));
     }
-    for account in &saved {
-        crm_chat_telegram::require_desktop_authorized(account)?;
+    let mut listed = Vec::new();
+    for account in saved {
+        listed.push(await_chat_list(&client, account).await?);
     }
+    let Some(approver) = listed.first() else {
+        return Err("no saved account can approve QR login".into());
+    };
+    let approver_id = approver.id.clone();
+    let chat_count: usize = listed.iter().map(|account| account.chats.len()).sum();
     println!(
         "authenticated: pass (desktop tdlib, accounts={}, authorized)",
-        saved.len()
+        listed.len()
+    );
+    println!(
+        "chat-list: pass (desktop tdlib, accounts={}, chats={})",
+        listed.len(),
+        chat_count
+    );
+    let logged_in = qr_login(&client, &approver_id, api_id, &api_hash).await;
+    let logged_out = client.logout(LOGIN_PROBE).await;
+    let logged_in = logged_in?;
+    logged_out?;
+    println!(
+        "login: pass (desktop tdlib, qr, chats={})",
+        logged_in.chats.len()
     );
     Ok(())
 }
@@ -267,7 +363,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{copies_into_saved_tree, isolated_database};
+    use super::{copies_into_saved_tree, isolated_database, require_listed_chats};
     use std::path::Path;
 
     #[test]
@@ -317,5 +413,32 @@ mod tests {
         assert!(!dest.exists());
         assert!(root.join("acct").join("db").is_file());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_empty_chat_list_is_not_a_logged_in_desktop_account() {
+        let account = crm_chat_telegram::Account {
+            id: "account-1".to_owned(),
+            title: "Ada".to_owned(),
+            chats: Vec::new(),
+        };
+        assert_eq!(
+            require_listed_chats(&account).expect_err("empty list"),
+            "chat list is empty"
+        );
+    }
+
+    #[test]
+    fn a_restored_chat_list_matches_the_desktop_authorized_shape() {
+        let account = crm_chat_telegram::Account {
+            id: "account-1".to_owned(),
+            title: "Ada".to_owned(),
+            chats: vec![crm_chat_telegram::Chat {
+                id: "account-1:7".to_owned(),
+                title: "Ada".to_owned(),
+                kind: crm_chat_telegram::ChatKind::Dialog,
+            }],
+        };
+        require_listed_chats(&account).expect("chat list");
     }
 }

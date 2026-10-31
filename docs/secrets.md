@@ -156,7 +156,9 @@ already registered is rejected.
 `nix flake check` does not call Telegram or BWS. Its sandbox has neither
 network nor vault access. The check `integration-offline` runs the integration
 binary's `shape` command, which asserts the desktop `Authorized` JSON and does
-not open a database. `credentials` and `account` stay in the app below.
+not open a database. `integration-desktop-skip` runs the shell gate with
+`TG_ID` and `TG_HASH` unset and checks that it skips. `credentials` and
+`account` stay in the app below.
 
 From this repository, with `bws` on `PATH` and the
 user-local SecretSpec config in place. Use the workstation `secretspec` on
@@ -167,15 +169,25 @@ vault token:
 
 The command needs network and the BWS vault. It is not part of `nix flake check`.
 
-It fails if `TG_ID` or `TG_HASH` do not resolve, or if they are not in the
-shape the apps accept. The app scope must inject only those two Telegram keys.
-The same values are then used for a real TDLib connection. The check opens a
-throwaway database, requests QR login, and requires Telegram to accept the
-application credentials. It does not print the login link. It then copies the
-desktop TDLib directory and restores logged-in accounts from the copy. Each
-account must match the desktop `Authorized` shape. The saved directory is not
-modified. If it has no account, the command prints `NEEDS TEST ACCOUNTS:` and
-exits 2. It does not read BWS session entries.
+When `TG_ID` and `TG_HASH` are both absent, the command prints
+`integration-test: skip (TG_ID and TG_HASH are absent)` and exits 0, so a run
+without those secrets does not fail. A value that is present but not in the
+shape the apps accept still fails. The app scope must inject only those two
+Telegram keys.
+
+The same values are then used for a real TDLib connection, the client behind
+the Tauri commands `telegram_restore`, `telegram_begin_login`, and
+`telegram_load_account`. The check opens a throwaway database, requests QR
+login, and requires Telegram to accept the application credentials. It does
+not print the login link. It then copies the desktop TDLib directory and
+restores logged-in accounts from the copy. Each account must match the
+desktop `Authorized` shape and must include at least one chat. One saved
+account then approves a fresh QR login in that same copy, and the new session
+must list chats too. The probe session is logged out. The saved accounts are
+not. The saved directory is not modified. If it has no account, the command
+prints `NEEDS TEST ACCOUNTS:` and exits 2. It does not read BWS session
+entries. Phone, code, and 2FA login stay on the interactive
+`login-test-account` command.
 
 Tokens and secret values are not printed. Output is pass, or a TDLib error
 code.
