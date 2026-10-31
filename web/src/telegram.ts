@@ -119,7 +119,9 @@ export const toAuthResult = async (step: AuthStep): Promise<AuthResult> => {
     return { _tag: 'Code', id: step.id }
   }
   if (step._tag === 'Password') {
-    return { _tag: 'Password', id: step.id }
+    return step.hint === ''
+      ? { _tag: 'Password', id: step.id }
+      : { _tag: 'Password', id: step.id, hint: step.hint }
   }
   if (step._tag === 'Qr') {
     return {
@@ -142,7 +144,7 @@ export const loadMessages = async (
     const value = await invoke('telegram_messages', { id, chatId })
     return Array.isArray(value) ? value : []
   }
-  return sessionFor(id).messages(chatId)
+  return (await liveSession(id)).messages(chatId)
 }
 
 export const restoreAccounts = async (
@@ -183,7 +185,7 @@ const storedFaces = (previews: ReadonlyArray<ChatPreview>): Array<StoredFace> =>
 
 export const AuthResult = defineTaggedUnion({
   Code: { id: Schema.String },
-  Password: { id: Schema.String },
+  Password: { id: Schema.String, hint: Schema.optional(Schema.String) },
   Qr: { id: Schema.String, image: Schema.String },
   Authorized: {
     account: Account,
@@ -209,12 +211,24 @@ const sessionFor = (id: string): TdAccount => {
   return session
 }
 
+const liveSession = async (id: string): Promise<TdAccount> => {
+  if (browserRuntime.hasLive(id)) {
+    return sessionFor(id)
+  }
+  const revived = await browserRuntime.revive(id)
+  if (revived === undefined) {
+    throw new Error('Login expired. Add the account again.')
+  }
+  sessions.set(id, revived)
+  return revived
+}
+
 export const loadAccount = async (id: string): Promise<Account> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
     return decodeAccount(await invoke('telegram_load_account', { id }))
   }
-  const session = sessionFor(id)
+  const session = await liveSession(id)
   const account = await session.readAccount()
   if (session.chatListError !== undefined) {
     throw new Error(session.chatListError)
@@ -251,6 +265,11 @@ export const beginLogin = async (
         apiHash,
       }),
     )
+  }
+  if (sessions.size > 0) {
+    // A signed-in client owns the wasm socket. Park it, then open this login
+    // alone so the QR or phone update can arrive.
+    await browserRuntime.detachSignedIn(true)
   }
   const account = await browserRuntime.open(id, apiId, apiHash)
   sessions.set(id, account)
@@ -305,6 +324,25 @@ export const pollAccount = async (id: string): Promise<AuthResult> => {
 }
 
 export const pollQr = pollAccount
+
+export const logoutAccount = async (id: string): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_logout', { id })
+    return
+  }
+  if (!browserRuntime.hasLive(id)) {
+    const revived = await browserRuntime.revive(id)
+    if (revived !== undefined) {
+      sessions.set(id, revived)
+    }
+  }
+  const reopened = await browserRuntime.logoutAccount(id)
+  sessions.delete(id)
+  for (const account of reopened) {
+    sessions.set(account.id, account)
+  }
+}
 
 export const removeConnection = async (id: string): Promise<void> => {
   const invoke = tauriInvoke()

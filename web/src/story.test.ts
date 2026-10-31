@@ -6,6 +6,7 @@ import { expect, test } from 'vitest'
 import {
   BeginLogin,
   Disconnect,
+  LogOut,
   Message,
   type Model,
   Refresh,
@@ -55,6 +56,40 @@ test('attaching another account preserves the first account and switching select
     model(current => {
       expect(current.selectedAccountId).toBe('first')
       expect(current.accounts[0]?.chats[0]?.kind).toBe('Dialog')
+    }),
+  )
+})
+
+test('logging out the selected account keeps the other and its chat kind', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        accounts: () => [first, second],
+        selectedAccountId: () => 'second',
+      }),
+    ),
+    message(Message.ClickedLogOut()),
+    Command.resolve(LogOut, Message.CompletedLogOut({ id: 'second' })),
+    model(current => {
+      expect(current.accounts).toEqual([first])
+      expect(current.selectedAccountId).toBe('first')
+      expect(current.login._tag).toBe('Closed')
+      expect(current.accounts[0]?.chats[0]?.kind).toBe('Dialog')
+    }),
+  )
+})
+
+test('logging out the last account returns to QR login', () => {
+  story(
+    update,
+    given(signedIn),
+    message(Message.ClickedLogOut()),
+    Command.resolve(LogOut, Message.CompletedLogOut({ id: 'first' })),
+    model(current => {
+      expect(current.accounts).toEqual([])
+      expect(current.login._tag).toBe('Editing')
+      expect(current.authEntry).toBe('Qr')
     }),
   )
 })

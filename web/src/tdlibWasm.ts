@@ -510,6 +510,24 @@ export class TdWasmRuntime {
   // Copied the moment Ready is confirmed, before a later receive can abort.
   // The reopen loads this instead of an empty IndexedDB.
   private hotFiles: Array<SnapshotFile> | undefined
+  // Accounts whose files stay in the snapshot while another login owns the
+  // only wasm instance. Two clients on one instance share one Emscripten
+  // socket callback, so a second QR approval never reaches TDLib.
+  private readonly parked = new Map<
+    string,
+    { apiId: number; apiHash: string }
+  >()
+  // Files for accounts that are not open on this instance. A fresh login
+  // must not mount them: loadChats then stalls beside the other database.
+  private stashed: Array<SnapshotFile> | undefined
+  private isolateNext = false
+  // The Ready transition's files are an incomplete database. Persisting them
+  // and reopening after the next trap comes back as a new phone login.
+  // Stay false until a sync that follows the chat-list read.
+  private chatListDurable = false
+  // Snapshot taken before the trapping receive. Used when the post-trap
+  // copy reopens as a new phone login.
+  private fallbackHot: Array<SnapshotFile> | undefined
   private reopenTail: Promise<void> | undefined
   // Bytes copied before close. Used when the destructor receive traps, so the
   // saved snapshot is not the half-destroyed filesystem.
@@ -617,12 +635,21 @@ export class TdWasmRuntime {
     this.module = created
     // Populate before any td_* call. syncfs while TDLib is running replaces
     // the live file buffers and the next receive faults.
+    const isolate = this.isolateNext
+    this.isolateNext = false
     const snapshotCapable = canSnapshot(created.FS)
-    const held = snapshotCapable ? this.hotFiles : undefined
+    const held = isolate || !snapshotCapable ? undefined : this.hotFiles
+    // A torn or empty wal is not a checkpoint. Reopening onto it logs an
+    // unsigned snapshot and can discard the IndexedDB copy that just
+    // restored the chat list. Use the saved checkpoint instead.
+    const heldReady =
+      held !== undefined &&
+      held.length > 0 &&
+      settleSnapshotFiles(held, this.foldGrow).checkpointed
     const snapshot =
-      held !== undefined && held.length > 0
+      heldReady && held !== undefined
         ? { files: held }
-        : snapshotCapable
+        : snapshotCapable && !isolate
           ? await this.snapshots.load().catch(() => undefined)
           : undefined
     const installed =
@@ -630,9 +657,11 @@ export class TdWasmRuntime {
         ? installSettled(created.FS, snapshot.files, this.foldGrow)
         : undefined
     console.info(
-      installed !== undefined
-        ? `tdlib snapshot files=${installed.files}${installed.checkpointed ? ' checkpointed' : ''}${installed.detail === '' ? '' : ` ${installed.detail}`}${installed.reason === '' ? '' : ` skip=${installed.reason}`}`
-        : 'tdlib snapshot missing',
+      isolate
+        ? 'tdlib snapshot parked'
+        : installed !== undefined
+          ? `tdlib snapshot files=${installed.files}${installed.checkpointed ? ' checkpointed' : ''}${installed.detail === '' ? '' : ` ${installed.detail}`}${installed.reason === '' ? '' : ` skip=${installed.reason}`}`
+          : 'tdlib snapshot missing',
     )
     if (installed !== undefined) {
       const extras = await this.snapshots.legacyDirectories().catch(() => [])
@@ -643,7 +672,7 @@ export class TdWasmRuntime {
         mkdirParents(created.FS, extra.path)
         created.FS.utime?.(extra.path, extra.mtime, extra.mtime)
       }
-    } else {
+    } else if (!isolate) {
       await this.enqueueSync(true)
       const captured = snapshotCapable ? captureTree(created.FS) : undefined
       const databases =
@@ -773,6 +802,16 @@ export class TdWasmRuntime {
         this.recoveries += 1
         const keepGrow = this.openSettled
         this.haltReceive()
+        // The receive that trapped may have flushed the auth key into the
+        // files after the earlier copy. Keep that earlier copy only if this
+        // one reopens as a new phone login.
+        if (!this.chatListDurable) {
+          const previous = this.hotFiles
+          this.rememberHotSnapshot()
+          if (this.hotFiles !== previous) {
+            this.fallbackHot = previous
+          }
+        }
         void this.reopenAfterFault(keepGrow)
         return
       }
@@ -841,7 +880,9 @@ export class TdWasmRuntime {
       }
     }
     if (startedReady) {
-      if (!this.openSettled) {
+      // Keep the newest files until the chat list is saved. The first
+      // post-Ready copy can still be missing the auth key.
+      if (!this.openSettled || !this.chatListDurable) {
         this.rememberHotSnapshot()
       }
       this.openSettled = true
@@ -888,6 +929,24 @@ export class TdWasmRuntime {
   }
 
   private async reopenNow(keepGrow: boolean): Promise<void> {
+    const slots = await this.reopenOnce(keepGrow)
+    const fallback = this.fallbackHot
+    this.fallbackHot = undefined
+    if (
+      fallback === undefined ||
+      !keepGrow ||
+      this.chatListDurable ||
+      !slots.some(slot => slot.account.phase._tag === 'WaitPhone')
+    ) {
+      return
+    }
+    // The post-trap copy was not signed in. Open the earlier one.
+    this.hotFiles = fallback
+    this.foldGrow = true
+    await this.reopenOnce(true)
+  }
+
+  private async reopenOnce(keepGrow: boolean): Promise<Array<ClientSlot>> {
     this.openSettled = true
     if (!keepGrow) {
       this.foldGrow = false
@@ -896,6 +955,7 @@ export class TdWasmRuntime {
     const slots = [...this.slots.values()]
     for (const slot of slots) {
       slot.account.holdWaiters()
+      slot.account.forgetFolders()
       // The failed open already stored Ready. Put the account back in Opening
       // so a timed-out untilOpened does not treat the dead runtime as signed in.
       slot.account.apply({
@@ -932,6 +992,7 @@ export class TdWasmRuntime {
     } catch (error) {
       this.reportReceiveError(error)
     }
+    return slots
   }
 
   private releaseModule(): void {
@@ -1033,6 +1094,75 @@ export class TdWasmRuntime {
     })
   }
 
+  hasLive(id: string): boolean {
+    return this.module !== undefined && this.slots.has(id)
+  }
+
+  private snapshotFiles(
+    live: Array<SnapshotFile> | undefined,
+  ): Array<SnapshotFile> | undefined {
+    const stashed = this.stashed ?? []
+    if (stashed.length === 0) {
+      return live
+    }
+    const current = live ?? []
+    const livePaths = new Set(current.map(file => file.path))
+    const kept = stashed.filter(file => !livePaths.has(file.path))
+    const merged = [...kept, ...current]
+    return merged.length > 0 ? merged : live
+  }
+
+  // Drop the live instance without logOut. isolate starts the next open on an
+  // empty filesystem so a new QR login does not sit beside another database.
+  // The parked files are merged back into the next snapshot.
+  async detachSignedIn(isolate = false): Promise<void> {
+    for (const slot of this.slots.values()) {
+      this.parked.set(slot.account.id, {
+        apiId: slot.apiId,
+        apiHash: slot.apiHash,
+      })
+    }
+    if (this.module !== undefined) {
+      await this.sync().catch(() => undefined)
+      const filesystem = this.module?.FS
+      if (filesystem !== undefined && canSnapshot(filesystem)) {
+        try {
+          const captured = captureTree(filesystem)
+          const merged = this.snapshotFiles(captured)
+          if (merged !== undefined && merged.length > 0) {
+            this.stashed = merged
+            this.hotFiles = isolate ? undefined : merged
+          }
+        } catch {
+          // sync() already committed the IndexedDB copy.
+        }
+      }
+    }
+    this.isolateNext = isolate
+    if (isolate) {
+      this.hotFiles = undefined
+    }
+    this.discardModule()
+    this.openSettled = false
+    this.foldGrow = true
+    this.recoveries = 0
+    this.chatListDurable = false
+  }
+
+  async revive(id: string): Promise<TdAccount | undefined> {
+    if (this.hasLive(id)) {
+      return this.slots.get(id)?.account
+    }
+    const creds = this.parked.get(id)
+    if (creds === undefined) {
+      return undefined
+    }
+    await this.detachSignedIn()
+    const account = await this.open(id, creds.apiId, creds.apiHash)
+    await account.untilOpened(OPEN_TIMEOUT).catch(() => undefined)
+    return account
+  }
+
   async open(id: string, apiId: number, apiHash: string): Promise<TdAccount> {
     if (!validAccountId(id) || apiId <= 0 || apiHash.length !== 32) {
       throw new Error('API_ID_INVALID')
@@ -1121,22 +1251,94 @@ export class TdWasmRuntime {
       })
     // Each login keeps its own directory. Opening a leftover and logging it
     // out used to discard the signed-in database and return the page to the QR
-    // screen. Keep the newest one that is already authorized, and close the
-    // others without logOut so their files stay put.
+    // screen. Keep every directory that is already authorized. Close a
+    // leftover without logOut, on its own wasm instance, so its destructor
+    // cannot take the signed-in clients with it.
+    const ready: Array<TdAccount> = []
     for (const [index, id] of ids.entries()) {
       const account = await this.open(id, apiId, apiHash)
       const phase = await account
         .untilOpened(OPEN_TIMEOUT)
         .catch(() => account.phase)
       if (phase._tag === 'Ready') {
-        return [account]
+        ready.push(account)
+        continue
       }
       await account.release()
-      if (index < ids.length - 1) {
-        this.discardModule()
+      const more = index < ids.length - 1
+      if (!more && ready.length === 0) {
+        continue
+      }
+      const kept = ready.map(item => item.id)
+      this.discardModule()
+      ready.length = 0
+      for (const keptId of kept) {
+        const again = await this.open(keptId, apiId, apiHash)
+        const againPhase = await again
+          .untilOpened(OPEN_TIMEOUT)
+          .catch(() => again.phase)
+        if (againPhase._tag === 'Ready') {
+          ready.push(again)
+          continue
+        }
+        await again.release()
+      }
+      if (!more) {
+        break
       }
     }
-    return []
+    return ready
+  }
+
+  // logOut destroys the wasm client. Snapshot the other directories first,
+  // drop the logged-out files, then open those accounts on a new instance.
+  async logoutAccount(id: string): Promise<Array<TdAccount>> {
+    const staying = [...this.slots.values()]
+      .filter(slot => slot.account.id !== id)
+      .map(slot => ({
+        id: slot.account.id,
+        apiId: slot.apiId,
+        apiHash: slot.apiHash,
+      }))
+    this.parked.delete(id)
+    const leaving = this.slots.get(id)
+    if (leaving !== undefined) {
+      await leaving.account.logout()
+    }
+    const filesystem = this.module?.FS
+    if (filesystem !== undefined) {
+      const directory = databaseDirectory(id)
+      removeTree(filesystem, directory)
+      try {
+        filesystem.rmdir?.(directory)
+      } catch {
+        // The directory can already be gone after logOut.
+      }
+      if (canSnapshot(filesystem)) {
+        const captured = this.snapshotFiles(
+          (captureTree(filesystem) ?? []).filter(
+            file => !file.path.startsWith(`${directory}/`),
+          ),
+        )
+        this.stashed = captured?.filter(
+          file => !file.path.startsWith(`${directory}/`),
+        )
+        this.hotFiles = captured
+        await this.snapshots.commit({
+          id: 'pending',
+          closed: true,
+          files: captured ?? [],
+        })
+      }
+    }
+    this.discardModule()
+    const reopened: Array<TdAccount> = []
+    for (const slot of staying) {
+      const account = await this.open(slot.id, slot.apiId, slot.apiHash)
+      await account.untilOpened(OPEN_TIMEOUT).catch(() => undefined)
+      reopened.push(account)
+    }
+    return reopened
   }
 
   private flushSoon(): void {
@@ -1199,6 +1401,11 @@ export class TdWasmRuntime {
       return
     }
     this.syncTimer = setInterval(() => {
+      // Wait until readAccount has synced. The earlier Ready files reopen
+      // as authorizationStateWaitPhoneNumber.
+      if (!this.chatListDurable) {
+        return
+      }
       const ready = [...this.slots.values()].some(
         slot => slot.account.phase._tag === 'Ready',
       )
@@ -1209,8 +1416,19 @@ export class TdWasmRuntime {
     }, 5000)
   }
 
+  private noteChatListDurable(): void {
+    const ready = [...this.slots.values()].some(
+      slot => slot.account.phase._tag === 'Ready',
+    )
+    if (ready) {
+      this.chatListDurable = true
+    }
+  }
+
   private async persist(filesystem: SyncFs, closed: boolean): Promise<boolean> {
-    const captured = this.sealedFiles ?? captureTree(filesystem)
+    const captured = this.snapshotFiles(
+      this.sealedFiles ?? captureTree(filesystem),
+    )
     // Folding the wal is pure JavaScript over a detached copy, but it is
     // slow enough to stall td_receive. The next load folds the pair before
     // any td_* call. Here, copy while receive is paused and release it
@@ -1265,6 +1483,7 @@ export class TdWasmRuntime {
         } else if (await this.persist(filesystem, closed)) {
           this.syncError = undefined
           console.info('tdlib sync saved')
+          this.noteChatListDurable()
         }
       } catch (error) {
         const failure = error instanceof Error ? error : syncFailure(error)

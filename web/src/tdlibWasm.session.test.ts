@@ -38,6 +38,7 @@ const install = (
   const states = options?.states ?? [authorization]
   const mtimes = options?.mtimes ?? {}
   const absent = new Set(options?.absent ?? [])
+  const gone = new Set<string>()
   let clientId = 0
   const deliveredClients = new Set<number>()
   let syncFailure: unknown = undefined
@@ -89,7 +90,7 @@ const install = (
             if (typeof extra === 'string') {
               responses.push(JSON.stringify({ '@type': 'ok', '@extra': extra }))
             }
-            if (parsed['@type'] === 'close') {
+            if (parsed['@type'] === 'close' || parsed['@type'] === 'logOut') {
               responses.push(
                 JSON.stringify({
                   '@type': 'updateAuthorizationState',
@@ -120,7 +121,16 @@ const install = (
           }
           callback(syncFailure)
         },
+        unlink: (path: string) => {
+          gone.add(path)
+        },
+        rmdir: (path: string) => {
+          gone.add(path)
+        },
         stat: (path: string) => {
+          if (gone.has(path)) {
+            throw new Error('ENOENT')
+          }
           for (const id of absent) {
             if (
               path === `/tdlib/${id}/db.sqlite` ||
@@ -135,7 +145,9 @@ const install = (
           }
         },
         readdir: (path: string) =>
-          path === '/tdlib' ? ['.', '..', ...ids] : ['.', '..'],
+          path === '/tdlib'
+            ? ['.', '..', ...ids.filter(id => !gone.has(`/tdlib/${id}`))]
+            : ['.', '..'],
       },
     })
   })
@@ -179,7 +191,7 @@ test('a ready account does not flush on page hide, then keeps flushing', async (
   const harness = install([], {
     '@type': 'authorizationStateReady',
   })
-  await harness.runtime.open('acct', 1, HASH)
+  const account = await harness.runtime.open('acct', 1, HASH)
   expect(harness.syncs).toEqual([true])
 
   window.dispatchEvent(new Event('pagehide'))
@@ -205,6 +217,13 @@ test('a ready account does not flush on page hide, then keeps flushing', async (
   harness.deliverAuth.current = true
   await vi.advanceTimersByTimeAsync(100)
   expect(hiddenSyncs(harness.syncs)).toBe(0)
+  expect(account.phase._tag).toBe('Ready')
+
+  // The Ready database is not durable yet. Saving it and reopening comes
+  // back as a phone login, so the interval waits for an explicit sync.
+  const beforeEarly = harness.syncs.length
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(harness.syncs.length).toBe(beforeEarly)
 
   await harness.runtime.sync()
   expect(hiddenSyncs(harness.syncs)).toBe(1)
@@ -362,6 +381,100 @@ test('restore skips a directory that has no database files', async () => {
   expect(sent).not.toContain('logOut')
   expect(harness.creates.current).toBe(1)
   expect(harness.modules.current).toBe(1)
+})
+
+test('restore opens every signed-in account and does not log any out', async () => {
+  vi.useFakeTimers()
+  const harness = install(
+    ['older', 'newer'],
+    { '@type': 'authorizationStateReady' },
+    {
+      states: [
+        { '@type': 'authorizationStateReady' },
+        { '@type': 'authorizationStateReady' },
+      ],
+      mtimes: {
+        '/tdlib/newer': 2_000,
+        '/tdlib/older': 1_000,
+      },
+    },
+  )
+  harness.deliverAuth.current = true
+  let restored: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const pending = harness.runtime.restore(1, HASH).then(accounts => {
+    restored = accounts
+  })
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(restored?.map(account => account.id)).toEqual(['newer', 'older'])
+  await pending
+  const sent = harness.sent.map(query => query['@type'])
+  expect(sent).not.toContain('logOut')
+  expect(sent).not.toContain('close')
+  expect(harness.modules.current).toBe(1)
+})
+
+test('logout drops one saved account and reopens the other', async () => {
+  vi.useFakeTimers()
+  const harness = install(
+    ['keep', 'drop'],
+    { '@type': 'authorizationStateReady' },
+    {
+      states: [
+        { '@type': 'authorizationStateReady' },
+        { '@type': 'authorizationStateReady' },
+        { '@type': 'authorizationStateReady' },
+        { '@type': 'authorizationStateReady' },
+      ],
+      mtimes: {
+        '/tdlib/drop': 2_000,
+        '/tdlib/keep': 1_000,
+      },
+    },
+  )
+  harness.deliverAuth.current = true
+  let restored: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const pending = harness.runtime.restore(1, HASH).then(accounts => {
+    restored = accounts
+  })
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(restored?.map(account => account.id)).toEqual(['drop', 'keep'])
+  await pending
+  const loggingOut = harness.runtime.logoutAccount('drop')
+  await vi.advanceTimersByTimeAsync(5_000)
+  const reopened = await loggingOut
+  expect(reopened.map(account => account.id)).toEqual(['keep'])
+  expect(harness.sent.map(query => query['@type'])).toContain('logOut')
+  let again: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const second = harness.runtime.restore(1, HASH).then(accounts => {
+    again = accounts
+  })
+  await vi.advanceTimersByTimeAsync(5_000)
+  await second
+  expect(again?.map(account => account.id)).toEqual(['keep'])
+})
+
+test('a second login detaches the signed-in module and does not log it out', async () => {
+  vi.useFakeTimers()
+  const harness = install(['acct'], {
+    '@type': 'authorizationStateReady',
+  })
+  harness.deliverAuth.current = true
+  const first = await harness.runtime.open('acct', 1, HASH)
+  await vi.advanceTimersByTimeAsync(1_000)
+  expect(first.phase._tag).toBe('Ready')
+  const detaching = harness.runtime.detachSignedIn()
+  await vi.advanceTimersByTimeAsync(1_000)
+  await detaching
+  expect(harness.runtime.hasLive('acct')).toBe(false)
+  expect(harness.modules.current).toBe(1)
+  const second = await harness.runtime.open('other', 1, HASH)
+  expect(second.id).toBe('other')
+  expect(harness.modules.current).toBe(2)
+  expect(harness.runtime.hasLive('acct')).toBe(false)
+  expect(harness.runtime.hasLive('other')).toBe(true)
+  const sent = harness.sent.map(query => query['@type'])
+  expect(sent).not.toContain('logOut')
+  expect(sent).not.toContain('close')
 })
 
 test('a restored ready account stays signed in', async () => {

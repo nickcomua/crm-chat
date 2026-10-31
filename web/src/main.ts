@@ -27,6 +27,7 @@ import {
   desktopFailure,
   loadAccount,
   loadMessages,
+  logoutAccount,
   pollAccount,
   removeConnection,
   restoreAccounts,
@@ -212,6 +213,40 @@ export const LoadHistory = Command.define('LoadHistory', {
       ),
     ),
 })
+const closedMenus = {
+  menuOpen: () => false,
+  moreOpen: () => false,
+  headerMenuOpen: () => false,
+  autoDeleteOpen: () => false,
+}
+const finishLogOut = (model: Model, id: string): Model => {
+  const accounts = model.accounts.filter(account => account.id !== id)
+  const next = accounts[0]
+  return modifyFields(model, {
+    accounts: () => accounts,
+    selectedAccountId: () => next?.id ?? '',
+    faces: current => current.filter(face => !face.id.startsWith(`${id}:`)),
+    login: () => (next === undefined ? Login.Editing() : Login.Closed()),
+    authEntry: () => 'Qr',
+    status: () => 'Ready',
+    error: () => '',
+    query: () => '',
+    draft: () => '',
+    maybeOpenChatId: () => Option.none(),
+    ...closedMenus,
+  })
+}
+export const LogOut = Command.define('LogOut', {
+  args: { id: Schema.String },
+  messages: [Message.CompletedLogOut, Message.FailedLogOut],
+  execute: ({ id }) =>
+    Effect.tryPromise(() => logoutAccount(id)).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedLogOut({ id }),
+        onFailure: () => Message.FailedLogOut(),
+      }),
+    ),
+})
 export const Disconnect = Command.define('Disconnect', {
   args: { id: Schema.String },
   messages: [Message.CompletedDisconnect],
@@ -241,12 +276,6 @@ const mergeFaces = (
     }
   }
   return next
-}
-const closedMenus = {
-  menuOpen: () => false,
-  moreOpen: () => false,
-  headerMenuOpen: () => false,
-  autoDeleteOpen: () => false,
 }
 const phoneForLogin = (model: Model) => {
   const typed = Redacted.value(model.phone).trim()
@@ -387,6 +416,36 @@ export const update = (model: Model, message: Message) =>
             password: model.login._tag === 'Password',
           }),
         ],
+      }
+    },
+    ClickedQrForm: () => {
+      if (model.status === 'Busy' || model.login._tag !== 'Editing') {
+        return { model }
+      }
+      return {
+        model: modifyFields(model, {
+          authEntry: () => 'Qr',
+          passkeyNote: () => false,
+          error: () => '',
+        }),
+      }
+    },
+    ClickedLogOut: () => {
+      if (model.status === 'Busy' || model.selectedAccountId === '') {
+        return { model }
+      }
+      if (model.fixturePreview) {
+        return {
+          model: finishLogOut(model, model.selectedAccountId),
+        }
+      }
+      return {
+        model: modifyFields(model, {
+          status: () => 'Busy',
+          error: () => '',
+          ...closedMenus,
+        }),
+        commands: [LogOut({ id: model.selectedAccountId })],
       }
     },
     ClickedAddAccount: () => {
@@ -735,6 +794,15 @@ export const update = (model: Model, message: Message) =>
       }),
     }),
     CompletedDisconnect: () => ({ model }),
+    CompletedLogOut: ({ id }) => ({
+      model: finishLogOut(model, id),
+    }),
+    FailedLogOut: () => ({
+      model: modifyFields(model, {
+        status: () => 'Ready',
+        error: () => 'Could not log out of this account. Try again.',
+      }),
+    }),
   })
 export const initialModel: Model = {
   login: Login.Editing(),

@@ -430,6 +430,16 @@ impl Client {
             json!({
                 "@type": "setAuthenticationPhoneNumber",
                 "phone_number": phone,
+                "settings": {
+                    "@type": "phoneNumberAuthenticationSettings",
+                    "allow_flash_call": false,
+                    "allow_missed_call": false,
+                    "is_current_phone_number": false,
+                    "has_unknown_phone_number": false,
+                    "allow_sms_retriever_api": false,
+                    "firebase_authentication_settings": null,
+                    "authentication_tokens": []
+                },
             }),
         )
         .await;

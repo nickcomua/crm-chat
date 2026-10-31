@@ -39,7 +39,7 @@ export const clockTime = (unix: number): string => {
 
 export type AuthStep =
   | { _tag: 'Code'; id: string }
-  | { _tag: 'Password'; id: string }
+  | { _tag: 'Password'; id: string; hint: string }
   | { _tag: 'Qr'; id: string; link: string }
   | { _tag: 'Authorized'; account: Account }
 
@@ -47,7 +47,7 @@ export type Phase =
   | { _tag: 'Opening' }
   | { _tag: 'WaitPhone' }
   | { _tag: 'WaitCode' }
-  | { _tag: 'WaitPassword' }
+  | { _tag: 'WaitPassword'; hint: string }
   | { _tag: 'WaitQr'; link: string }
   | { _tag: 'Ready' }
   | { _tag: 'Closed' }
@@ -142,7 +142,10 @@ export const phaseFromAuthorization = (state: unknown): Phase => {
     return { _tag: 'WaitCode' }
   }
   if (name === 'authorizationStateWaitPassword') {
-    return { _tag: 'WaitPassword' }
+    return {
+      _tag: 'WaitPassword',
+      hint: text(field(state, 'password_hint')),
+    }
   }
   if (name === 'authorizationStateWaitOtherDeviceConfirmation') {
     const link = text(field(state, 'link'))
@@ -333,6 +336,7 @@ export class TdAccount {
   previews: Array<ChatPreview> = []
   private readonly waiters: Array<() => void> = []
   private foldersReady = false
+  private refetchChats = false
   private readonly folderWaiters: Array<() => void> = []
 
   constructor(
@@ -373,6 +377,14 @@ export class TdAccount {
 
   holdWaiters(): void {
     this.generation += 1
+  }
+
+  // The folder update belongs to the client that was just dropped. The next
+  // loadChats has to wait for the reopened client's own update, or it runs
+  // before the filter list exists and the chat list stays empty.
+  forgetFolders(): void {
+    this.foldersReady = false
+    this.refetchChats = true
   }
 
   holdReady(): void {
@@ -455,7 +467,7 @@ export class TdAccount {
       return { _tag: 'Code', id: this.id }
     }
     if (phase._tag === 'WaitPassword') {
-      return { _tag: 'Password', id: this.id }
+      return { _tag: 'Password', id: this.id, hint: phase.hint }
     }
     if (phase._tag === 'WaitQr') {
       return { _tag: 'Qr', id: this.id, link: phase.link }
@@ -497,6 +509,16 @@ export class TdAccount {
     const sent = this.send({
       '@type': 'setAuthenticationPhoneNumber',
       phone_number: phone,
+      settings: {
+        '@type': 'phoneNumberAuthenticationSettings',
+        allow_flash_call: false,
+        allow_missed_call: false,
+        is_current_phone_number: false,
+        has_unknown_phone_number: false,
+        allow_sms_retriever_api: false,
+        firebase_authentication_settings: null,
+        authentication_tokens: [],
+      },
     })
     return this.afterRequest(sent)
   }
@@ -618,6 +640,21 @@ export class TdAccount {
       this.chatListError = undefined
       const again = await this.loadChatIds()
       if (again !== undefined) {
+        ids = again
+      }
+    }
+    // A reopened client can answer getChats before the network list arrives.
+    // Keep asking while the list is empty so the shell does not stay blank.
+    if (this.refetchChats) {
+      this.refetchChats = false
+      let emptyPasses = 0
+      while (ids !== undefined && ids.length === 0 && emptyPasses < 4) {
+        emptyPasses += 1
+        this.chatListError = undefined
+        const again = await this.loadChatIds()
+        if (again === undefined) {
+          break
+        }
         ids = again
       }
     }

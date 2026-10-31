@@ -49,7 +49,7 @@ const previewModel = (screen: string): Model => {
   }
   if (screen === 'password') {
     return modifyFields(base, {
-      login: () => Login.Password({ id: 'preview' }),
+      login: () => Login.Password({ id: 'preview', hint: 'birthday' }),
     })
   }
   if (screen === 'qr') {

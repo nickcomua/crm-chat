@@ -220,6 +220,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                                 current.id,
                                 [
                                   h.Class(menuItemClass),
+                                  h.AriaLabel(`Switch to ${current.title}`),
                                   h.OnClick(
                                     Message.SelectedAccount({ id: current.id }),
                                   ),
@@ -252,6 +253,18 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                               h.OnClick(Message.ClickedAddAccount()),
                             ],
                             ['Add account'],
+                          ),
+                          h.button(
+                            [
+                              h.Class(menuItemClass),
+                              h.AriaLabel('Log out'),
+                              h.Disabled(
+                                model.status === 'Busy' ||
+                                  model.selectedAccountId === '',
+                              ),
+                              h.OnClick(Message.ClickedLogOut()),
+                            ],
+                            ['Log out'],
                           ),
                           h.button(
                             [
