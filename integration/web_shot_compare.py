@@ -195,20 +195,23 @@ def compare(shot_dir: Path, webk_dir: Path) -> tuple[list[str], list[str]]:
         errors.append("Telegram Web K QR reference is not blurred")
     if ref_thread_delta <= ref_list_delta:
         errors.append("Telegram Web K open-chat reference has no composer band")
+    # Half the measured Web K open-chat composer. That reference is about 7.8,
+    # so a fixed floor of 12 would reject Web K itself.
+    composer_line = ref_thread_delta * 0.5
 
     for name in LIST_SHOTS:
         seam, delta, _sharp = _measure(shot_dir / name)
         lines.append(f"{name} seam={seam:.3f} delta={delta:.1f}")
         if abs(seam - ref_seam) > SEAM_TOLERANCE:
             errors.append(f"{name} chat column is not aligned with Telegram Web K")
-        if delta >= 8:
+        if delta >= composer_line:
             errors.append(f"{name} shows a composer on the chat list")
 
     seam, delta, _sharp = _measure(shot_dir / THREAD_SHOT)
     lines.append(f"{THREAD_SHOT} seam={seam:.3f} delta={delta:.1f}")
     if abs(seam - ref_seam) > SEAM_TOLERANCE:
         errors.append(f"{THREAD_SHOT} chat column is not aligned with Telegram Web K")
-    if delta < 12 or delta < ref_thread_delta * 0.5:
+    if delta < composer_line:
         errors.append(f"{THREAD_SHOT} has no composer band like Telegram Web K")
 
     for name in QR_SHOTS:
@@ -248,12 +251,12 @@ def _write_png(path: Path, width: int, height: int, pixel) -> None:
     )
 
 
-def _panel(seam_at: float, composer: bool):
+def _panel(seam_at: float, composer_luma: int | None = None):
     def pixel(x: int, y: int, width: int = 400, height: int = 250) -> int:
         if x < int(width * seam_at):
             return 40
-        if composer and y >= int(height * 0.92):
-            return 80
+        if composer_luma is not None and y >= int(height * 0.92):
+            return composer_luma
         return 210
 
     return pixel
@@ -265,24 +268,38 @@ def _qr(x: int, y: int, width: int = 400, height: int = 250) -> int:
 
 
 def self_test() -> None:
+    # 202 against a field of 210 is a composer delta of 8, under the old floor
+    # of 12 and in the same range as the Telegram Web K open chat (about 7.8).
+    # 207 is a delta of 3, below half of that reference.
+    low = 202
+    faint = 207
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         shots = root / "shots"
         webk = root / "webk"
         shots.mkdir()
         webk.mkdir()
-        _write_png(webk / REF_LIST, 400, 250, _panel(0.25, False))
-        _write_png(webk / REF_THREAD, 400, 250, _panel(0.25, True))
+        _write_png(webk / REF_LIST, 400, 250, _panel(0.25))
+        _write_png(webk / REF_THREAD, 400, 250, _panel(0.25, low))
         _write_png(webk / REF_QR, 400, 250, _qr)
         for name in LIST_SHOTS:
-            _write_png(shots / name, 400, 250, _panel(0.25, False))
-        _write_png(shots / THREAD_SHOT, 400, 250, _panel(0.25, True))
+            _write_png(shots / name, 400, 250, _panel(0.25))
+        _write_png(shots / THREAD_SHOT, 400, 250, _panel(0.25, low))
         for name in QR_SHOTS:
             _write_png(shots / name, 400, 250, _qr)
         good, _lines = compare(shots, webk)
         if good:
             raise SystemExit("self-test expected a match: " + "; ".join(good))
-        _write_png(shots / "02-chat-list.png", 400, 250, _panel(0.5, False))
+        _write_png(shots / THREAD_SHOT, 400, 250, _panel(0.25, faint))
+        faint_band, _lines = compare(shots, webk)
+        if not any(THREAD_SHOT in item for item in faint_band):
+            raise SystemExit("self-test expected the faint composer to fail")
+        _write_png(shots / THREAD_SHOT, 400, 250, _panel(0.25, low))
+        _write_png(shots / "02-chat-list.png", 400, 250, _panel(0.25, low))
+        listed, _lines = compare(shots, webk)
+        if not any("02-chat-list.png" in item for item in listed):
+            raise SystemExit("self-test expected a composer on the chat list to fail")
+        _write_png(shots / "02-chat-list.png", 400, 250, _panel(0.5))
         bad, _lines = compare(shots, webk)
         if not any("02-chat-list.png" in item for item in bad):
             raise SystemExit("self-test expected the shifted column to fail")
