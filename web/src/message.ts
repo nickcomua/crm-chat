@@ -2,7 +2,7 @@ import * as Schema from 'effect/Schema'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 
-import { ChatLine, StoredFace } from './chatFace'
+import { ChatLine, SponsoredLine, StoredFace } from './chatFace'
 import { Account, AuthResult } from './telegram'
 
 export const Secret = Schema.Redacted(Schema.String)
@@ -33,6 +33,11 @@ export const Message = defineMessageUnion({
   SelectedAccount: { id: Schema.String },
   ClickedRefresh: {},
   ClickedChat: { id: Schema.String },
+  ClickedSponsored: {
+    chatId: Schema.String,
+    messageId: Schema.String,
+    media: Schema.Boolean,
+  },
   ClickedBack: {},
   ClickedMenu: {},
   ClickedMore: {},
@@ -60,6 +65,29 @@ export const Message = defineMessageUnion({
     faces: Schema.optional(Schema.Array(StoredFace)),
   },
   LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
+  FailedHistory: { id: Schema.String },
+  ArrivedMessages: {
+    accountId: Schema.String,
+    items: Schema.Array(
+      Schema.Struct({
+        chatId: Schema.String,
+        id: Schema.String,
+        text: Schema.String,
+        outgoing: Schema.Boolean,
+        date: Schema.Number,
+      }),
+    ),
+  },
+  LoadedSponsored: {
+    id: Schema.String,
+    between: Schema.Number,
+    lines: Schema.Array(SponsoredLine),
+  },
+  FailedSponsored: { id: Schema.String },
+  CompletedViewSponsored: {},
+  CompletedClickSponsored: {},
+  CompletedOpenChat: {},
+  CompletedCloseChat: {},
   FailedRefresh: {},
   CompletedDisconnect: {},
 })

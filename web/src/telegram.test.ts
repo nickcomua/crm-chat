@@ -40,6 +40,7 @@ const authorization = (name: string, extra?: Record<string, unknown>) => ({
 
 const scripted = (
   plans: Array<Plan>,
+  readFile?: (path: string) => Promise<Uint8Array>,
 ): { account: TdAccount; sent: Array<TdQuery> } => {
   const sent: Array<TdQuery> = []
   let account: TdAccount | undefined
@@ -55,6 +56,7 @@ const scripted = (
       return Promise.resolve(plan?.response ?? { '@type': 'ok' })
     },
     close: () => Promise.resolve(),
+    ...(readFile === undefined ? {} : { readFile }),
   }
   account = new TdAccount(sink, 'one')
   return { account, sent }
@@ -597,6 +599,185 @@ describe('TDLib browser protocol', () => {
     expect(desktopFailure({})).toBe(
       'Telegram could not complete the request. Retry or cancel and start again.',
     )
+  })
+
+  test('queues one live message and reads a sponsored page', async () => {
+    const { account, sent } = scripted([
+      {
+        response: {
+          '@type': 'sponsoredMessages',
+          messages_between: 0,
+          messages: [
+            {
+              '@type': 'sponsoredMessage',
+              message_id: 4,
+              is_recommended: false,
+              content: {
+                '@type': 'messageText',
+                text: { text: 'Ride the ferry.' },
+              },
+              title: 'Harbor',
+              button_text: 'Open',
+              additional_info: 'About this ad',
+            },
+          ],
+        },
+      },
+    ])
+    const update = {
+      '@type': 'updateNewMessage',
+      message: {
+        id: 9,
+        chat_id: 7,
+        is_outgoing: false,
+        date: 30,
+        content: { '@type': 'messageText', text: { text: 'just arrived' } },
+      },
+    }
+    account.apply(update)
+    account.apply(update)
+    account.apply({
+      '@extra': 'response',
+      '@type': 'message',
+      id: 10,
+      chat_id: 7,
+      content: { '@type': 'messageText', text: { text: 'not live' } },
+    })
+    expect(account.takeIncoming()).toEqual([
+      {
+        chatId: 'one:7',
+        id: '9',
+        text: 'just arrived',
+        outgoing: false,
+        date: 30,
+      },
+    ])
+    expect(account.takeIncoming()).toEqual([])
+    await expect(account.sponsored('one:3')).resolves.toEqual({
+      between: 0,
+      messages: [
+        {
+          id: '4',
+          text: 'Ride the ferry.',
+          title: 'Harbor',
+          button: 'Open',
+          recommended: false,
+          info: 'About this ad',
+        },
+      ],
+    })
+    expect(sent[0]).toMatchObject({
+      '@type': 'getChatSponsoredMessages',
+      chat_id: 3,
+    })
+    const opened = scripted([{}, {}])
+    await opened.account.openChat('one:8')
+    await opened.account.closeChat('one:8')
+    expect(opened.sent.map(query => query['@type'])).toEqual([
+      'openChat',
+      'closeChat',
+    ])
+  })
+
+  test('a sponsored photo is downloaded and a click is reported', async () => {
+    const { account, sent } = scripted(
+      [
+        {
+          response: {
+            '@type': 'sponsoredMessages',
+            messages_between: 0,
+            messages: [
+              {
+                '@type': 'sponsoredMessage',
+                message_id: 4,
+                content: {
+                  '@type': 'messagePhoto',
+                  caption: { text: 'Pier' },
+                  photo: { sizes: [{ width: 800, photo: { id: 15 } }] },
+                },
+                title: 'Harbor',
+                button_text: 'Open',
+              },
+            ],
+          },
+        },
+        {
+          response: {
+            '@type': 'file',
+            local: {
+              path: '/tdlib/one/files/ad.jpg',
+              is_downloading_completed: true,
+            },
+          },
+        },
+        { response: { '@type': 'ok' } },
+        { response: { '@type': 'ok' } },
+      ],
+      () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    )
+    const page = await account.sponsored('one:3')
+    expect(page.messages[0]?.text).toBe('Pier')
+    expect(page.messages[0]?.media).toBe('photo')
+    expect(page.messages[0]?.mediaSrc?.startsWith('data:image/jpeg;base64,')).toBe(
+      true,
+    )
+    expect(page.messages[0]?.text).not.toBe('Photo')
+    await account.viewSponsored('one:3', ['4'])
+    await account.clickSponsored('one:3', '4', true)
+    expect(sent.map(query => query['@type'])).toEqual([
+      'getChatSponsoredMessages',
+      'downloadFile',
+      'viewMessages',
+      'clickChatSponsoredMessage',
+    ])
+    expect(sent[2]).toMatchObject({
+      message_ids: [4],
+      force_read: false,
+      source: null,
+    })
+    expect(sent[3]).toMatchObject({
+      message_id: 4,
+      is_media_click: true,
+      from_fullscreen: false,
+    })
+  })
+
+  test('desktop live commands use Tauri camelCase argument names', async () => {
+    const calls: Array<{
+      command: string
+      args: Record<string, unknown> | undefined
+    }> = []
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {
+      invoke: (command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args })
+        if (command === 'telegram_sponsored') {
+          return Promise.resolve({ between: 0, messages: [] })
+        }
+        return Promise.resolve([])
+      },
+    })
+    const { closeTelegramChat, loadSponsored, openTelegramChat, takeIncoming } =
+      await import('./telegram')
+    await openTelegramChat('acct', 'acct:7')
+    await takeIncoming('acct')
+    await loadSponsored('acct', 'acct:7')
+    await closeTelegramChat('acct', 'acct:7')
+    Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+    expect(calls).toEqual([
+      {
+        command: 'telegram_open_chat',
+        args: { id: 'acct', chatId: 'acct:7' },
+      },
+      { command: 'telegram_incoming', args: { id: 'acct' } },
+      {
+        command: 'telegram_sponsored',
+        args: { id: 'acct', chatId: 'acct:7' },
+      },
+      {
+        command: 'telegram_close_chat',
+        args: { id: 'acct', chatId: 'acct:7' },
+      },
+    ])
   })
 
   test('reads message text and drops free-text errors', async () => {

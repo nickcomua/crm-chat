@@ -2,7 +2,15 @@ import * as Array from 'effect/Array'
 import * as Option from 'effect/Option'
 import { HtmlBuilder } from 'foldkit/html'
 
-import { faceFor, kindStatus, markFor, tintFor } from './chatFace'
+import {
+  faceFor,
+  headerSponsored,
+  kindStatus,
+  markFor,
+  threadEntries,
+  tintFor,
+} from './chatFace'
+import type { SponsoredLine, ThreadEntry } from './chatFace'
 import type { Chat } from './generated/core'
 import {
   attachIcon,
@@ -24,18 +32,6 @@ const folderFor = (kind: Chat['kind']): 'Personal' | 'Groups' | 'Channels' =>
 const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
-
-const isLastInGroup = (
-  lines: ReadonlyArray<{ readonly mine: boolean }>,
-  index: number,
-): boolean => {
-  const line = lines[index]
-  const next = lines[index + 1]
-  if (line === undefined) {
-    return false
-  }
-  return next === undefined || next.mine !== line.mine
-}
 
 const bubbleClass = (mine: boolean, tail: boolean): string =>
   `tg-bubble ${mine ? 'tg-bubble-out' : 'tg-bubble-in'} ${
@@ -136,6 +132,204 @@ const iconButton = (
     ],
     [icon],
   )
+
+const sponsoredCard = (
+  line: SponsoredLine,
+  chatId: string,
+  h: HtmlBuilder<Message>,
+) => {
+  const label = line.recommended ? 'Recommended' : 'Sponsored'
+  const source = line.mediaSrc
+  const image =
+    source !== undefined &&
+    (line.media === 'photo' || source.startsWith('data:image/'))
+  const media =
+    source === undefined || line.media === undefined
+      ? h.empty
+      : image
+        ? h.img([
+            h.Class('tg-sponsored-media'),
+            h.Src(source),
+            h.Alt(line.title === '' ? label : line.title),
+            h.OnClick(
+              Message.ClickedSponsored({
+                chatId,
+                messageId: line.id,
+                media: true,
+              }),
+            ),
+          ])
+        : h.video(
+            [
+              h.Class('tg-sponsored-media'),
+              h.Src(source),
+              h.Muted(true),
+              h.Loop(true),
+              h.Autoplay(true),
+              h.Playsinline(true),
+              h.OnClick(
+                Message.ClickedSponsored({
+                  chatId,
+                  messageId: line.id,
+                  media: true,
+                }),
+              ),
+            ],
+          )
+  return h.div(
+    [h.Class('tg-sponsored-slot shrink-0 px-4 pt-3')],
+    [
+      h.div(
+        [h.Class('tg-sponsored'), h.Role('note'), h.AriaLabel(label)],
+        [
+          h.p([h.Class('tg-sponsored-label')], [label]),
+          media,
+          line.title === ''
+            ? h.empty
+            : h.p([h.Class('tg-sponsored-title')], [line.title]),
+          line.text === ''
+            ? h.empty
+            : h.p([h.Class('tg-sponsored-text')], [line.text]),
+          line.button === ''
+            ? h.empty
+            : h.button(
+                [
+                  h.Type('button'),
+                  h.Class('tg-sponsored-button'),
+                  h.OnClick(
+                    Message.ClickedSponsored({
+                      chatId,
+                      messageId: line.id,
+                      media: false,
+                    }),
+                  ),
+                ],
+                [line.button],
+              ),
+          line.info === ''
+            ? h.empty
+            : h.p([h.Class('tg-sponsored-info')], [line.info]),
+        ],
+      ),
+    ],
+  )
+}
+
+const messageColumn = (
+  entries: ReadonlyArray<ThreadEntry>,
+  chatId: string,
+  h: HtmlBuilder<Message>,
+) => {
+  if (entries.length === 0) {
+    return h.div(
+      [
+        h.Class(
+          'flex min-h-0 flex-1 items-center justify-center text-sm text-[#9a9aa8]',
+        ),
+      ],
+      ['No messages yet'],
+    )
+  }
+  return h.div(
+    [
+      h.Class(
+        'flex min-h-0 flex-1 flex-col justify-end overflow-y-auto px-4 py-3',
+      ),
+    ],
+    entries.map((entry, index) => {
+      if (entry.kind === 'sponsored') {
+        const label = entry.line.recommended ? 'Recommended' : 'Sponsored'
+        return h.keyed('div')(
+          entry.key,
+          [
+            h.Class(
+              `flex justify-center ${index === entries.length - 1 ? '' : 'mb-2'}`,
+            ),
+          ],
+          [
+            h.div(
+              [h.Class('tg-sponsored'), h.Role('note'), h.AriaLabel(label)],
+              [
+                h.p([h.Class('tg-sponsored-label')], [label]),
+                entry.line.title === ''
+                  ? h.empty
+                  : h.p([h.Class('tg-sponsored-title')], [entry.line.title]),
+                entry.line.text === ''
+                  ? h.empty
+                  : h.p([h.Class('tg-sponsored-text')], [entry.line.text]),
+                entry.line.button === ''
+                  ? h.empty
+                  : h.button(
+                      [
+                        h.Type('button'),
+                        h.Class('tg-sponsored-button'),
+                        h.OnClick(
+                          Message.ClickedSponsored({
+                            chatId,
+                            messageId: entry.line.id,
+                            media: false,
+                          }),
+                        ),
+                      ],
+                      [entry.line.button],
+                    ),
+                entry.line.info === ''
+                  ? h.empty
+                  : h.p([h.Class('tg-sponsored-info')], [entry.line.info]),
+              ],
+            ),
+          ],
+        )
+      }
+      const line = entry.line
+      const following = entries[index + 1]
+      const tail =
+        following === undefined ||
+        following.kind !== 'message' ||
+        following.line.mine !== line.mine
+      const time = h.span([h.Class('bubble-time')], [line.time])
+      return h.keyed('div')(
+        entry.key,
+        [
+          h.Class(
+            `flex ${line.mine ? 'justify-end' : 'justify-start'} ${
+              index === entries.length - 1 ? '' : tail ? 'mb-2' : 'mb-0.5'
+            }`,
+          ),
+        ],
+        [
+          h.div(
+            [h.Class(bubbleClass(line.mine, tail))],
+            line.caption === undefined
+              ? [
+                  line.text,
+                  time,
+                  tail ? messageTail(line.mine, h) : h.empty,
+                ]
+              : [
+                  h.div(
+                    [h.Class('mb-1.5 overflow-hidden rounded-xl')],
+                    [
+                      h.div(
+                        [
+                          h.Class(
+                            'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
+                          ),
+                        ],
+                        [line.caption],
+                      ),
+                    ],
+                  ),
+                  h.div([h.Class('px-0.5')], [line.text]),
+                  time,
+                  tail ? messageTail(line.mine, h) : h.empty,
+                ],
+          ),
+        ],
+      )
+    }),
+  )
+}
 
 export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
   const opened = openChat(model)
@@ -440,7 +634,15 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                 ],
               ),
             onSome: chat => {
-              const face = faceFor(model.faces, chat.id)
+              const stored = model.faces.find(item => item.id === chat.id)
+              const sponsored = stored?.sponsored ?? []
+              const pinned = headerSponsored(sponsored)
+              const entries = threadEntries(
+                stored?.lines ?? [],
+                stored?.pending ?? [],
+                sponsored,
+                stored?.sponsoredBetween ?? 0,
+              )
               const muted = model.mutedChatIds.includes(chat.id)
               return h.div(
                 [h.Class('flex h-full w-full flex-col')],
@@ -596,84 +798,10 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         : h.empty,
                     ],
                   ),
-                  Array.match(face.lines, {
-                    onEmpty: () =>
-                      h.div(
-                        [
-                          h.Class(
-                            'flex min-h-0 flex-1 items-center justify-center text-sm text-[#9a9aa8]',
-                          ),
-                        ],
-                        ['No messages yet'],
-                      ),
-                    onNonEmpty: lines =>
-                      h.div(
-                        [
-                          h.Class(
-                            'flex min-h-0 flex-1 flex-col justify-end overflow-y-auto px-4 py-3',
-                          ),
-                        ],
-                        lines.map((line, index) => {
-                          const tail = isLastInGroup(lines, index)
-                          const time = h.span(
-                            [
-                              h.Class('bubble-time'),
-                            ],
-                            [line.time],
-                          )
-                          return h.div(
-                            [
-                              h.Class(
-                                `flex ${line.mine ? 'justify-end' : 'justify-start'} ${
-                                  index === lines.length - 1
-                                    ? ''
-                                    : tail
-                                      ? 'mb-2'
-                                      : 'mb-0.5'
-                                }`,
-                              ),
-                            ],
-                            [
-                              h.div(
-                                [h.Class(bubbleClass(line.mine, tail))],
-                                line.caption === undefined
-                                  ? [
-                                      line.text,
-                                      time,
-                                      tail
-                                        ? messageTail(line.mine, h)
-                                        : h.empty,
-                                    ]
-                                  : [
-                                      h.div(
-                                        [
-                                          h.Class(
-                                            'mb-1.5 overflow-hidden rounded-xl',
-                                          ),
-                                        ],
-                                        [
-                                          h.div(
-                                            [
-                                              h.Class(
-                                                'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
-                                              ),
-                                            ],
-                                            [line.caption],
-                                          ),
-                                        ],
-                                      ),
-                                      h.div([h.Class('px-0.5')], [line.text]),
-                                      time,
-                                      tail
-                                        ? messageTail(line.mine, h)
-                                        : h.empty,
-                                    ],
-                              ),
-                            ],
-                          )
-                        }),
-                      ),
-                  }),
+                  pinned === undefined
+                    ? h.empty
+                    : sponsoredCard(pinned, chat.id, h),
+                  messageColumn(entries, chat.id, h),
                   chat.kind === 'Channel'
                     ? h.div(
                         [

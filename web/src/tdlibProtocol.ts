@@ -19,6 +19,32 @@ export type Message = {
   date: number
 }
 
+export type LiveItem = {
+  chatId: string
+  id: string
+  text: string
+  outgoing: boolean
+  date: number
+}
+
+export type SponsoredMedia = 'photo' | 'video' | 'animation'
+
+export type SponsoredItem = {
+  id: string
+  text: string
+  title: string
+  button: string
+  recommended: boolean
+  info: string
+  media?: SponsoredMedia
+  mediaSrc?: string
+}
+
+export type SponsoredPage = {
+  between: number
+  messages: Array<SponsoredItem>
+}
+
 export type ChatPreview = {
   id: string
   time: string
@@ -62,6 +88,8 @@ export type TdSink = {
   drop?: () => Promise<void>
   // Copies the in-memory database to IndexedDB. Absent on the desktop sink.
   sync?: () => Promise<void>
+  // Reads a file TDLib wrote under /tdlib. Absent when the host cannot.
+  readFile?: (path: string) => Promise<Uint8Array>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -324,6 +352,165 @@ const messageFrom = (value: unknown): Message | undefined => {
   }
 }
 
+const stringField = (value: unknown, key: string): string => {
+  const fieldValue = field(value, key)
+  return typeof fieldValue === 'string' ? fieldValue : ''
+}
+
+// `fallbackChat` covers updateChatLastMessage, whose last_message can omit chat_id.
+export const liveMessageFrom = (
+  accountId: string,
+  value: unknown,
+  fallbackChat?: unknown,
+): LiveItem | undefined => {
+  const message = messageFrom(value)
+  if (message === undefined || message.text === '') {
+    return undefined
+  }
+  const raw = idValue(field(value, 'chat_id')) ?? idValue(fallbackChat)
+  if (raw === undefined) {
+    return undefined
+  }
+  return {
+    chatId: `${accountId}:${raw}`,
+    id: message.id,
+    text: message.text,
+    outgoing: message.outgoing,
+    date: message.date,
+  }
+}
+
+const fileIdOf = (value: unknown): number | undefined => {
+  const id = field(value, 'id')
+  return typeof id === 'number' && Number.isInteger(id) ? id : undefined
+}
+
+const largestPhotoFile = (content: unknown): number | undefined => {
+  const sizes = field(field(content, 'photo'), 'sizes')
+  if (!Array.isArray(sizes)) {
+    return undefined
+  }
+  let bestId: number | undefined
+  let bestWidth = -1
+  for (const size of sizes) {
+    const id = fileIdOf(field(size, 'photo'))
+    const width = field(size, 'width')
+    const pixels = typeof width === 'number' ? width : 0
+    if (id === undefined) {
+      continue
+    }
+    if (pixels <= 1280 && pixels >= bestWidth) {
+      bestId = id
+      bestWidth = pixels
+    }
+  }
+  if (bestId !== undefined) {
+    return bestId
+  }
+  for (const size of sizes) {
+    const id = fileIdOf(field(size, 'photo'))
+    if (id !== undefined) {
+      return id
+    }
+  }
+  return undefined
+}
+
+const MEDIA_BYTES = 1_500_000
+
+const sponsoredDraft = (
+  item: SponsoredItem,
+): { fileId?: number; mime?: string } => {
+  const record: unknown = item
+  if (!isRecord(record)) {
+    return {}
+  }
+  const fileId = record['fileId']
+  const mime = record['mime']
+  return {
+    ...(typeof fileId === 'number' ? { fileId } : {}),
+    ...(typeof mime === 'string' && mime !== '' ? { mime } : {}),
+  }
+}
+
+const bytesToBase64 = (bytes: Uint8Array): string => {
+  let binary = ''
+  const step = 0x8000
+  for (let index = 0; index < bytes.length; index += step) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + step))
+  }
+  return btoa(binary)
+}
+
+// Sponsored photo, video, and animation stay media. The chat-list label
+// ("Photo", "Video", "GIF") is the wrong content for the card.
+const sponsoredBody = (
+  content: unknown,
+): {
+  text: string
+  media?: SponsoredMedia
+  fileId?: number
+  mime?: string
+} => {
+  const kind = typeName(content)
+  const caption = plain(field(content, 'caption'))
+  if (kind === 'messageText') {
+    return { text: plain(field(content, 'text')) }
+  }
+  if (kind === 'messagePhoto') {
+    const fileId = largestPhotoFile(content)
+    return fileId === undefined
+      ? { text: caption }
+      : { text: caption, media: 'photo', fileId, mime: 'image/jpeg' }
+  }
+  if (kind === 'messageVideo' || kind === 'messageAnimation') {
+    const media: SponsoredMedia =
+      kind === 'messageVideo' ? 'video' : 'animation'
+    const holder = field(content, media === 'video' ? 'video' : 'animation')
+    const fileId = fileIdOf(field(holder, media === 'video' ? 'video' : 'animation'))
+    const mimeValue = text(field(holder, 'mime_type'))
+    const mime = mimeValue === '' ? 'video/mp4' : mimeValue
+    return fileId === undefined
+      ? { text: caption }
+      : { text: caption, media, fileId, mime }
+  }
+  return { text: messagePreview(content) }
+}
+
+type ParsedSponsored = SponsoredItem & { fileId?: number; mime?: string }
+
+export const sponsoredPageFrom = (value: unknown): SponsoredPage | undefined => {
+  if (typeName(value) !== 'sponsoredMessages') {
+    return undefined
+  }
+  const between = field(value, 'messages_between')
+  const messages = field(value, 'messages')
+  return {
+    between: typeof between === 'number' && between > 0 ? between : 0,
+    messages: Array.isArray(messages)
+      ? messages.flatMap(message => {
+          const id = idValue(field(message, 'message_id'))
+          if (id === undefined) {
+            return []
+          }
+          const body = sponsoredBody(field(message, 'content'))
+          const item: ParsedSponsored = {
+            id,
+            text: body.text,
+            title: stringField(message, 'title'),
+            button: stringField(message, 'button_text'),
+            recommended: field(message, 'is_recommended') === true,
+            info: stringField(message, 'additional_info'),
+            ...(body.media === undefined ? {} : { media: body.media }),
+            ...(body.fileId === undefined ? {} : { fileId: body.fileId }),
+            ...(body.mime === undefined ? {} : { mime: body.mime }),
+          }
+          return [item]
+        })
+      : [],
+  }
+}
+
 const STEP_TIMEOUT = 60_000
 const DISCARD_TIMEOUT = 2_000
 
@@ -331,6 +518,7 @@ export class TdAccount {
   phase: Phase = { _tag: 'Opening' }
   chatListError: string | undefined = undefined
   previews: Array<ChatPreview> = []
+  private live: Array<LiveItem> = []
   private readonly waiters: Array<() => void> = []
   private foldersReady = false
   private readonly folderWaiters: Array<() => void> = []
@@ -347,6 +535,7 @@ export class TdAccount {
   private readyHeld = false
 
   apply(value: unknown): void {
+    this.rememberLive(value)
     if (typeName(value) === 'updateChatFolders') {
       this.foldersReady = true
       for (const waiter of this.folderWaiters.splice(0)) {
@@ -369,6 +558,41 @@ export class TdAccount {
         waiter()
       }
     })
+  }
+
+  // New messages are queued until the page drains them. A request response
+  // carries @extra and is not an update, so it never lands here.
+  private rememberLive(value: unknown): void {
+    const name = typeName(value)
+    const message =
+      name === 'updateNewMessage'
+        ? field(value, 'message')
+        : name === 'updateChatLastMessage'
+          ? field(value, 'last_message')
+          : undefined
+    const live = liveMessageFrom(
+      this.id,
+      message,
+      name === 'updateChatLastMessage' ? field(value, 'chat_id') : undefined,
+    )
+    if (live === undefined) {
+      return
+    }
+    if (
+      this.live.some(item => item.chatId === live.chatId && item.id === live.id)
+    ) {
+      return
+    }
+    this.live.push(live)
+    if (this.live.length > 200) {
+      this.live.splice(0, this.live.length - 200)
+    }
+  }
+
+  takeIncoming(): Array<LiveItem> {
+    const items = this.live
+    this.live = []
+    return items
   }
 
   holdWaiters(): void {
@@ -675,12 +899,9 @@ export class TdAccount {
   }
 
   async messages(chatId: string): Promise<Array<Message>> {
-    const raw = chatId.startsWith(`${this.id}:`)
-      ? chatId.slice(this.id.length + 1)
-      : chatId
     const response = await this.send({
       '@type': 'getChatHistory',
-      chat_id: chatIdArgument(raw),
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
       from_message_id: 0,
       limit: 40,
       offset: 0,
@@ -696,6 +917,114 @@ export class TdAccount {
         return message === undefined ? [] : [message]
       })
       .reverse()
+  }
+
+  private rawChatId(chatId: string): string {
+    return chatId.startsWith(`${this.id}:`)
+      ? chatId.slice(this.id.length + 1)
+      : chatId
+  }
+
+  async openChat(chatId: string): Promise<void> {
+    await this.send({
+      '@type': 'openChat',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+    })
+  }
+
+  async closeChat(chatId: string): Promise<void> {
+    await this.send({
+      '@type': 'closeChat',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+    })
+  }
+
+  async sponsored(chatId: string): Promise<SponsoredPage> {
+    const response = await this.send({
+      '@type': 'getChatSponsoredMessages',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+    })
+    const page = sponsoredPageFrom(response)
+    if (page === undefined) {
+      throw new Error('REQUEST_FAILED')
+    }
+    const messages: Array<SponsoredItem> = []
+    for (const item of page.messages) {
+      const draft = sponsoredDraft(item)
+      const src =
+        draft.fileId === undefined || draft.mime === undefined
+          ? undefined
+          : await this.embedMedia(draft.fileId, draft.mime)
+      messages.push({
+        id: item.id,
+        text: item.text,
+        title: item.title,
+        button: item.button,
+        recommended: item.recommended,
+        info: item.info,
+        ...(item.media === undefined ? {} : { media: item.media }),
+        ...(src === undefined ? {} : { mediaSrc: src }),
+      })
+    }
+    return { between: page.between, messages }
+  }
+
+  async viewSponsored(
+    chatId: string,
+    messageIds: ReadonlyArray<string>,
+  ): Promise<void> {
+    if (messageIds.length === 0) {
+      return
+    }
+    await this.send({
+      '@type': 'viewMessages',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+      message_ids: messageIds.map(id => chatIdArgument(id)),
+      source: null,
+      force_read: false,
+    })
+  }
+
+  async clickSponsored(
+    chatId: string,
+    messageId: string,
+    media: boolean,
+  ): Promise<void> {
+    await this.send({
+      '@type': 'clickChatSponsoredMessage',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+      message_id: chatIdArgument(messageId),
+      is_media_click: media,
+      from_fullscreen: false,
+    })
+  }
+
+  private async embedMedia(
+    fileId: number,
+    mime: string,
+  ): Promise<string | undefined> {
+    const downloaded = await this.send({
+      '@type': 'downloadFile',
+      file_id: fileId,
+      priority: 32,
+      offset: 0,
+      limit: 0,
+      synchronous: true,
+    }).catch(() => undefined)
+    const local = field(downloaded, 'local')
+    if (field(local, 'is_downloading_completed') !== true) {
+      return undefined
+    }
+    const path = text(field(local, 'path'))
+    const read = this.sink.readFile
+    if (read === undefined || !path.startsWith('/tdlib/')) {
+      return undefined
+    }
+    const bytes = await read(path).catch(() => new Uint8Array())
+    if (bytes.byteLength === 0 || bytes.byteLength > MEDIA_BYTES) {
+      return undefined
+    }
+    return `data:${mime};base64,${bytesToBase64(bytes)}`
   }
 
   async logout(): Promise<void> {

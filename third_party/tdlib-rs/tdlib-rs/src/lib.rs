@@ -52,6 +52,15 @@ pub fn receive() -> Option<(Update, i32)> {
     tdjson::receive(2.0).as_deref().and_then(decode_incoming)
 }
 
+/// One raw TDLib payload, including updates [`receive`] would drop while decoding.
+///
+/// Request responses still wake their waiter through [`decode_incoming`]. Callers
+/// that need `updateNewMessage` read the JSON here, because a typed decode of the
+/// whole message struct can fail without losing the payload.
+pub fn receive_payload() -> Option<String> {
+    tdjson::receive(2.0)
+}
+
 /// Decodes one TDLib JSON payload.
 ///
 /// A request response (`@extra`) is delivered to its waiter and yields `None`.

@@ -1,3 +1,4 @@
+import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import { Command, given, message, model, story } from 'foldkit/story'
 import { modifyFields } from 'foldkit/struct'
@@ -5,9 +6,13 @@ import { expect, test } from 'vitest'
 
 import {
   BeginLogin,
+  CloseChat,
   Disconnect,
+  LoadHistory,
+  LoadSponsored,
   Message,
   type Model,
+  OpenChat,
   Refresh,
   Restore,
   initialModel,
@@ -102,6 +107,308 @@ test('a chat-list failure keeps the authenticated account available for retry', 
     model(current => {
       expect(current.error).toBe('')
       expect(current.accounts).toEqual([first])
+    }),
+  )
+})
+
+test('opening a group loads history and a failed sponsored response stays quiet', () => {
+  const grouped = {
+    id: 'first',
+    title: 'First',
+    chats: [
+      { id: 'first:1', title: 'Private', kind: 'Dialog' as const },
+      { id: 'first:2', title: 'Book club', kind: 'Group' as const },
+      { id: 'first:3', title: 'News', kind: 'Channel' as const },
+    ],
+  }
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        accounts: () => [grouped],
+      }),
+    ),
+    message(Message.ClickedChat({ id: 'first:2' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'first:2',
+        lines: [{ text: 'I can host.', mine: false, time: '12:05' }],
+      }),
+    ),
+    model(current => {
+      expect(current.faces.find(item => item.id === 'first:2')?.historyLoaded).toBe(
+        true,
+      )
+    }),
+    message(Message.ClickedBack()),
+    Command.resolve(CloseChat, Message.CompletedCloseChat()),
+    message(Message.ClickedChat({ id: 'first:3' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({ id: 'first:3', lines: [] }),
+    ),
+    Command.resolve(
+      LoadSponsored,
+      Message.FailedSponsored({ id: 'first:3' }),
+    ),
+    model(current => {
+      const channel = current.faces.find(item => item.id === 'first:3')
+      expect(channel?.historyLoaded).toBe(true)
+      expect(channel?.sponsoredLoaded).toBeUndefined()
+      expect(current.error).toBe('')
+    }),
+  )
+})
+
+test('a failed history load can be opened again', () => {
+  story(
+    update,
+    given(signedIn),
+    message(Message.ClickedChat({ id: 'first:1' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(LoadHistory, Message.FailedHistory({ id: 'first:1' })),
+    Command.resolve(
+      LoadSponsored,
+      Message.FailedSponsored({ id: 'first:1' }),
+    ),
+    model(current => {
+      expect(
+        current.faces.find(item => item.id === 'first:1')?.historyLoaded,
+      ).toBeUndefined()
+    }),
+    message(Message.ClickedChat({ id: 'first:1' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'first:1',
+        lines: [{ id: '1', text: 'hello', mine: false, time: '09:00' }],
+      }),
+    ),
+    Command.resolve(
+      LoadSponsored,
+      Message.FailedSponsored({ id: 'first:1' }),
+    ),
+    model(current => {
+      expect(
+        current.faces.find(item => item.id === 'first:1')?.historyLoaded,
+      ).toBe(true)
+    }),
+  )
+})
+
+test('a history row that is already open does not rewrite the preview', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        maybeOpenChatId: () => Option.some('first:1'),
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '09:01',
+            preview: 'newer',
+            unread: 0,
+            receipt: 'none' as const,
+            historyLoaded: true,
+            lines: [
+              { id: '1', text: 'older', mine: false, time: '09:00' },
+              { id: '2', text: 'newer', mine: false, time: '09:01' },
+            ],
+          },
+        ],
+      }),
+    ),
+    message(
+      Message.ArrivedMessages({
+        accountId: 'first',
+        items: [
+          {
+            chatId: 'first:1',
+            id: '1',
+            text: 'older',
+            outgoing: false,
+            date: 1,
+          },
+        ],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.preview).toBe('newer')
+      expect(current.faces[0]?.lines).toHaveLength(2)
+    }),
+  )
+})
+
+test('opening another chat closes the one Telegram had open', () => {
+  const two = {
+    id: 'first',
+    title: 'First',
+    chats: [
+      { id: 'first:1', title: 'Private', kind: 'Dialog' as const },
+      { id: 'first:2', title: 'Book club', kind: 'Group' as const },
+    ],
+  }
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        accounts: () => [two],
+        maybeOpenChatId: () => Option.some('first:1'),
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '09:00',
+            preview: 'hello',
+            unread: 0,
+            receipt: 'none' as const,
+            historyLoaded: true,
+            lines: [{ id: '1', text: 'hello', mine: false, time: '09:00' }],
+          },
+        ],
+      }),
+    ),
+    message(Message.ClickedChat({ id: 'first:2' })),
+    Command.resolve(CloseChat, Message.CompletedCloseChat()),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'first:2',
+        lines: [{ id: '2', text: 'I can host.', mine: false, time: '12:05' }],
+      }),
+    ),
+    model(current => {
+      expect(Option.isSome(current.maybeOpenChatId)).toBe(true)
+      expect(current.faces.find(item => item.id === 'first:2')?.lines[0]?.text).toBe(
+        'I can host.',
+      )
+    }),
+  )
+})
+
+test('a message that arrives before history is kept when history loads', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        maybeOpenChatId: () => Option.some('first:1'),
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '',
+            preview: '',
+            unread: 0,
+            receipt: 'none' as const,
+            lines: [],
+          },
+        ],
+      }),
+    ),
+    message(
+      Message.ArrivedMessages({
+        accountId: 'first',
+        items: [
+          {
+            chatId: 'first:1',
+            id: '8',
+            text: 'before history',
+            outgoing: false,
+            date: 1_700_000_000,
+          },
+        ],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.lines).toEqual([])
+      expect(current.faces[0]?.pending?.[0]?.text).toBe('before history')
+    }),
+    message(
+      Message.LoadedHistory({
+        id: 'first:1',
+        lines: [{ id: '1', text: 'older', mine: false, time: '09:00' }],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.lines.map(item => item.text)).toEqual([
+        'older',
+        'before history',
+      ])
+      expect(current.faces[0]?.pending).toBeUndefined()
+    }),
+    message(
+      Message.ArrivedMessages({
+        accountId: 'other',
+        items: [
+          {
+            chatId: 'first:1',
+            id: '9',
+            text: 'ignored',
+            outgoing: false,
+            date: 1_700_000_100,
+          },
+        ],
+      }),
+    ),
+    message(
+      Message.ArrivedMessages({
+        accountId: 'first',
+        items: [
+          {
+            chatId: 'first:1',
+            id: '8',
+            text: 'before history',
+            outgoing: false,
+            date: 1_700_000_000,
+          },
+          {
+            chatId: 'first:1',
+            id: '10',
+            text: 'after history',
+            outgoing: true,
+            date: 1_700_000_200,
+          },
+        ],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.lines.map(item => item.text)).toEqual([
+        'older',
+        'before history',
+        'after history',
+      ])
+    }),
+  )
+})
+
+test('switching accounts closes the chat that was loaded from Telegram', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        accounts: () => [first, second],
+        maybeOpenChatId: () => Option.some('first:1'),
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '09:00',
+            preview: 'hello',
+            unread: 0,
+            receipt: 'none' as const,
+            historyLoaded: true,
+            lines: [{ text: 'hello', mine: false, time: '09:00' }],
+          },
+        ],
+      }),
+    ),
+    message(Message.SelectedAccount({ id: 'second' })),
+    Command.resolve(CloseChat, Message.CompletedCloseChat()),
+    model(current => {
+      expect(current.selectedAccountId).toBe('second')
+      expect(Option.isNone(current.maybeOpenChatId)).toBe(true)
     }),
   )
 })

@@ -10,9 +10,14 @@
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use crm_chat_telegram::{database_root, AuthStep, Client};
+use crm_chat_telegram::{
+    chat_with_title, database_root, locate_chat, Account, AuthStep, ChatKind, Client,
+};
 
 const LOGIN_PROBE: &str = "login-probe";
+const GROUP_TITLE: &str = "crm-chat test group";
+const CHANNEL_TITLE: &str = "crm-chat test channel";
+const HISTORY_LINES: [&str; 2] = ["crm-chat history one", "crm-chat history two"];
 
 struct RemovedOnDrop(PathBuf);
 
@@ -69,8 +74,12 @@ async fn credentials() -> Result<(), String> {
     Ok(())
 }
 
+fn accounts_needed(detail: String) -> String {
+    format!("NEEDS TEST ACCOUNTS: {detail}")
+}
+
 fn needs_accounts(detail: String) -> Result<(), String> {
-    Err(format!("NEEDS TEST ACCOUNTS: {detail}"))
+    Err(accounts_needed(detail))
 }
 
 fn lexical_normal(path: &Path) -> PathBuf {
@@ -249,23 +258,25 @@ async fn qr_login(
     }
 }
 
-async fn accounts() -> Result<(), String> {
+/// Copy the saved desktop database, restore every logged-in account, and wait
+/// until each chat list is present. Does not log anyone out.
+async fn open_listed() -> Result<(RemovedOnDrop, Client, Vec<Account>), String> {
     let (api_id, api_hash) = credentials_from_env()?;
     let source = database_root();
     if !source.is_dir() {
-        return needs_accounts(format!(
+        return Err(accounts_needed(format!(
             "no TDLib directory at {}. Log in once in the desktop shell. The test reads a copy of that directory and does not read BWS session entries.",
             source.display()
-        ));
+        )));
     }
     let present = child_dirs(&source)?;
     if present.is_empty() {
-        return needs_accounts(format!(
+        return Err(accounts_needed(format!(
             "{} has no logged-in account. Log in once in the desktop shell. The test reads a copy of that directory and does not read BWS session entries.",
             source.display()
-        ));
+        )));
     }
-    let (root, _copy) = isolated_database(&source)?;
+    let (root, copy) = isolated_database(&source)?;
     let client = Client::open(root)?;
     let saved = client.restore(api_id, &api_hash).await?;
     let restored = saved
@@ -278,15 +289,21 @@ async fn accounts() -> Result<(), String> {
         .cloned()
         .collect::<Vec<_>>();
     if !missing.is_empty() {
-        return needs_accounts(format!(
+        return Err(accounts_needed(format!(
             "not logged in: {}. Log in once in the desktop shell. The test reads a copy of that directory and does not read BWS session entries.",
             missing.join(", ")
-        ));
+        )));
     }
     let mut listed = Vec::new();
     for account in saved {
         listed.push(await_chat_list(&client, account).await?);
     }
+    Ok((copy, client, listed))
+}
+
+async fn accounts() -> Result<(), String> {
+    let (api_id, api_hash) = credentials_from_env()?;
+    let (_copy, client, listed) = open_listed().await?;
     let Some(approver) = listed.first() else {
         return Err("no saved account can approve QR login".into());
     };
@@ -309,7 +326,505 @@ async fn accounts() -> Result<(), String> {
         "login: pass (desktop tdlib, qr, chats={})",
         logged_in.chats.len()
     );
+    if listed.len() < 2 {
+        return two_accounts_required();
+    }
+    let owner_user = client.self_user_id(&listed[0].id).await?;
+    let other_user = client.self_user_id(&listed[1].id).await?;
+    if owner_user == other_user {
+        return Err("the saved accounts are one Telegram user".into());
+    }
+    ensure_room(
+        &client,
+        &listed[0],
+        other_user,
+        GROUP_TITLE,
+        ChatKind::Group,
+        "group",
+    )
+    .await?;
+    ensure_room(
+        &client,
+        &listed[0],
+        other_user,
+        CHANNEL_TITLE,
+        ChatKind::Channel,
+        "channel",
+    )
+    .await?;
+    let refreshed = refresh_rooms(
+        &client,
+        &[listed[0].id.as_str(), listed[1].id.as_str()],
+        &[
+            (GROUP_TITLE, ChatKind::Group),
+            (CHANNEL_TITLE, ChatKind::Channel),
+        ],
+    )
+    .await?;
+    prove_kind(&client, &refreshed, ChatKind::Dialog).await?;
+    prove_titled(&client, &refreshed, GROUP_TITLE, ChatKind::Group).await?;
+    prove_titled(&client, &refreshed, CHANNEL_TITLE, ChatKind::Channel).await?;
+    prove_live(&client, &refreshed).await?;
+    prove_room_live(
+        &client,
+        &refreshed[1],
+        &refreshed[0],
+        GROUP_TITLE,
+        ChatKind::Group,
+    )
+    .await?;
+    prove_room_live(
+        &client,
+        &refreshed[1],
+        &refreshed[0],
+        CHANNEL_TITLE,
+        ChatKind::Channel,
+    )
+    .await?;
     Ok(())
+}
+
+fn two_accounts_required() -> Result<(), String> {
+    needs_accounts(
+        "two logged-in desktop accounts are required. Log in once in the desktop shell. The test reads a copy of that directory and does not read BWS session entries.".into(),
+    )
+}
+
+async fn ensure_room(
+    client: &Client,
+    owner: &Account,
+    other_user: i64,
+    title: &str,
+    kind: ChatKind,
+    label: &str,
+) -> Result<(), String> {
+    let located =
+        locate_chat(&owner.chats, title, kind).map_err(|error| format!("room {label}: {error}"))?;
+    let (chat_id, created) = if let Some(chat) = located {
+        (chat.id.clone(), false)
+    } else {
+        match client
+            .find_titled(&owner.id, title, kind)
+            .await
+            .map_err(|error| format!("room {label}: {error}"))?
+        {
+            Some(chat) => (chat.id, false),
+            None => {
+                let id = match kind {
+                    ChatKind::Group => {
+                        client
+                            .create_basic_group(&owner.id, &[other_user], title)
+                            .await?
+                    }
+                    ChatKind::Channel => client.create_channel(&owner.id, title).await?,
+                    ChatKind::Dialog => return Err(format!("room {label}: not a test room")),
+                };
+                (id, true)
+            }
+        }
+    };
+    client.add_member(&owner.id, &chat_id, other_user).await?;
+    if kind == ChatKind::Channel {
+        allow_channel_post(client, &owner.id, &chat_id, other_user).await?;
+    }
+    seed_history(client, &owner.id, &chat_id, label).await?;
+    println!(
+        "room {label}: {}",
+        if created { "created" } else { "reused" }
+    );
+    Ok(())
+}
+
+async fn seed_history(
+    client: &Client,
+    account_id: &str,
+    chat_id: &str,
+    label: &str,
+) -> Result<(), String> {
+    let messages = client.messages(account_id, chat_id).await?;
+    for text in HISTORY_LINES {
+        if messages.iter().any(|message| message.text == text) {
+            continue;
+        }
+        client.send_text(account_id, chat_id, text).await?;
+    }
+    let stored = client.messages(account_id, chat_id).await?;
+    if HISTORY_LINES
+        .iter()
+        .any(|text| !stored.iter().any(|message| message.text == *text))
+    {
+        return Err(format!("history {label}: seed was not stored"));
+    }
+    Ok(())
+}
+
+fn room_gap(account: &Account, rooms: &[(&str, ChatKind)]) -> Result<bool, String> {
+    let mut missing = false;
+    for (title, kind) in rooms {
+        if locate_chat(&account.chats, title, *kind)
+            .map_err(|error| format!("room {}: {error}", kind_label(kind)))?
+            .is_none()
+        {
+            missing = true;
+        }
+    }
+    Ok(missing)
+}
+
+async fn refresh_rooms(
+    client: &Client,
+    account_ids: &[&str],
+    rooms: &[(&str, ChatKind)],
+) -> Result<Vec<Account>, String> {
+    let mut loaded = Vec::new();
+    for id in account_ids {
+        loaded.push(client.load_account(id).await?);
+    }
+    for _ in 0..8 {
+        let mut ready = true;
+        for (index, account) in loaded.iter_mut().enumerate() {
+            if !room_gap(account, rooms)? {
+                continue;
+            }
+            ready = false;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            *account = client.load_account(account_ids[index]).await?;
+        }
+        if ready {
+            break;
+        }
+    }
+    for (title, kind) in rooms {
+        for account in &mut loaded {
+            if chat_with_title(&account.chats, title, *kind).is_some() {
+                continue;
+            }
+            if let Some(chat) = client
+                .find_titled(&account.id, title, *kind)
+                .await
+                .map_err(|error| format!("room {}: {error}", kind_label(kind)))?
+            {
+                account.chats.push(chat);
+            }
+        }
+    }
+    Ok(loaded)
+}
+
+fn kind_label(kind: &crm_chat_telegram::ChatKind) -> &'static str {
+    match kind {
+        crm_chat_telegram::ChatKind::Dialog => "dialog",
+        crm_chat_telegram::ChatKind::Group => "group",
+        crm_chat_telegram::ChatKind::Channel => "channel",
+    }
+}
+
+async fn prove_kind(
+    client: &Client,
+    accounts: &[crm_chat_telegram::Account],
+    kind: crm_chat_telegram::ChatKind,
+) -> Result<(), String> {
+    let label = kind_label(&kind);
+    let mut attempts = 0;
+    let mut last_error = String::new();
+    for account in accounts {
+        for chat in account.chats.iter().filter(|chat| chat.kind == kind) {
+            attempts += 1;
+            let messages = match client.messages(&account.id, &chat.id).await {
+                Ok(messages) => messages,
+                Err(error) => {
+                    last_error = error;
+                    continue;
+                }
+            };
+            if kind == crm_chat_telegram::ChatKind::Channel {
+                match client.sponsored(&account.id, &chat.id).await {
+                    Ok(page) => {
+                        println!(
+                            "history channel: pass (messages={}, sponsored={})",
+                            messages.len(),
+                            page.messages.len()
+                        );
+                        return Ok(());
+                    }
+                    Err(error) => last_error = error,
+                }
+                continue;
+            }
+            println!("history {label}: pass (messages={})", messages.len());
+            return Ok(());
+        }
+    }
+    if attempts == 0 {
+        println!("history {label}: skipped (no saved {label})");
+        return Ok(());
+    }
+    Err(format!("history {label}: {last_error}"))
+}
+
+async fn prove_titled(
+    client: &Client,
+    accounts: &[Account],
+    title: &str,
+    kind: ChatKind,
+) -> Result<(), String> {
+    let label = kind_label(&kind);
+    let mut found = false;
+    let mut last_error = String::new();
+    for account in accounts {
+        let chat = match locate_chat(&account.chats, title, kind) {
+            Ok(Some(chat)) => chat,
+            Ok(None) => continue,
+            Err(error) => return Err(format!("kind {label}: {error}")),
+        };
+        found = true;
+        let messages = match client.messages(&account.id, &chat.id).await {
+            Ok(messages) => messages,
+            Err(error) => {
+                last_error = error;
+                continue;
+            }
+        };
+        if messages.is_empty() {
+            last_error = "no messages".to_owned();
+            continue;
+        }
+        if kind == ChatKind::Channel {
+            match client.sponsored(&account.id, &chat.id).await {
+                Ok(page) => {
+                    println!("kind channel: pass");
+                    println!(
+                        "history channel: pass (messages={}, sponsored={})",
+                        messages.len(),
+                        page.messages.len()
+                    );
+                    return Ok(());
+                }
+                Err(error) => last_error = error,
+            }
+            continue;
+        }
+        println!("kind group: pass");
+        println!("history group: pass (messages={})", messages.len());
+        return Ok(());
+    }
+    if !found {
+        return Err(format!("history {label}: missing"));
+    }
+    Err(format!("history {label}: {last_error}"))
+}
+
+fn live_marker(label: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    format!("crm-chat live {label} {millis}")
+}
+
+fn channel_post_pending(error: &str) -> bool {
+    error == "CHAT_WRITE_FORBIDDEN" || error == "CHAT_ADMIN_REQUIRED"
+}
+
+/// A copied database can still say this member cannot post until Telegram's
+/// membership update arrives. Keep asking. A forbidden reply is not success.
+async fn send_room(
+    client: &Client,
+    account_id: &str,
+    chat_id: &str,
+    text: &str,
+    kind: ChatKind,
+) -> Result<(), String> {
+    let mut attempt = client.send_text(account_id, chat_id, text).await;
+    if kind != ChatKind::Channel {
+        return attempt;
+    }
+    for _ in 0..8 {
+        match &attempt {
+            Ok(()) => return Ok(()),
+            Err(error) if channel_post_pending(error) => {}
+            Err(_) => return attempt,
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        attempt = client.send_text(account_id, chat_id, text).await;
+    }
+    attempt
+}
+
+/// The saved copy can be older than the server membership. Posting rights are
+/// set again from the channel owner before the other test account sends.
+async fn allow_channel_post(
+    client: &Client,
+    owner_id: &str,
+    chat_id: &str,
+    user_id: i64,
+) -> Result<(), String> {
+    match client.grant_channel_post(owner_id, chat_id, user_id).await {
+        Ok(()) => Ok(()),
+        Err(error) if error == "USER_NOT_PARTICIPANT" => {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            client.grant_channel_post(owner_id, chat_id, user_id).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The other saved account sends one marker into a private test room.
+/// The first account has that room open and must see the marker.
+async fn prove_room_live(
+    client: &Client,
+    sender: &Account,
+    recipient: &Account,
+    title: &str,
+    kind: ChatKind,
+) -> Result<(), String> {
+    let label = kind_label(&kind);
+    let sender_chat = chat_with_title(&sender.chats, title, kind)
+        .ok_or_else(|| format!("live {label}: missing"))?;
+    let recipient_chat = chat_with_title(&recipient.chats, title, kind)
+        .ok_or_else(|| format!("live {label}: missing"))?;
+    client.open_chat(&sender.id, &sender_chat.id).await?;
+    client.open_chat(&recipient.id, &recipient_chat.id).await?;
+    let marker = live_marker(label);
+    send_room(client, &sender.id, &sender_chat.id, &marker, kind).await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(25);
+    while tokio::time::Instant::now() < deadline {
+        if client
+            .take_incoming(&recipient.id)
+            .iter()
+            .any(|message| message.text == marker && message.chat_id == recipient_chat.id)
+        {
+            println!("live {label}: pass via update");
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    Err(format!("live {label}: the marker did not arrive"))
+}
+
+/// Sends one marker between the two saved accounts.
+/// The peer is the other account's user id from getMe. When both directories
+/// are the same user, the marker goes to Saved Messages. Nothing else is messaged.
+async fn prove_live(
+    client: &Client,
+    accounts: &[crm_chat_telegram::Account],
+) -> Result<(), String> {
+    let Some(sender) = accounts.first() else {
+        println!("live update: skipped (one account)");
+        return Ok(());
+    };
+    let Some(other) = accounts.get(1) else {
+        println!("live update: skipped (one account)");
+        return Ok(());
+    };
+    let sender_user = client.self_user_id(&sender.id).await?;
+    let other_user = client.self_user_id(&other.id).await?;
+    let (recipient, peer_user) = if sender_user == other_user {
+        (sender, sender_user)
+    } else {
+        (other, other_user)
+    };
+    let sender_chat = client.create_private_chat(&sender.id, peer_user).await?;
+    let recipient_chat = if recipient.id == sender.id {
+        sender_chat.clone()
+    } else {
+        client
+            .create_private_chat(&recipient.id, sender_user)
+            .await?
+    };
+    client.open_chat(&sender.id, &sender_chat).await?;
+    if recipient.id != sender.id {
+        client.open_chat(&recipient.id, &recipient_chat).await?;
+    }
+    let marker = format!(
+        "kam44-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0)
+    );
+    client.send_text(&sender.id, &sender_chat, &marker).await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(25);
+    while tokio::time::Instant::now() < deadline {
+        if client
+            .take_incoming(&recipient.id)
+            .iter()
+            .any(|message| message.text == marker)
+        {
+            println!("live update: pass via update");
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    Err("live update: the marker did not arrive".into())
+}
+
+/// Sends one marker from the second saved account. Does not create rooms.
+async fn signal(room: &str) -> Result<(), String> {
+    let (title, kind) = match room {
+        "group" => (GROUP_TITLE, ChatKind::Group),
+        "channel" => (CHANNEL_TITLE, ChatKind::Channel),
+        _ => return Err("usage: signal group|channel".into()),
+    };
+    let (_copy, client, saved) = open_listed().await?;
+    if saved.len() < 2 {
+        return two_accounts_required();
+    }
+    let first_user = client.self_user_id(&saved[0].id).await?;
+    let second_user = client.self_user_id(&saved[1].id).await?;
+    if first_user == second_user {
+        return Err("the saved accounts are one Telegram user".into());
+    }
+    // A fresh copy of the saved database does not yet list a chat that was
+    // created in an earlier copy. Reload until the server list includes it.
+    let refreshed = refresh_rooms(
+        &client,
+        &[saved[0].id.as_str(), saved[1].id.as_str()],
+        &[(title, kind)],
+    )
+    .await
+    .map_err(|error| format!("signal {room}: {error}"))?;
+    let owner = &refreshed[0];
+    let sender = &refreshed[1];
+    let chat = titled_chat(&client, sender, title, kind)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
+    if kind == ChatKind::Channel {
+        let owner_chat = titled_chat(&client, owner, title, kind)
+            .await
+            .map_err(|error| format!("signal {room}: {error}"))?;
+        client
+            .open_chat(&owner.id, &owner_chat.id)
+            .await
+            .map_err(|error| format!("signal {room}: {error}"))?;
+        allow_channel_post(&client, &owner.id, &owner_chat.id, second_user)
+            .await
+            .map_err(|error| format!("signal {room}: {error}"))?;
+    }
+    client
+        .open_chat(&sender.id, &chat.id)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
+    send_room(&client, &sender.id, &chat.id, &live_marker(room), kind)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
+    println!("signal {room}: sent");
+    Ok(())
+}
+
+async fn titled_chat(
+    client: &Client,
+    account: &Account,
+    title: &str,
+    kind: ChatKind,
+) -> Result<crm_chat_telegram::Chat, String> {
+    if let Some(chat) = locate_chat(&account.chats, title, kind)?.cloned() {
+        return Ok(chat);
+    }
+    client
+        .find_titled(&account.id, title, kind)
+        .await?
+        .ok_or_else(|| "missing".to_owned())
 }
 
 async fn login(slot: &str) -> Result<(), String> {
@@ -341,7 +856,7 @@ async fn login(slot: &str) -> Result<(), String> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
     let result = match command.as_str() {
@@ -349,16 +864,22 @@ async fn main() {
         "credentials" => credentials().await,
         "account" => accounts().await,
         "login" => login(&args.next().unwrap_or_default()).await,
-        _ => Err("usage: shape | credentials | account | login <1|2>".into()),
+        "signal" => signal(&args.next().unwrap_or_default()).await,
+        _ => {
+            Err("usage: shape | credentials | account | login <1|2> | signal group|channel".into())
+        }
     };
+    // A normal return flushes both streams. process::exit skips that flush,
+    // so the harness was recording an empty stderr for a real send failure.
     if let Err(error) = result {
         if error.starts_with("NEEDS TEST ACCOUNTS:") {
             println!("{error}");
-            std::process::exit(2);
+            return std::process::ExitCode::from(2);
         }
         eprintln!("desktop tdlib: {error}");
-        std::process::exit(1);
+        return std::process::ExitCode::from(1);
     }
+    std::process::ExitCode::SUCCESS
 }
 
 #[cfg(test)]
