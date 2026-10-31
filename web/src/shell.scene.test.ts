@@ -121,3 +121,19 @@ test('search hides chats that do not match', () => {
     expect(nth(all.role('listitem'), 0)).toContainText('Ada'),
   )
 })
+
+test('the Groups folder shows only groups', () => {
+  scene(
+    { update, view },
+    given(signedIn),
+    expect(role('tab', { name: 'All' })).toExist(),
+    click(role('tab', { name: 'Groups' })),
+    expectAll(all.role('listitem')).toHaveCount(4),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Book club'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Ops'),
+    expect(role('region', { name: 'Telegram chats' })).not.toContainText('Ada'),
+    expect(role('region', { name: 'Telegram chats' })).not.toContainText(
+      'Announcements',
+    ),
+  )
+})

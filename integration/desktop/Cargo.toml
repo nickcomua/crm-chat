@@ -4,14 +4,9 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[workspace]
-
-# Not a workspace member of the repo root. `nix flake check` must not compile grammers or open a
-# Telegram connection. `nix run .#integration-test` builds this binary.
+# `shape` is offline and runs in `nix flake check`. `credentials` and `account`
+# open Telegram and stay in `nix run .#integration-test`.
 
 [dependencies]
-grammers-client = { git = "https://codeberg.org/Lonami/grammers", rev = "1e31e73cd9797790905bbea82cd75adcbe6f1242" }
-grammers-mtsender = { git = "https://codeberg.org/Lonami/grammers", rev = "1e31e73cd9797790905bbea82cd75adcbe6f1242" }
-grammers-session = { git = "https://codeberg.org/Lonami/grammers", rev = "1e31e73cd9797790905bbea82cd75adcbe6f1242", features = ["sqlite-storage"] }
-grammers-tl-types = { git = "https://codeberg.org/Lonami/grammers", rev = "1e31e73cd9797790905bbea82cd75adcbe6f1242" }
+crm-chat-telegram = { path = "../../crates/telegram" }
 tokio = { version = "1", features = ["macros", "rt", "time"] }

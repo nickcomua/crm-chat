@@ -1,5 +1,4 @@
 import { defineConfig, type Connect, type Plugin } from 'vite'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 import { foldkit } from '@foldkit/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
@@ -50,7 +49,6 @@ const runtimeTelegramAppPlugin = (): Plugin => {
 export default defineConfig({
   plugins: [
     runtimeTelegramAppPlugin(),
-    nodePolyfills(),
     tailwindcss(),
     foldkit({ devToolsMcpPort: false }),
   ],

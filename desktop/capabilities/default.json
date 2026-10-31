@@ -3,5 +3,16 @@
   "identifier": "default",
   "description": "Default capability for the desktop shell.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-telegram-app-credentials"]
+  "permissions": [
+    "core:event:default",
+    "allow-telegram-app-credentials",
+    "allow-telegram-begin-login",
+    "allow-telegram-submit-code",
+    "allow-telegram-submit-password",
+    "allow-telegram-poll",
+    "allow-telegram-load-account",
+    "allow-telegram-messages",
+    "allow-telegram-logout",
+    "allow-telegram-restore"
+  ]
 }

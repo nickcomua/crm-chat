@@ -2,6 +2,7 @@ import * as Schema from 'effect/Schema'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 
+import { ChatLine, StoredFace } from './chatFace'
 import { Account, AuthResult } from './telegram'
 
 export const Secret = Schema.Redacted(Schema.String)
@@ -15,7 +16,12 @@ export const Message = defineMessageUnion({
   UpdatedPhone: { value: Secret },
   ClickedCountry: {},
   SelectedCountry: { iso: Schema.String },
-  ToggledKeepSignedIn: {},
+  ClickedPhoneForm: {},
+  ClickedPasskey: {},
+  ClickedTheme: {},
+  ClickedFolder: {
+    folder: Schema.Literals(['All', 'Personal', 'Groups', 'Channels']),
+  },
   UpdatedAnswer: { value: Secret },
   UpdatedQuery: { value: Schema.String },
   UpdatedDraft: { value: Schema.String },
@@ -43,9 +49,17 @@ export const Message = defineMessageUnion({
   ClickedDeleteChat: {},
   ClickedDismissMenu: {},
   CompletedLoadAppCredentials: { credentials: RuntimeCredentials },
+  CompletedRestore: {
+    accounts: Schema.Array(Account),
+    faces: Schema.optional(Schema.Array(StoredFace)),
+  },
   SucceededAuthenticate: { result: AuthResult, sourceId: Schema.String },
   FailedAuthenticate: { error: Schema.String, sourceId: Schema.String },
-  SucceededRefresh: { account: Account },
+  SucceededRefresh: {
+    account: Account,
+    faces: Schema.optional(Schema.Array(StoredFace)),
+  },
+  LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
   FailedRefresh: {},
   CompletedDisconnect: {},
 })

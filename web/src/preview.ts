@@ -54,7 +54,13 @@ const previewModel = (screen: string): Model => {
   }
   if (screen === 'qr') {
     return modifyFields(base, {
+      authEntry: () => 'Qr',
       login: () => Login.Qr({ id: 'preview', image: previewQrImage }),
+    })
+  }
+  if (screen === 'phone') {
+    return modifyFields(base, {
+      authEntry: () => 'Phone',
     })
   }
   if (screen === 'thread') {
@@ -73,6 +79,14 @@ const previewModel = (screen: string): Model => {
       maybeOpenChatId: () => Option.some('ada'),
       headerMenuOpen: () => true,
       autoDeleteOpen: () => true,
+    })
+  }
+  if (screen === 'chats') {
+    return shell(base)
+  }
+  if (screen === 'empty') {
+    return modifyFields(shell(base), {
+      accounts: () => [{ id: 'preview', title: 'You', chats: [] }],
     })
   }
   return base

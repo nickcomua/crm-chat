@@ -19,12 +19,17 @@ import { Login } from './login'
 import { loginScreen } from './loginView'
 import { Message, RuntimeCredentials, Secret } from './message'
 import { chatShell } from './shellView'
+import { clockTime } from './tdlibProtocol'
 import {
   Account,
+  accountFaces,
   beginLogin,
+  desktopFailure,
   loadAccount,
-  pollQr,
+  loadMessages,
+  pollAccount,
   removeConnection,
+  restoreAccounts,
   submitCode,
   submitPassword,
 } from './telegram'
@@ -39,7 +44,10 @@ export const Model = Schema.Struct({
   phone: Secret,
   countryIso: Schema.String,
   countryOpen: Schema.Boolean,
-  keepSignedIn: Schema.Boolean,
+  authEntry: Schema.Literals(['Qr', 'Phone']),
+  theme: Schema.Literals(['Day', 'Night']),
+  folder: Schema.Literals(['All', 'Personal', 'Groups', 'Channels']),
+  passkeyNote: Schema.Boolean,
   answer: Secret,
   status: Schema.Literals(['Ready', 'Busy']),
   error: Schema.String,
@@ -62,29 +70,7 @@ export const Model = Schema.Struct({
 })
 export type Model = typeof Model.Type
 
-const loginError = (error: unknown): string => {
-  if (error instanceof Error) {
-    if (error.message.includes('PHONE_CODE_INVALID')) {
-      return 'The code is incorrect. Try again.'
-    }
-    if (error.message.includes('PHONE_CODE_EXPIRED')) {
-      return 'The code expired. Cancel and start again.'
-    }
-    if (error.message.includes('PASSWORD_HASH_INVALID')) {
-      return 'The password is incorrect. Try again.'
-    }
-    if (error.message.includes('FLOOD_WAIT')) {
-      return 'Telegram requires a wait before trying again.'
-    }
-    if (error.message.includes('API_ID_INVALID')) {
-      return 'Check your Telegram API ID and hash.'
-    }
-    if (error.message.includes('PHONE_NUMBER_INVALID')) {
-      return 'Enter your phone number with its country code.'
-    }
-  }
-  return 'Telegram could not complete the request. Retry or cancel and start again.'
-}
+const loginError = desktopFailure
 export const LoadAppCredentials = Command.define('LoadAppCredentials', {
   messages: [Message.CompletedLoadAppCredentials],
   execute: Effect.tryPromise(() => readAppCredentials()).pipe(
@@ -166,13 +152,64 @@ export const SubmitAnswer = Command.define('SubmitAnswer', {
       ),
     ),
 })
+export const Restore = Command.define('Restore', {
+  args: { apiId: Schema.String, apiHash: Secret },
+  messages: [Message.CompletedRestore],
+  execute: ({ apiId, apiHash }) =>
+    Effect.tryPromise(() =>
+      restoreAccounts(Number(apiId), Redacted.value(apiHash)),
+    ).pipe(
+      Effect.map(accounts =>
+        Message.CompletedRestore({
+          accounts,
+          faces: accounts.flatMap(account => accountFaces(account.id)),
+        }),
+      ),
+      Effect.catch(() =>
+        Effect.succeed(Message.CompletedRestore({ accounts: [] })),
+      ),
+    ),
+})
 export const Refresh = Command.define('Refresh', {
   args: { id: Schema.String },
   messages: [Message.SucceededRefresh, Message.FailedRefresh],
   execute: ({ id }) =>
-    Effect.tryPromise(() => loadAccount(id)).pipe(
-      Effect.map(account => Message.SucceededRefresh({ account })),
+    Effect.tryPromise(() =>
+      loadAccount(id).then(account => ({
+        account,
+        faces: accountFaces(id),
+      })),
+    ).pipe(
+      Effect.map(({ account, faces }) =>
+        Message.SucceededRefresh({ account, faces }),
+      ),
       Effect.catch(() => Effect.succeed(Message.FailedRefresh())),
+    ),
+})
+export const LoadHistory = Command.define('LoadHistory', {
+  args: { accountId: Schema.String, chatId: Schema.String },
+  messages: [Message.LoadedHistory],
+  execute: ({ accountId, chatId }) =>
+    Effect.tryPromise(() => loadMessages(accountId, chatId)).pipe(
+      Effect.map(messages =>
+        Message.LoadedHistory({
+          id: chatId,
+          lines: messages.flatMap(message =>
+            message.text === ''
+              ? []
+              : [
+                  {
+                    text: message.text,
+                    mine: message.outgoing,
+                    time: clockTime(message.date),
+                  },
+                ],
+          ),
+        }),
+      ),
+      Effect.catch(() =>
+        Effect.succeed(Message.LoadedHistory({ id: chatId, lines: [] })),
+      ),
     ),
 })
 export const Disconnect = Command.define('Disconnect', {
@@ -186,6 +223,25 @@ export const Disconnect = Command.define('Disconnect', {
       }),
     ),
 })
+const mergeFaces = (
+  current: ReadonlyArray<StoredFace>,
+  incoming: ReadonlyArray<StoredFace>,
+): Array<StoredFace> => {
+  const next = [...current]
+  for (const face of incoming) {
+    const index = next.findIndex(item => item.id === face.id)
+    const previous = index < 0 ? undefined : next[index]
+    if (previous === undefined) {
+      next.push(face)
+      continue
+    }
+    next[index] = {
+      ...face,
+      lines: face.lines.length > 0 ? face.lines : previous.lines,
+    }
+  }
+  return next
+}
 const closedMenus = {
   menuOpen: () => false,
   moreOpen: () => false,
@@ -255,10 +311,41 @@ export const update = (model: Model, message: Message) =>
               countryOpen: () => false,
             }),
           },
-    // NOTE: The checkbox is the phone-step control. Sessions stay in this tab; reload still signs out.
-    ToggledKeepSignedIn: () => ({
+    ClickedPhoneForm: () => {
+      if (model.status === 'Busy') {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        authEntry: () => 'Phone',
+        passkeyNote: () => false,
+        error: () => '',
+        login: () =>
+          model.login._tag === 'Qr' ? Login.Editing() : model.login,
+      })
+      if (!model.fixturePreview && model.login._tag === 'Qr') {
+        return { model: next, commands: [Disconnect({ id: model.login.id })] }
+      }
+      return { model: next }
+    },
+    ClickedPasskey: () => ({
+      model: modifyFields(model, { passkeyNote: () => true }),
+    }),
+    ClickedTheme: () => {
+      const theme = model.theme === 'Day' ? 'Night' : 'Day'
+      try {
+        localStorage.setItem(
+          'crm-chat.theme',
+          theme === 'Night' ? 'Dark' : 'Light',
+        )
+      } catch {
+        // The toggle still applies to this view when storage is blocked.
+      }
+      return { model: modifyFields(model, { theme: () => theme }) }
+    },
+    ClickedFolder: ({ folder }) => ({
       model: modifyFields(model, {
-        keepSignedIn: () => !model.keepSignedIn,
+        folder: () => folder,
+        maybeOpenChatId: () => Option.none(),
       }),
     }),
     UpdatedAnswer: ({ value }) => ({
@@ -271,7 +358,14 @@ export const update = (model: Model, message: Message) =>
       model: modifyFields(model, { draft: () => value }),
     }),
     ClickedPhoneLogin: () => startLogin(model, false),
-    ClickedQrLogin: () => startLogin(model, true),
+    ClickedQrLogin: () =>
+      startLogin(
+        modifyFields(model, {
+          authEntry: () => 'Qr',
+          passkeyNote: () => false,
+        }),
+        true,
+      ),
     SubmittedAnswer: () => {
       if (
         model.fixturePreview ||
@@ -295,16 +389,22 @@ export const update = (model: Model, message: Message) =>
         ],
       }
     },
-    ClickedAddAccount: () =>
-      model.status === 'Busy'
-        ? { model }
-        : {
-            model: modifyFields(model, {
-              login: () => Login.Editing(),
-              error: () => '',
-              ...closedMenus,
-            }),
-          },
+    ClickedAddAccount: () => {
+      if (model.status === 'Busy') {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        login: () => Login.Editing(),
+        authEntry: () => 'Qr',
+        passkeyNote: () => false,
+        error: () => '',
+        ...closedMenus,
+      })
+      if (model.fixturePreview || model.appCredentials !== 'Supplied') {
+        return { model: next }
+      }
+      return startLogin(next, true)
+    },
     ClickedCancel: () => {
       if (model.status === 'Busy') {
         return { model }
@@ -349,13 +449,27 @@ export const update = (model: Model, message: Message) =>
             }),
             commands: [Refresh({ id: model.selectedAccountId })],
           },
-    ClickedChat: ({ id }) => ({
-      model: modifyFields(model, {
-        maybeOpenChatId: () => Option.some(id),
-        draft: () => '',
-        ...closedMenus,
-      }),
-    }),
+    ClickedChat: ({ id }) => {
+      const face = model.faces.find(item => item.id === id)
+      const known = face !== undefined && face.lines.length > 0
+      return {
+        model: modifyFields(model, {
+          maybeOpenChatId: () => Option.some(id),
+          draft: () => '',
+          ...closedMenus,
+        }),
+        ...(model.fixturePreview || model.selectedAccountId === '' || known
+          ? {}
+          : {
+              commands: [
+                LoadHistory({
+                  accountId: model.selectedAccountId,
+                  chatId: id,
+                }),
+              ],
+            }),
+      }
+    },
     ClickedBack: () => ({
       model: modifyFields(model, {
         maybeOpenChatId: () => Option.none(),
@@ -470,8 +584,56 @@ export const update = (model: Model, message: Message) =>
               appCredentials: () => 'Supplied',
               apiId: () => credentials.apiId,
               apiHash: () => credentials.apiHash,
+              status: () => 'Busy',
             }),
+            commands: [
+              Restore({
+                apiId: credentials.apiId,
+                apiHash: credentials.apiHash,
+              }),
+            ],
           },
+    CompletedRestore: ({ accounts, faces }) => {
+      const first = accounts[0]
+      if (first !== undefined && model.login._tag === 'Editing') {
+        return {
+          model: modifyFields(model, {
+            login: () => Login.Closed(),
+            // readAccount already filled these previews. Leaving status Busy
+            // until a second Refresh kept the list on "Loading chats…" and
+            // kind labels whenever that refresh never finished.
+            status: () => 'Ready',
+            error: () => '',
+            accounts: () => accounts,
+            selectedAccountId: () => first.id,
+            faces: current =>
+              faces === undefined ? current : mergeFaces(current, faces),
+          }),
+        }
+      }
+      if (
+        first === undefined &&
+        model.login._tag === 'Editing' &&
+        model.authEntry === 'Qr' &&
+        !model.fixturePreview &&
+        model.appCredentials === 'Supplied' &&
+        /^[1-9]\d*$/.test(model.apiId) &&
+        /^[a-f\d]{32}$/i.test(Redacted.value(model.apiHash))
+      ) {
+        return {
+          model: modifyFields(model, { status: () => 'Busy', error: () => '' }),
+          commands: [
+            BeginLogin({
+              apiId: model.apiId,
+              apiHash: model.apiHash,
+              phone: phoneForLogin(model),
+              qr: true,
+            }),
+          ],
+        }
+      }
+      return { model: modifyFields(model, { status: () => 'Ready' }) }
+    },
     SucceededAuthenticate: ({ result, sourceId }) => {
       if (
         sourceId !== '' &&
@@ -489,6 +651,10 @@ export const update = (model: Model, message: Message) =>
             phone: () => Redacted.make(''),
             accounts: accounts => Array.append(accounts, result.account),
             selectedAccountId: () => result.account.id,
+            faces: current =>
+              result.faces === undefined
+                ? current
+                : mergeFaces(current, result.faces),
             query: () => '',
             draft: () => '',
             maybeOpenChatId: () => Option.none(),
@@ -529,12 +695,37 @@ export const update = (model: Model, message: Message) =>
               error: () => error,
             }),
           },
-    SucceededRefresh: ({ account }) => ({
+    SucceededRefresh: ({ account, faces }) => ({
       model: modifyFields(model, {
         accounts: Array.map(current =>
           current.id === account.id ? account : current,
         ),
         status: () => 'Ready',
+        faces: current =>
+          faces === undefined ? current : mergeFaces(current, faces),
+      }),
+    }),
+    LoadedHistory: ({ id, lines }) => ({
+      model: modifyFields(model, {
+        faces: current => {
+          const index = current.findIndex(face => face.id === id)
+          if (index < 0) {
+            return [
+              ...current,
+              {
+                id,
+                time: '',
+                preview: '',
+                unread: 0,
+                receipt: 'none' as const,
+                lines,
+              },
+            ]
+          }
+          return current.map(face =>
+            face.id === id ? { ...face, lines } : face,
+          )
+        },
       }),
     }),
     FailedRefresh: () => ({
@@ -553,7 +744,10 @@ export const initialModel: Model = {
   phone: Redacted.make(''),
   countryIso: defaultCountryIso,
   countryOpen: false,
-  keepSignedIn: true,
+  authEntry: 'Qr',
+  theme: 'Day',
+  folder: 'All',
+  passkeyNote: false,
   answer: Redacted.make(''),
   status: 'Ready',
   error: '',
@@ -574,8 +768,16 @@ export const initialModel: Model = {
   faces: [],
   fixturePreview: false,
 }
+const storedTheme = (): Model['theme'] => {
+  try {
+    return localStorage.getItem('crm-chat.theme') === 'Dark' ? 'Night' : 'Day'
+  } catch {
+    return 'Day'
+  }
+}
+
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
-  model: initialModel,
+  model: modifyFields(initialModel, { theme: () => storedTheme() }),
   commands: [LoadAppCredentials()],
 })
 
@@ -587,12 +789,22 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   body: h.div(
     [
       h.Class(
-        showLogin(model)
-          ? 'login-plain relative min-h-screen text-white'
-          : 'app-wallpaper relative min-h-screen text-white',
+        `app-wallpaper relative min-h-screen ${model.theme === 'Night' ? 'theme-night' : 'theme-day'}`,
       ),
     ],
     [
+      h.button(
+        [
+          h.Class('tg-theme-toggle'),
+          h.AriaLabel(
+            model.theme === 'Night'
+              ? 'Switch to day theme'
+              : 'Switch to night theme',
+          ),
+          h.OnClick(Message.ClickedTheme()),
+        ],
+        [model.theme === 'Night' ? '☀' : '☾'],
+      ),
       model.error === ''
         ? h.empty
         : h.p(
@@ -615,7 +827,10 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
     {
       modelToDependencies: model => ({
         id:
-          model.fixturePreview || model.login._tag !== 'Qr'
+          model.fixturePreview ||
+          (model.login._tag !== 'Qr' &&
+            model.login._tag !== 'Code' &&
+            model.login._tag !== 'Password')
             ? ''
             : model.login.id,
       }),
@@ -623,8 +838,8 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
         id === ''
           ? Stream.empty
           : Stream.fromEffectSchedule(
-              Effect.sleep('2 seconds').pipe(
-                Effect.andThen(Effect.tryPromise(() => pollQr(id))),
+              Effect.sleep('200 millis').pipe(
+                Effect.andThen(Effect.tryPromise(() => pollAccount(id))),
                 Effect.map(result =>
                   Message.SucceededAuthenticate({ result, sourceId: id }),
                 ),
@@ -637,7 +852,7 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
                   ),
                 ),
               ),
-              Schedule.spaced('1 second'),
+              Schedule.spaced('200 millis'),
             ),
     },
   ),

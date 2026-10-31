@@ -1,0 +1,96 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #707579;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #aaaaaa;
+  --border: #0f0f0f;
+  --input: #3a3a3a;
+  --ring: #3390ec;
+}
+
+.ui-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.ui-radio-group[data-orientation='horizontal'] {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.ui-radio {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.625rem;
+}
+
+.ui-radio-control {
+  align-items: center;
+  background: var(--background, #ffffff);
+  border: 1px solid var(--input, #dadce0);
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.25rem;
+  justify-content: center;
+  margin-top: 0.1rem;
+  padding: 0;
+  width: 1.25rem;
+}
+
+.ui-radio-control[data-state='checked'] {
+  border-color: var(--primary, #3390ec);
+}
+
+.ui-radio-indicator {
+  background: transparent;
+  border-radius: 999px;
+  display: block;
+  height: 0.625rem;
+  width: 0.625rem;
+}
+
+.ui-radio-control[data-state='checked'] .ui-radio-indicator {
+  background: var(--primary, #3390ec);
+}
+
+.ui-radio-control:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #3390ec) 28%, transparent);
+  outline: none;
+}
+
+.ui-radio-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-radio-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ui-radio-description {
+  color: var(--muted-foreground, #707579);
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.ui-radio-demo {
+  max-width: 24rem;
+}

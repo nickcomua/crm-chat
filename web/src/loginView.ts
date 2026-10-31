@@ -12,20 +12,17 @@ import { Login } from './login'
 import type { Model } from './main'
 import { Message } from './message'
 
-const fieldClass =
-  'w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-[16px] text-white outline-none placeholder:text-[#8d8d9a]'
+const fieldClass = 'tg-input'
 
-const primaryClass =
-  'w-full rounded-full bg-[#2AABEE] px-4 py-3 text-[15px] font-medium uppercase tracking-wide text-white disabled:opacity-50'
+const primaryClass = 'tg-primary'
 
-const linkClass =
-  'w-full rounded-full px-4 py-3 text-[13px] font-medium uppercase tracking-wide text-[#2AABEE] disabled:opacity-50'
+const linkClass = 'tg-link'
 
 const logo = (h: HtmlBuilder<Message>) =>
   h.svg(
-    [h.ViewBox('0 0 64 64'), h.Class('size-24'), h.AriaHidden(true)],
+    [h.ViewBox('0 0 64 64'), h.Class('tg-logo'), h.AriaHidden(true)],
     [
-      h.circle([h.Cx('32'), h.Cy('32'), h.R('32'), h.Fill('#2AABEE')]),
+      h.circle([h.Cx('32'), h.Cy('32'), h.R('32'), h.Class('tg-logo-badge')]),
       h.path([
         h.Fill('#FFFFFF'),
         h.D(
@@ -95,9 +92,7 @@ const countryPicker = (model: Model, h: HtmlBuilder<Message>) => {
     [
       h.button(
         [
-          h.Class(
-            'flex w-full items-center gap-3 rounded-xl border border-white/15 px-3 py-3 text-left text-[16px]',
-          ),
+          h.Class('tg-country'),
           h.AriaLabel('Country'),
           h.AriaExpanded(model.countryOpen),
           h.Disabled(model.status === 'Busy'),
@@ -105,33 +100,25 @@ const countryPicker = (model: Model, h: HtmlBuilder<Message>) => {
         ],
         [
           countryFlag(h, country),
-          h.span([h.Class('min-w-0 flex-1 truncate')], [country.name]),
-          h.span([h.Class('text-[#8d8d9a]'), h.AriaHidden(true)], ['▾']),
+          h.span([h.Class('min-w-0 flex-1 truncate text-left')], [country.name]),
+          h.span([h.Class('tg-muted'), h.AriaHidden(true)], ['▾']),
         ],
       ),
       model.countryOpen
         ? h.div(
-            [
-              h.Class(
-                'absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl bg-[#2a2a32] py-1 shadow-2xl',
-              ),
-              h.Role('listbox'),
-              h.AriaLabel('Country'),
-            ],
+            [h.Class('tg-menu tg-country-menu'), h.Role('listbox'), h.AriaLabel('Country')],
             countries.map(item =>
               h.keyed('button')(
                 item.iso,
                 [
-                  h.Class(
-                    'flex w-full items-center gap-3 px-3 py-2 text-left text-[15px] hover:bg-white/10',
-                  ),
+                  h.Class('tg-menu-item'),
                   h.AriaLabel(item.name),
                   h.OnClick(Message.SelectedCountry({ iso: item.iso })),
                 ],
                 [
                   countryFlag(h, item),
                   h.span([h.Class('min-w-0 flex-1 truncate')], [item.name]),
-                  h.span([h.Class('text-[#8d8d9a]')], [item.dial]),
+                  h.span([h.Class('tg-muted')], [item.dial]),
                 ],
               ),
             ),
@@ -141,52 +128,76 @@ const countryPicker = (model: Model, h: HtmlBuilder<Message>) => {
   )
 }
 
-const keepSignedIn = (model: Model, h: HtmlBuilder<Message>) =>
-  h.label(
-    [
-      h.Class(
-        'flex w-full items-center gap-3 rounded-xl bg-white/5 px-3 py-3 text-[15px]',
-      ),
-    ],
-    [
-      h.input([
-        h.Type('checkbox'),
-        h.Class('size-4 accent-[#2AABEE]'),
-        h.Checked(model.keepSignedIn),
-        h.AriaLabel('Keep me signed in'),
-        h.Disabled(model.status === 'Busy'),
-        h.OnClick(Message.ToggledKeepSignedIn()),
-      ]),
-      'Keep me signed in',
-    ],
+const manualApplicationFields = (model: Model, h: HtmlBuilder<Message>) =>
+  model.appCredentials === 'Manual'
+    ? h.div(
+        [h.Class('flex w-full flex-col gap-3')],
+        [
+          h.p(
+            [h.Class('tg-muted text-center text-[14px] leading-5')],
+            [
+              'Use your application credentials from my.telegram.org. A signed-in account stays in this browser.',
+            ],
+          ),
+          textField(model, h, {
+            id: 'telegram-api-id',
+            label: 'API ID',
+            value: model.apiId,
+            placeholder: 'API ID',
+            onInput: value => Message.UpdatedApiId({ value }),
+          }),
+          textField(model, h, {
+            id: 'telegram-api-hash',
+            label: 'API hash',
+            value: Redacted.value(model.apiHash),
+            placeholder: 'API hash',
+            type: 'password',
+            onInput: value =>
+              Message.UpdatedApiHash({ value: Redacted.make(value) }),
+          }),
+        ],
+      )
+    : h.empty
+
+const passkeyNote = (model: Model, h: HtmlBuilder<Message>) =>
+  model.passkeyNote
+    ? h.p(
+        [h.Role('status'), h.Class('tg-muted text-center text-[14px] leading-5')],
+        [
+          'Passkey login is not available in this client. Use the QR code or your phone number.',
+        ],
+      )
+    : h.empty
+
+const phoneLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
+  action(
+    'Log in by phone number',
+    Message.ClickedPhoneForm(),
+    disabled,
+    linkClass,
+    h,
   )
 
-const manualApplicationFields = (model: Model, h: HtmlBuilder<Message>) =>
-  h.div(
-    [h.Class('flex w-full flex-col gap-3')],
+const qrLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
+  action('Log in by QR code', Message.ClickedQrLogin(), disabled, linkClass, h)
+
+const passkeyLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
+  action('Log in by passkey', Message.ClickedPasskey(), disabled, linkClass, h)
+
+const textLink = (
+  label: string,
+  message: Message,
+  disabled: boolean,
+  h: HtmlBuilder<Message>,
+) => action(label, message, disabled, 'tg-text-link', h)
+
+const qrSteps = (h: HtmlBuilder<Message>) =>
+  h.ol(
+    [h.Class('tg-steps')],
     [
-      h.p(
-        [h.Class('text-center text-[14px] leading-5 text-[#b7b7c4]')],
-        [
-          'Use your application credentials from my.telegram.org. Accounts remain connected for this tab; reloading signs this shell out.',
-        ],
-      ),
-      textField(model, h, {
-        id: 'telegram-api-id',
-        label: 'API ID',
-        value: model.apiId,
-        placeholder: 'API ID',
-        onInput: value => Message.UpdatedApiId({ value }),
-      }),
-      textField(model, h, {
-        id: 'telegram-api-hash',
-        label: 'API hash',
-        value: Redacted.value(model.apiHash),
-        placeholder: 'API hash',
-        type: 'password',
-        onInput: value =>
-          Message.UpdatedApiHash({ value: Redacted.make(value) }),
-      }),
+      h.li([], ['Open Telegram on your phone']),
+      h.li([], ['Go to Settings → Devices → Add Device']),
+      h.li([], ['Point your phone at this screen to confirm login']),
     ],
   )
 
@@ -195,52 +206,60 @@ const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
     [h.Class('flex w-full flex-col gap-4')],
     [
       h.p(
-        [h.Class('text-center text-[15px] leading-6 text-[#b7b7c4]')],
+        [h.Class('tg-muted text-center text-[15px] leading-6')],
         ['Please confirm your country code and enter your phone number.'],
       ),
-      model.appCredentials === 'Manual'
-        ? manualApplicationFields(model, h)
-        : h.empty,
+      manualApplicationFields(model, h),
       countryPicker(model, h),
       h.div(
+        [h.Class('tg-phone')],
         [
-          h.Class(
-            'flex w-full items-center gap-2 rounded-xl border border-[#2AABEE]/70 px-3',
-          ),
-        ],
-        [
-          h.span(
-            [h.Class('shrink-0 text-[16px] text-[#2AABEE]'), h.AriaHidden(true)],
-            [dialFor(model.countryIso)],
-          ),
+          h.span([h.Class('tg-dial'), h.AriaHidden(true)], [dialFor(model.countryIso)]),
           textField(model, h, {
             id: 'telegram-phone',
             label: 'Phone number',
             value: Redacted.value(model.phone),
             placeholder: 'Phone number',
             type: 'tel',
-            className:
-              'min-w-0 flex-1 bg-transparent py-3 text-[16px] text-white outline-none placeholder:text-[#8d8d9a]',
+            className: 'tg-input tg-input-inline',
             onInput: value =>
               Message.UpdatedPhone({ value: Redacted.make(value) }),
           }),
         ],
       ),
-      keepSignedIn(model, h),
       action(
-        'Log in with phone',
+        'Next',
         Message.ClickedPhoneLogin(),
         model.status === 'Busy',
         primaryClass,
         h,
       ),
+      qrLink(model.status === 'Busy', h),
+      passkeyLink(model.status === 'Busy', h),
+      passkeyNote(model, h),
+    ],
+  )
+
+const qrEntry = (model: Model, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class('flex w-full flex-col items-center gap-4')],
+    [
+      h.p(
+        [h.Class('tg-muted text-center text-[15px] leading-6')],
+        ['Scan with Telegram app on your phone'],
+      ),
+      qrSteps(h),
+      manualApplicationFields(model, h),
       action(
-        'Log in with QR',
+        'Log in by QR code',
         Message.ClickedQrLogin(),
         model.status === 'Busy',
-        linkClass,
+        primaryClass,
         h,
       ),
+      phoneLink(model.status === 'Busy', h),
+      passkeyLink(model.status === 'Busy', h),
+      passkeyNote(model, h),
     ],
   )
 
@@ -249,7 +268,7 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
     [h.Class('flex w-full flex-col gap-4')],
     [
       h.p(
-        [h.Class('text-center text-[15px] leading-6 text-[#b7b7c4]')],
+        [h.Class('tg-muted text-center text-[15px] leading-6')],
         [
           password
             ? 'Enter your Telegram two-step verification password.'
@@ -275,59 +294,68 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
     ],
   )
 
-const headingFor = (login: Login): string => {
-  if (login._tag === 'Code') {
+const headingFor = (model: Model): string => {
+  if (model.login._tag === 'Code') {
     return 'Enter code'
   }
-  if (login._tag === 'Password') {
+  if (model.login._tag === 'Password') {
     return 'Two-step verification'
   }
-  if (login._tag === 'Qr') {
-    return 'Log in by QR code'
+  if (model.login._tag === 'Qr' || model.authEntry === 'Qr') {
+    return 'Log in by QR Code'
   }
   return 'Sign in to Telegram'
 }
 
 export const loginScreen = (model: Model, h: HtmlBuilder<Message>) => {
   const disabled = model.status === 'Busy'
+  const showLogo = model.login._tag !== 'Qr'
   return h.div(
     [h.Class('flex min-h-screen items-center justify-center px-6 py-10')],
     [
       h.section(
+        [h.Class('login-card'), h.AriaLabel('Telegram login')],
         [
-          h.Class('flex w-full max-w-[360px] flex-col items-center gap-5'),
-          h.AriaLabel('Telegram login'),
-        ],
-        [
-          logo(h),
-          h.h1(
-            [h.Class('text-center text-[28px] font-semibold tracking-tight')],
-            [headingFor(model.login)],
-          ),
+          showLogo ? logo(h) : h.empty,
+          model.login._tag === 'Qr'
+            ? h.empty
+            : h.h1([h.Class('tg-login-title')], [headingFor(model)]),
           Login.match(model.login, {
             Closed: () => h.empty,
-            Editing: () => credentialsView(model, h),
+            Editing: () =>
+              model.authEntry === 'Phone'
+                ? credentialsView(model, h)
+                : qrEntry(model, h),
             Code: () => answerView(model, false, h),
             Password: () => answerView(model, true, h),
             Qr: ({ image }) =>
               h.div(
                 [h.Class('flex w-full flex-col items-center gap-4')],
                 [
-                  h.p(
-                    [
-                      h.Class(
-                        'text-center text-[15px] leading-6 text-[#b7b7c4]',
-                      ),
-                    ],
-                    [
-                      'In Telegram on your phone, open Settings → Devices → Link Desktop Device and scan this code.',
-                    ],
-                  ),
                   h.img([
                     h.Src(image),
                     h.Alt('Telegram login QR code'),
-                    h.Class('w-64 rounded-2xl bg-white p-3'),
+                    h.Class('tg-qr'),
                   ]),
+                  h.h1([h.Class('tg-login-title')], ['Log in by QR Code']),
+                  h.p(
+                    [h.Class('tg-muted text-center text-[15px] leading-6')],
+                    ['Scan with Telegram app on your phone'],
+                  ),
+                  qrSteps(h),
+                  textLink(
+                    'Log in by phone number',
+                    Message.ClickedPhoneForm(),
+                    disabled,
+                    h,
+                  ),
+                  textLink(
+                    'Log in by passkey',
+                    Message.ClickedPasskey(),
+                    disabled,
+                    h,
+                  ),
+                  passkeyNote(model, h),
                 ],
               ),
           }),
@@ -337,7 +365,7 @@ export const loginScreen = (model: Model, h: HtmlBuilder<Message>) => {
             : h.empty,
           disabled
             ? h.p(
-                [h.Role('status'), h.Class('text-sm text-[#b7b7c4]')],
+                [h.Role('status'), h.Class('tg-muted text-sm')],
                 ['Connecting to Telegram…'],
               )
             : h.empty,
