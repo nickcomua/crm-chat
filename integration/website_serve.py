@@ -4,14 +4,15 @@
 Nix store files are dated 1970-01-01. Python's SimpleHTTPRequestHandler sends
 that as Last-Modified and answers If-Modified-Since with 304, so a browser
 keeps the previous index.html after the site is redeployed. This server never
-date-revalidates. Hashed /assets/ responses are immutable. Every other path is
-no-store. /runtime/telegram-app answers loopback clients only.
+date-revalidates. Hashed files inside the assets directory are immutable.
+A /assets/ directory URL falls back to index.html and stays no-store.
+Every other path is no-store. /runtime/telegram-app answers loopback clients
+only.
 
 CRM_CHAT_SERVE_LEGACY=1 restores the old SimpleHTTPRequestHandler behavior so
 the redeploy check can show the 304.
 """
 
-import email.utils
 import http.server
 import ipaddress
 import json
@@ -37,8 +38,41 @@ MIME = {
 }
 
 
-def cache_control(url_path):
-    if url_path.startswith("/assets/"):
+def favicon_bytes():
+    # 16x16 32-bit ICO, solid #3390ec. Browsers request /favicon.ico even when
+    # the built site has not copied one into the output yet.
+    width = 16
+    height = 16
+    xor = bytearray()
+    for _row in range(height):
+        for _column in range(width):
+            xor.extend(b"\xec\x90\x33\xff")
+    mask_row = ((width + 31) // 32) * 4
+    mask = bytes(mask_row * height)
+    header = (
+        b"\x28\x00\x00\x00"
+        + width.to_bytes(4, "little")
+        + (height * 2).to_bytes(4, "little")
+        + b"\x01\x00\x20\x00\x00\x00\x00\x00"
+        + (len(xor) + len(mask)).to_bytes(4, "little")
+        + b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    )
+    image = header + bytes(xor) + mask
+    entry = (
+        bytes((width, height, 0, 0))
+        + b"\x01\x00\x20\x00"
+        + len(image).to_bytes(4, "little")
+        + (6 + 16).to_bytes(4, "little")
+    )
+    return b"\x00\x00\x01\x00\x01\x00" + entry + image
+
+
+FAVICON = favicon_bytes()
+
+
+def cache_control(target):
+    assets = os.path.join(live_root(), "assets") + os.sep
+    if target.startswith(assets):
         return "public, max-age=31536000, immutable"
     return "no-store"
 
@@ -129,6 +163,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # If-Modified-Since is ignored on purpose. A 1970 Last-Modified would
         # otherwise 304 after a redeploy and the browser would keep the old page.
         target = file_for(self.path)
+        if target is None and path == "/favicon.ico":
+            self.send_response(200)
+            self.send_header("Content-Type", "image/x-icon")
+            self.send_header("Content-Length", str(len(FAVICON)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if head:
+                return
+            self.wfile.write(FAVICON)
+            return
         if target is None:
             self.send_response(404)
             self.send_header("Cache-Control", "no-store")
@@ -140,7 +184,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(ext, "application/octet-stream"))
         self.send_header("Content-Length", str(size))
-        self.send_header("Cache-Control", cache_control(path if path != "/" else "/index.html"))
+        self.send_header("Cache-Control", cache_control(target))
         self.end_headers()
         if head:
             return

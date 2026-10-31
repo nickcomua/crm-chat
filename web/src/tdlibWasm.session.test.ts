@@ -15,6 +15,7 @@ type Harness = {
   failSync: (error: unknown) => void
   deliverAuth: { current: boolean }
   creates: { current: number }
+  modules: { current: number }
   holdSync: () => void
   releaseSync: () => void
 }
@@ -25,6 +26,7 @@ const install = (
   options?: {
     states?: Array<Record<string, unknown>>
     mtimes?: Record<string, number>
+    absent?: Array<string>
   },
 ): Harness => {
   const syncs: Array<boolean> = []
@@ -32,8 +34,10 @@ const install = (
   const responses: Array<string> = []
   const deliverAuth = { current: false }
   const creates = { current: 0 }
+  const modules = { current: 0 }
   const states = options?.states ?? [authorization]
   const mtimes = options?.mtimes ?? {}
+  const absent = new Set(options?.absent ?? [])
   let clientId = 0
   const deliveredClients = new Set<number>()
   let syncFailure: unknown = undefined
@@ -63,8 +67,9 @@ const install = (
     }
     return responses.shift() ?? ''
   }
-  Reflect.set(globalThis, 'createTdwebModule', () =>
-    Promise.resolve({
+  Reflect.set(globalThis, 'createTdwebModule', () => {
+    modules.current += 1
+    return Promise.resolve({
       cwrap: (name: string) => {
         if (name === 'td_emscripten_create_client_id') {
           return () => {
@@ -83,6 +88,15 @@ const install = (
             const extra = parsed['@extra']
             if (typeof extra === 'string') {
               responses.push(JSON.stringify({ '@type': 'ok', '@extra': extra }))
+            }
+            if (parsed['@type'] === 'close') {
+              responses.push(
+                JSON.stringify({
+                  '@type': 'updateAuthorizationState',
+                  '@client_id': _clientId,
+                  authorization_state: { '@type': 'authorizationStateClosed' },
+                }),
+              )
             }
           }
         }
@@ -106,15 +120,25 @@ const install = (
           }
           callback(syncFailure)
         },
-        stat: (path: string) => ({
-          mode: 16895,
-          mtime: new Date(mtimes[path] ?? 0),
-        }),
+        stat: (path: string) => {
+          for (const id of absent) {
+            if (
+              path === `/tdlib/${id}/db.sqlite` ||
+              path === `/tdlib/${id}/td.binlog`
+            ) {
+              throw new Error('ENOENT')
+            }
+          }
+          return {
+            mode: 16895,
+            mtime: new Date(mtimes[path] ?? 0),
+          }
+        },
         readdir: (path: string) =>
           path === '/tdlib' ? ['.', '..', ...ids] : ['.', '..'],
       },
-    }),
-  )
+    })
+  })
   return {
     runtime: new TdWasmRuntime(),
     syncs,
@@ -124,6 +148,7 @@ const install = (
     },
     deliverAuth,
     creates,
+    modules,
     holdSync: () => {
       hold = true
     },
@@ -306,6 +331,37 @@ test('restore keeps the signed-in database and does not log another one out', as
   const sent = harness.sent.map(query => query['@type'])
   expect(sent).toContain('close')
   expect(sent).not.toContain('logOut')
+  // The closed directory's destructor must not share the next wasm instance.
+  expect(harness.modules.current).toBe(2)
+})
+
+test('restore skips a directory that has no database files', async () => {
+  vi.useFakeTimers()
+  const harness = install(
+    ['old-ready', 'empty-new'],
+    { '@type': 'authorizationStateReady' },
+    {
+      mtimes: {
+        '/tdlib/empty-new': 2_000,
+        '/tdlib/old-ready': 1_000,
+      },
+      absent: ['empty-new'],
+    },
+  )
+  harness.deliverAuth.current = true
+  let restored: Awaited<ReturnType<TdWasmRuntime['restore']>> | undefined
+  const pending = harness.runtime.restore(1, HASH).then(accounts => {
+    restored = accounts
+  })
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(restored).toHaveLength(1)
+  await pending
+  expect(restored?.[0]?.id).toBe('old-ready')
+  const sent = harness.sent.map(query => query['@type'])
+  expect(sent).not.toContain('close')
+  expect(sent).not.toContain('logOut')
+  expect(harness.creates.current).toBe(1)
+  expect(harness.modules.current).toBe(1)
 })
 
 test('a restored ready account stays signed in', async () => {

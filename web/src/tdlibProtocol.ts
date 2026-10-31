@@ -78,6 +78,11 @@ const typeName = (value: unknown): string => {
 const text = (value: unknown): string =>
   typeof value === 'string' ? value : ''
 
+// releaseModule answers in-flight queries with this when a receive trap drops
+// the wasm instance. Callers retry once; the retry waits until the new
+// instance has left Opening.
+export const RUNTIME_REOPEN = 'RUNTIME_REOPEN'
+
 export const validAccountId = (id: string): boolean =>
   id.length > 0 &&
   id.length <= 80 &&
@@ -327,6 +332,8 @@ export class TdAccount {
   chatListError: string | undefined = undefined
   previews: Array<ChatPreview> = []
   private readonly waiters: Array<() => void> = []
+  private foldersReady = false
+  private readonly folderWaiters: Array<() => void> = []
 
   constructor(
     private readonly sink: TdSink,
@@ -334,25 +341,81 @@ export class TdAccount {
   ) {}
 
   private generation = 0
+  // Ready is published only after the following receive returns. That receive
+  // has trapped in free() on a folded database, and the UI must still be in
+  // Opening so restore can wait for the reopen.
+  private readyHeld = false
 
   apply(value: unknown): void {
+    if (typeName(value) === 'updateChatFolders') {
+      this.foldersReady = true
+      for (const waiter of this.folderWaiters.splice(0)) {
+        waiter()
+      }
+    }
     if (typeName(value) !== 'updateAuthorizationState') {
       return
     }
     this.phase = phaseFromAuthorization(field(value, 'authorization_state'))
     this.generation += 1
-    for (const waiter of this.waiters.splice(0)) {
-      waiter()
+    const generation = this.generation
+    // Wake after the receive pump returns. A trap in that same pump can
+    // cancel the wake and reopen the database before the UI leaves Opening.
+    queueMicrotask(() => {
+      if (generation !== this.generation) {
+        return
+      }
+      for (const waiter of this.waiters.splice(0)) {
+        waiter()
+      }
+    })
+  }
+
+  holdWaiters(): void {
+    this.generation += 1
+  }
+
+  holdReady(): void {
+    if (this.phase._tag !== 'Ready') {
+      return
     }
+    this.readyHeld = true
+    this.holdWaiters()
+  }
+
+  releaseReady(): void {
+    if (!this.readyHeld || this.phase._tag !== 'Ready') {
+      return
+    }
+    this.readyHeld = false
+    const generation = this.generation
+    queueMicrotask(() => {
+      if (generation !== this.generation) {
+        return
+      }
+      for (const waiter of this.waiters.splice(0)) {
+        waiter()
+      }
+    })
   }
 
   private async send(query: TdQuery): Promise<unknown> {
-    const response = await this.sink.send(query)
-    const error = publicError(response)
-    if (error !== undefined) {
-      throw new Error(error)
+    const once = async () => {
+      const response = await this.sink.send(query)
+      const error = publicError(response)
+      if (error !== undefined) {
+        throw new Error(error)
+      }
+      return response
     }
-    return response
+    try {
+      return await once()
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== RUNTIME_REOPEN) {
+        throw error
+      }
+      return once()
+    }
   }
 
   private waitFor(
@@ -475,12 +538,7 @@ export class TdAccount {
     return this.step()
   }
 
-  private async loadChatIds(): Promise<Array<unknown> | undefined> {
-    await this.send({
-      '@type': 'loadChats',
-      chat_list: { '@type': 'chatListMain' },
-      limit: 100,
-    }).catch(() => undefined)
+  private async fetchChatIds(): Promise<Array<unknown> | undefined> {
     const chats = await this.send({
       '@type': 'getChats',
       chat_list: { '@type': 'chatListMain' },
@@ -495,8 +553,58 @@ export class TdAccount {
     if (chats === undefined) {
       return undefined
     }
+    this.chatListError = undefined
     const ids = field(chats, 'chat_ids')
     return Array.isArray(ids) ? ids : []
+  }
+
+  private foldersOpened(): Promise<boolean> {
+    if (this.foldersReady) {
+      return Promise.resolve(true)
+    }
+    return new Promise(resolve => {
+      const finish = (ready: boolean) => {
+        clearTimeout(timer)
+        resolve(ready)
+      }
+      const timer = setTimeout(() => {
+        const index = this.folderWaiters.indexOf(onUpdate)
+        if (index >= 0) {
+          this.folderWaiters.splice(index, 1)
+        }
+        finish(false)
+      }, 3_000)
+      const onUpdate = () => {
+        finish(true)
+      }
+      this.folderWaiters.push(onUpdate)
+    })
+  }
+
+  private async loadChatIds(): Promise<Array<unknown> | undefined> {
+    // getChats reads rows already in the database. loadChats hits the network
+    // and aborts in DialogFilterManager::get_dialog_filter_folder_ids when a
+    // filter id is not loaded yet (`dialog_filter != nullptr`). The first
+    // updateChatFolders is sent while that reload is still running, so wait
+    // it out. If the update never arrives, skip loadChats.
+    const saved = await this.fetchChatIds()
+    if (saved !== undefined && saved.length > 0) {
+      this.chatListError = undefined
+      return saved
+    }
+    const folders = await this.foldersOpened()
+    if (!folders) {
+      return saved
+    }
+    await new Promise<void>(resolve => {
+      setTimeout(resolve, 1_000)
+    })
+    await this.send({
+      '@type': 'loadChats',
+      chat_list: { '@type': 'chatListMain' },
+      limit: 100,
+    }).catch(() => undefined)
+    return this.fetchChatIds()
   }
 
   async readAccount(): Promise<Account> {
@@ -602,12 +710,10 @@ export class TdAccount {
   }
 
   async release(): Promise<void> {
-    const closed = this.waitFor(
-      phase => phase._tag === 'Closed' || phase._tag === 'Failed',
-      DISCARD_TIMEOUT,
-    ).catch(() => undefined)
+    // Do not receive after close. The destructor traps on the next
+    // td_receive ("memory access out of bounds", scheduler has_guard_).
+    // The files stay put; drop() does not log out.
     await this.send({ '@type': 'close' }).catch(() => undefined)
-    await closed
     if (this.sink.drop !== undefined) {
       await this.sink.drop()
     }

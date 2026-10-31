@@ -123,6 +123,13 @@ def main():
                 headers.get("Cache-Control") == "public, max-age=31536000, immutable",
                 "asset cache %s" % headers.get("Cache-Control"),
             )
+            status, headers, body = fetch(base + "/assets/")
+            expect(status == 200 and b"index-NEW.js" in body, "assets directory body")
+            expect(headers.get("Cache-Control") == "no-store", "assets directory cache %s" % headers.get("Cache-Control"))
+            status, headers, body = fetch(base + "/favicon.ico")
+            expect(status == 200 and len(body) > 0, "favicon status %s" % status)
+            expect(headers.get("Cache-Control") == "no-store", "favicon cache")
+            expect(headers.get("Content-Type") == "image/x-icon", "favicon type")
             status, headers, body = fetch(base + "/runtime/telegram-app")
             expect(status == 200, "runtime status %s" % status)
             expect(headers.get("Cache-Control") == "no-store", "runtime cache")

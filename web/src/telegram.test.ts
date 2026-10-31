@@ -112,6 +112,7 @@ describe('TDLib browser protocol', () => {
       },
       { response: { '@type': 'chats', chat_ids: [] } },
     ])
+    unlocked.account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
     unlocked.account.apply(authorization('authorizationStateWaitPassword'))
     await expect(
       unlocked.account.submitPassword('secret'),
@@ -167,6 +168,7 @@ describe('TDLib browser protocol', () => {
       { response: { '@type': 'user', first_name: 'Ada' } },
       { response: { '@type': 'chats', chat_ids: [] } },
     ])
+    retry.account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
     retry.account.apply(authorization('authorizationStateWaitCode'))
     await expect(retry.account.submitCode('bad')).rejects.toThrow(
       'PHONE_CODE_INVALID',
@@ -185,7 +187,6 @@ describe('TDLib browser protocol', () => {
     expect(chatKind('chatTypeUnknown', false)).toBeUndefined()
     const { account } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },
-      { response: { '@type': 'ok' } },
       { response: { '@type': 'chats', chat_ids: [7, 8, 9] } },
       {
         response: {
@@ -223,7 +224,6 @@ describe('TDLib browser protocol', () => {
   test('keeps a last-message preview beside the desktop chat shape', async () => {
     const { account } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },
-      { response: { '@type': 'ok' } },
       { response: { '@type': 'chats', chat_ids: [7] } },
       {
         response: {
@@ -260,10 +260,35 @@ describe('TDLib browser protocol', () => {
     ])
   })
 
+  test('loads chats only after chat folders arrive', async () => {
+    const { account, sent } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'chats', chat_ids: [] } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [7] } },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Ada',
+          type: { '@type': 'chatTypePrivate' },
+        },
+      },
+    ])
+    const pending = account.readAccount()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sent.map(query => query['@type'])).toEqual(['getMe', 'getChats'])
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
+    await expect(pending).resolves.toMatchObject({
+      chats: [{ id: 'one:7', title: 'Ada', kind: 'Dialog' }],
+    })
+    expect(sent.map(query => query['@type'])).toContain('loadChats')
+  })
+
   test('retries the chat list once after a timed-out load', async () => {
     const { account, sent } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },
-      { response: { '@type': 'ok' } },
       { response: { '@type': 'error', message: 'REQUEST_FAILED' } },
       { response: { '@type': 'ok' } },
       { response: { '@type': 'chats', chat_ids: [7] } },
@@ -285,6 +310,7 @@ describe('TDLib browser protocol', () => {
         },
       },
     ])
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
     await expect(account.readAccount()).resolves.toMatchObject({
       chats: [{ id: 'one:7', title: 'Ada', kind: 'Dialog' }],
     })
@@ -310,7 +336,6 @@ describe('TDLib browser protocol', () => {
     })
     const { account } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },
-      { response: { '@type': 'ok' } },
       { response: { '@type': 'chats', chat_ids: [1, 2, 3, 4] } },
       chat(1, {
         '@type': 'messagePhoto',
@@ -332,9 +357,11 @@ describe('TDLib browser protocol', () => {
   test('an authorized session stays signed in when the chat list fails', async () => {
     const { account, sent } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'error', message: 'CHAT_LIST_FAILED' } },
       { response: { '@type': 'ok' } },
       { response: { '@type': 'error', message: 'CHAT_LIST_FAILED' } },
     ])
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
     account.apply(authorization('authorizationStateReady'))
     await expect(account.poll()).resolves.toEqual({
       _tag: 'Authorized',
@@ -370,6 +397,7 @@ describe('TDLib browser protocol', () => {
       },
     }
     const account = new TdAccount(sink, 'acct')
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
     account.apply(authorization('authorizationStateReady'))
     openAccount.mockResolvedValue(account)
     await expect(beginLogin('acct', 1, 'hash', '+100', false)).resolves.toEqual(

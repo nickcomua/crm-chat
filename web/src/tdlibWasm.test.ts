@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
+import {
+  type Pointer,
+  type Snapshot,
+  assignSnapshot,
+  chooseSnapshot,
+  usableSnapshot,
+} from './tdlibSnapshot'
 import { TdWasmRuntime, nextReceiveDelay } from './tdlibWasm'
 
 type Call = { name: string; query?: string }
@@ -59,6 +66,7 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, 'createTdwebModule')
+  Reflect.deleteProperty(globalThis, 'crmChatSeal')
 })
 
 describe('TDLib wasm receive delay', () => {
@@ -131,7 +139,7 @@ describe('TDLib wasm receive delay', () => {
 })
 
 describe('TDLib wasm log silence', () => {
-  test('empties the log stream before a client or setTdlibParameters', async () => {
+  test('lowers log verbosity before a client or setTdlibParameters', async () => {
     vi.useFakeTimers()
     const { calls } = installModule(() => ok)
     const runtime = new TdWasmRuntime()
@@ -149,18 +157,18 @@ describe('TDLib wasm log silence', () => {
     expect(
       executed.some(query => query.includes('"new_verbosity_level":0')),
     ).toBe(true)
-    expect(executed.some(query => query.includes('logStreamEmpty'))).toBe(true)
+    // An empty stream aborts inside TDLib's logger when a warning is emitted.
+    expect(executed.some(query => query.includes('logStreamDefault'))).toBe(
+      true,
+    )
+    expect(executed.some(query => query.includes('logStreamEmpty'))).toBe(false)
     expect(executed.some(query => query.includes('setTdlibParameters'))).toBe(
       false,
     )
     const verbosityAt = executed.findIndex(query =>
       query.includes('setLogVerbosityLevel'),
     )
-    const streamAt = executed.findIndex(query =>
-      query.includes('logStreamEmpty'),
-    )
     expect(verbosityAt).toBeGreaterThanOrEqual(0)
-    expect(streamAt).toBeGreaterThan(verbosityAt)
   })
 
   test('does not create a client when log silence fails', async () => {
@@ -304,5 +312,502 @@ describe('TDLib wasm log silence', () => {
     const pumped = receives
     await vi.advanceTimersByTimeAsync(50)
     expect(receives).toBe(pumped)
+  })
+})
+
+describe('TDLib wasm snapshots', () => {
+  test('a save copies bytes and the next open does not sync the live filesystem', async () => {
+    vi.useFakeTimers()
+    const syncs: Array<boolean> = []
+    const written: Array<{ path: string; first: number }> = []
+    const records = new Map<string, Snapshot>()
+    let pointer: Pointer | undefined
+    const snapshots = {
+      commit: async (snapshot: Snapshot) => {
+        if (!usableSnapshot(snapshot)) {
+          throw new Error(
+            'could not sync the TDLib database: snapshot is incomplete',
+          )
+        }
+        const assigned = assignSnapshot(pointer, snapshot)
+        records.set(assigned.stored.id, assigned.stored)
+        pointer = assigned.pointer
+        if (assigned.drop !== undefined) {
+          records.delete(assigned.drop)
+        }
+      },
+      load: async () =>
+        chooseSnapshot(
+          pointer?.current === undefined
+            ? undefined
+            : records.get(pointer.current),
+          pointer?.previous === undefined
+            ? undefined
+            : records.get(pointer.previous),
+        ),
+      legacyDirectories: async () => [],
+    }
+    const database = new Uint8Array(512)
+    const magic = 'SQLite format 3\u0000'
+    for (let index = 0; index < magic.length; index += 1) {
+      database[index] = magic.charCodeAt(index)
+    }
+    database[16] = 0x02
+    database[17] = 0x00
+    database[18] = 2
+    const filesystem = {
+      mkdir: () => undefined,
+      mount: () => undefined,
+      syncfs: (populate: boolean, callback: (error: unknown) => void) => {
+        syncs.push(populate)
+        callback(null)
+      },
+      readdir: (path: string) =>
+        path === '/tdlib' ? ['.', '..', 'db.sqlite'] : ['.', '..'],
+      stat: () => ({ mode: 33188, mtime: new Date(5) }),
+      readFile: () => {
+        throw new Error('readFile opens the database TDLib is using')
+      },
+      lookupPath: () => ({
+        node: {
+          contents: database,
+          usedBytes: database.length,
+          mode: 33188,
+          timestamp: 5,
+        },
+      }),
+      writeFile: (path: string, data: Uint8Array) => {
+        written.push({ path, first: data[0] ?? 0 })
+      },
+      unlink: () => undefined,
+      filesystems: { IDBFS: {} },
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    const cwrap = (name: string) => {
+      if (name === 'td_emscripten_execute') {
+        return () => ok
+      }
+      if (name === 'td_emscripten_create_client_id') {
+        return () => 7
+      }
+      if (name === 'td_emscripten_send') {
+        return () => undefined
+      }
+      if (name === 'td_emscripten_receive') {
+        return () => ''
+      }
+      throw new Error(name)
+    }
+    Reflect.set(globalThis, 'createTdwebModule', () =>
+      Promise.resolve({ cwrap, FS: filesystem }),
+    )
+    const first = new TdWasmRuntime(snapshots)
+    await first.open('acct', 1, 'a'.repeat(32))
+    expect(syncs).toEqual([true])
+    await first.sync()
+    expect(syncs).toEqual([true])
+    const saved = database[0] ?? 0
+    database[0] = 0
+    const second = new TdWasmRuntime(snapshots)
+    await second.open('acct', 1, 'a'.repeat(32))
+    expect(syncs).toEqual([true])
+    expect(written).toEqual([{ path: '/tdlib/db.sqlite', first: saved }])
+  })
+
+  test('a closed save does not pump receive again', async () => {
+    vi.useFakeTimers()
+    const database = new Uint8Array(512)
+    const magic = 'SQLite format 3\u0000'
+    for (let index = 0; index < magic.length; index += 1) {
+      database[index] = magic.charCodeAt(index)
+    }
+    database[16] = 0x02
+    database[17] = 0x00
+    database[18] = 2
+    let closeExtra = ''
+    let delivered = false
+    let receives = 0
+    const filesystem = {
+      mkdir: () => undefined,
+      mount: () => undefined,
+      syncfs: (_populate: boolean, callback: (error: unknown) => void) => {
+        callback(null)
+      },
+      readdir: (path: string) =>
+        path === '/tdlib' ? ['.', '..', 'db.sqlite'] : ['.', '..'],
+      stat: () => ({ mode: 33188, mtime: new Date(5) }),
+      readFile: () => database,
+      writeFile: () => undefined,
+      unlink: () => undefined,
+      filesystems: { IDBFS: {} },
+    }
+    const snapshots = {
+      commit: async () => undefined,
+      load: async () => undefined,
+      legacyDirectories: async () => [],
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    const cwrap = (name: string) => {
+      if (name === 'td_emscripten_execute') {
+        return () => ok
+      }
+      if (name === 'td_emscripten_create_client_id') {
+        return () => 7
+      }
+      if (name === 'td_emscripten_send') {
+        return (_clientId: unknown, query: unknown) => {
+          const text = String(query)
+          if (text.includes('"@type":"close"')) {
+            const parsed: unknown = JSON.parse(text)
+            if (typeof parsed === 'object' && parsed !== null) {
+              const extra = Reflect.get(parsed, '@extra')
+              closeExtra = typeof extra === 'string' ? extra : ''
+            }
+          }
+        }
+      }
+      if (name === 'td_emscripten_receive') {
+        return () => {
+          receives += 1
+          if (closeExtra !== '' && !delivered) {
+            delivered = true
+            return JSON.stringify({
+              '@type': 'updateAuthorizationState',
+              '@client_id': 7,
+              '@extra': closeExtra,
+              authorization_state: { '@type': 'authorizationStateClosing' },
+            })
+          }
+          return ''
+        }
+      }
+      throw new Error(name)
+    }
+    Reflect.set(globalThis, 'createTdwebModule', () =>
+      Promise.resolve({ cwrap, FS: filesystem }),
+    )
+    const runtime = new TdWasmRuntime(snapshots)
+    await runtime.open('acct', 1, 'a'.repeat(32))
+    const sealing = runtime.seal()
+    for (let step = 0; step < 6; step += 1) {
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    await sealing
+    const settled = receives
+    // The receive that returns empty runs the destructor. One more traps.
+    expect(delivered).toBe(true)
+    expect(settled).toBe(2)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(receives).toBe(settled)
+  })
+
+  test('a destructor trap keeps the pre-close snapshot and does not log a receive failure', async () => {
+    vi.useFakeTimers()
+    const failed: Array<string> = []
+    const notes: Array<string> = []
+    vi.spyOn(console, 'error').mockImplementation(message => {
+      failed.push(String(message))
+    })
+    vi.spyOn(console, 'info').mockImplementation(message => {
+      notes.push(String(message))
+    })
+    const database = new Uint8Array(512)
+    const magic = 'SQLite format 3\u0000'
+    for (let index = 0; index < magic.length; index += 1) {
+      database[index] = magic.charCodeAt(index)
+    }
+    database[16] = 0x02
+    database[17] = 0x00
+    database[18] = 2
+    let closeExtra = ''
+    let delivered = false
+    let committed: Uint8Array | undefined
+    const filesystem = {
+      mkdir: () => undefined,
+      mount: () => undefined,
+      syncfs: (_populate: boolean, callback: (error: unknown) => void) => {
+        callback(null)
+      },
+      readdir: (path: string) =>
+        path === '/tdlib' ? ['.', '..', 'db.sqlite'] : ['.', '..'],
+      stat: () => ({ mode: 33188, mtime: new Date(5) }),
+      readFile: () => new Uint8Array(database),
+      writeFile: () => undefined,
+      unlink: () => undefined,
+      filesystems: { IDBFS: {} },
+    }
+    const snapshots = {
+      commit: async (snapshot: { files: Array<{ bytes: Uint8Array }> }) => {
+        committed = snapshot.files[0]?.bytes
+      },
+      load: async () => undefined,
+      legacyDirectories: async () => [],
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    const cwrap = (name: string) => {
+      if (name === 'td_emscripten_execute') {
+        return () => ok
+      }
+      if (name === 'td_emscripten_create_client_id') {
+        return () => 7
+      }
+      if (name === 'td_emscripten_send') {
+        return (_clientId: unknown, query: unknown) => {
+          const text = String(query)
+          if (text.includes('"@type":"close"')) {
+            const parsed: unknown = JSON.parse(text)
+            if (typeof parsed === 'object' && parsed !== null) {
+              const extra = Reflect.get(parsed, '@extra')
+              closeExtra = typeof extra === 'string' ? extra : ''
+            }
+          }
+        }
+      }
+      if (name === 'td_emscripten_receive') {
+        return () => {
+          if (closeExtra !== '' && !delivered) {
+            delivered = true
+            return JSON.stringify({
+              '@type': 'updateAuthorizationState',
+              '@client_id': 7,
+              '@extra': closeExtra,
+              authorization_state: { '@type': 'authorizationStateClosing' },
+            })
+          }
+          if (closeExtra !== '') {
+            database[0] = 0
+            throw new Error('memory access out of bounds')
+          }
+          return ''
+        }
+      }
+      throw new Error(name)
+    }
+    Reflect.set(globalThis, 'createTdwebModule', () =>
+      Promise.resolve({ cwrap, FS: filesystem }),
+    )
+    const runtime = new TdWasmRuntime(snapshots)
+    await runtime.open('acct', 1, 'a'.repeat(32))
+    await runtime.seal()
+    expect(delivered).toBe(true)
+    expect(
+      failed.filter(line => line.startsWith('tdlib receive failed')),
+    ).toEqual([])
+    expect(notes).toContain('tdlib close stopped')
+    expect(committed?.[0]).toBe(magic.charCodeAt(0))
+    expect(database[0]).toBe(0)
+  })
+})
+
+describe('TDLib wasm reopen', () => {
+  test('a trap on the receive after Ready reopens once without logging', async () => {
+    vi.useFakeTimers()
+    const failed: Array<string> = []
+    const notes: Array<string> = []
+    vi.spyOn(console, 'error').mockImplementation(message => {
+      failed.push(String(message))
+    })
+    vi.spyOn(console, 'info').mockImplementation(message => {
+      notes.push(String(message))
+    })
+    let modules = 0
+    const ready = JSON.stringify({
+      '@type': 'updateAuthorizationState',
+      '@client_id': 7,
+      authorization_state: { '@type': 'authorizationStateReady' },
+    })
+    const receiveFor = (moduleIndex: number) => {
+      let step = 0
+      return () => {
+        step += 1
+        if (moduleIndex === 1) {
+          if (step === 1) {
+            return ready
+          }
+          if (step === 2) {
+            return ''
+          }
+          throw new Error('memory access out of bounds')
+        }
+        if (moduleIndex >= 3) {
+          throw new Error('memory access out of bounds')
+        }
+        if (step === 1) {
+          return ready
+        }
+        if (step === 2 || step === 3) {
+          return ''
+        }
+        throw new Error('memory access out of bounds')
+      }
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    Reflect.set(globalThis, 'createTdwebModule', () => {
+      modules += 1
+      const receive = receiveFor(modules)
+      return Promise.resolve({
+        cwrap: (name: string) => {
+          if (name === 'td_emscripten_execute') {
+            return () => ok
+          }
+          if (name === 'td_emscripten_create_client_id') {
+            return () => 7
+          }
+          if (name === 'td_emscripten_send') {
+            return () => undefined
+          }
+          if (name === 'td_emscripten_receive') {
+            return receive
+          }
+          throw new Error(name)
+        },
+        FS: {
+          mkdir: () => undefined,
+          mount: () => undefined,
+          syncfs: (_populate: boolean, callback: (error: unknown) => void) => {
+            callback(null)
+          },
+          readdir: () => [],
+          filesystems: { IDBFS: {} },
+        },
+      })
+    })
+    const runtime = new TdWasmRuntime()
+    const account = await runtime.open('one', 1, 'a'.repeat(32))
+    let opened: string | undefined
+    const pending = account.untilOpened(30_000).then(phase => {
+      opened = phase._tag
+    })
+    const receiveFailures = () =>
+      failed.filter(line => line.startsWith('tdlib receive failed'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(account.phase._tag).toBe('Ready')
+    expect(opened).toBeUndefined()
+    expect(modules).toBe(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(receiveFailures()).toEqual([])
+    expect(notes.filter(line => line.startsWith('tdlib reopen'))).toEqual([
+      'tdlib reopen without growing',
+    ])
+    expect(modules).toBe(2)
+    expect(account.phase._tag).toBe('Opening')
+    expect(opened).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(account.phase._tag).toBe('Ready')
+    expect(opened).toBeUndefined()
+    expect(receiveFailures()).toEqual([])
+    await vi.advanceTimersByTimeAsync(100)
+    await pending
+    expect(opened).toBe('Ready')
+    expect(receiveFailures()).toEqual([])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(modules).toBe(3)
+    expect(notes.filter(line => line.startsWith('tdlib reopen'))).toEqual([
+      'tdlib reopen without growing',
+      'tdlib reopen',
+    ])
+    expect(receiveFailures()).toHaveLength(1)
+  })
+
+  test('a trap after Ready was published reopens twice on the same files', async () => {
+    vi.useFakeTimers()
+    const failed: Array<string> = []
+    const notes: Array<string> = []
+    vi.spyOn(console, 'error').mockImplementation(message => {
+      failed.push(String(message))
+    })
+    vi.spyOn(console, 'info').mockImplementation(message => {
+      notes.push(String(message))
+    })
+    let modules = 0
+    const ready = JSON.stringify({
+      '@type': 'updateAuthorizationState',
+      '@client_id': 7,
+      authorization_state: { '@type': 'authorizationStateReady' },
+    })
+    const receiveFor = (moduleIndex: number) => {
+      let step = 0
+      return () => {
+        step += 1
+        if (moduleIndex >= 3) {
+          throw new Error('memory access out of bounds')
+        }
+        if (step === 1) {
+          return ready
+        }
+        if (step === 2 || step === 3) {
+          return ''
+        }
+        throw new Error('memory access out of bounds')
+      }
+    }
+    vi.spyOn(document, 'querySelector').mockReturnValue(
+      document.createElement('script'),
+    )
+    Reflect.set(globalThis, 'createTdwebModule', () => {
+      modules += 1
+      const receive = receiveFor(modules)
+      return Promise.resolve({
+        cwrap: (name: string) => {
+          if (name === 'td_emscripten_execute') {
+            return () => ok
+          }
+          if (name === 'td_emscripten_create_client_id') {
+            return () => 7
+          }
+          if (name === 'td_emscripten_send') {
+            return () => undefined
+          }
+          if (name === 'td_emscripten_receive') {
+            return receive
+          }
+          throw new Error(name)
+        },
+        FS: {
+          mkdir: () => undefined,
+          mount: () => undefined,
+          syncfs: (_populate: boolean, callback: (error: unknown) => void) => {
+            callback(null)
+          },
+          readdir: () => [],
+          filesystems: { IDBFS: {} },
+        },
+      })
+    })
+    const runtime = new TdWasmRuntime()
+    const account = await runtime.open('one', 1, 'a'.repeat(32))
+    let opened: string | undefined
+    const pending = account.untilOpened(30_000).then(phase => {
+      opened = phase._tag
+    })
+    const receiveFailures = () =>
+      failed.filter(line => line.startsWith('tdlib receive failed'))
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(100)
+    await pending
+    expect(opened).toBe('Ready')
+    expect(modules).toBe(1)
+    expect(receiveFailures()).toEqual([])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(receiveFailures()).toEqual([])
+    expect(notes.filter(line => line.startsWith('tdlib reopen'))).toEqual([
+      'tdlib reopen',
+    ])
+    expect(modules).toBe(2)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(notes.filter(line => line.startsWith('tdlib reopen'))).toEqual([
+      'tdlib reopen',
+      'tdlib reopen',
+    ])
+    expect(modules).toBe(3)
+    expect(receiveFailures()).toHaveLength(1)
   })
 })

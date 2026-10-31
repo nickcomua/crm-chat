@@ -12,6 +12,543 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
+// The wasm glue is `var createTdwebModule = factory`. Its parameter has the
+// same name, so `createTdwebModule.ready.FS` is the caller's module object,
+// not a property of the factory. Install this before the page loads the glue.
+const captureTdlibFilesystem = () => {
+  const keep = filesystem => {
+    if (
+      filesystem !== undefined &&
+      filesystem !== null &&
+      typeof filesystem.lookupPath === 'function' &&
+      typeof filesystem.readdir === 'function'
+    ) {
+      Reflect.set(globalThis, '__crmChatFs', filesystem)
+    }
+  }
+  const wrap = factory => {
+    if (typeof factory !== 'function' || factory.__crmWrapped === true) {
+      return factory
+    }
+    const wrapped = function (config) {
+      const result = factory.call(this, config)
+      const ready = config === undefined || config === null ? undefined : config.ready
+      if (ready !== undefined && ready !== null) {
+        keep(ready.FS)
+      }
+      const remember = value => {
+        if (value === undefined || value === null) {
+          return
+        }
+        keep(value.FS)
+      }
+      if (result !== undefined && result !== null && typeof result.then === 'function') {
+        result.then(remember, () => undefined)
+      } else {
+        remember(result)
+      }
+      return result
+    }
+    wrapped.__crmWrapped = true
+    return wrapped
+  }
+  let current
+  Object.defineProperty(globalThis, 'createTdwebModule', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return current
+    },
+    set(value) {
+      current = wrap(value)
+    },
+  })
+}
+
+// Runs inside the page. Copies MEMFS without opening the database, then stores
+// that copy as the snapshot the new bundle restores. An idle copy can be a
+// short database that still looks stable, and the next process abort()s on it.
+// Keep the copy when it has stopped changing and the last WAL commit covers
+// the whole database file. A short file opens as a new login or abort()s.
+const plantLiveSnapshot = async () => {
+  const hooked = Reflect.get(globalThis, '__crmChatFs')
+  const factory = Reflect.get(globalThis, 'createTdwebModule')
+  const fromFactory =
+    typeof factory === 'function' ? Reflect.get(factory.ready ?? {}, 'FS') : undefined
+  const fs = hooked ?? fromFactory
+  if (
+    fs === undefined ||
+    typeof fs.readdir !== 'function' ||
+    typeof fs.lookupPath !== 'function'
+  ) {
+    return {
+      ok: false,
+      reason: typeof factory === 'function' ? 'no filesystem' : 'no factory',
+      files: 0,
+      detail: '',
+    }
+  }
+  const collect = () => {
+  const files = []
+  const visit = (path, depth) => {
+    if (depth > 6) {
+      return
+    }
+    let names = []
+    try {
+      names = fs.readdir(path)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      if (name === '.' || name === '..' || String(name).endsWith('-shm')) {
+        continue
+      }
+      const child = `${path}/${name}`
+      let node
+      try {
+        node = fs.lookupPath(child).node
+      } catch {
+        continue
+      }
+      if (node === undefined || node === null) {
+        continue
+      }
+      const mode = typeof node.mode === 'number' ? node.mode : 33188
+      if ((mode & 61440) === 16384) {
+        visit(child, depth + 1)
+        continue
+      }
+      const contents = node.contents
+      let copy
+      if (contents instanceof Uint8Array) {
+        const used = typeof node.usedBytes === 'number' ? node.usedBytes : contents.length
+        copy = new Uint8Array(used)
+        copy.set(contents.subarray(0, Math.min(used, contents.length)))
+      } else if (
+        contents !== undefined &&
+        contents !== null &&
+        typeof contents !== 'string' &&
+        typeof contents.length === 'number'
+      ) {
+        const raw = new Uint8Array(contents)
+        const used = typeof node.usedBytes === 'number' ? node.usedBytes : raw.length
+        const view = raw.subarray(0, Math.min(used, raw.length))
+        copy = new Uint8Array(view.length)
+        copy.set(view)
+      } else {
+        continue
+      }
+      files.push({
+        path: child,
+        bytes: copy,
+        mode,
+        mtime: typeof node.timestamp === 'number' ? node.timestamp : 0,
+      })
+    }
+  }
+  visit('/tdlib', 0)
+  return files
+  }
+  const detailOf = list => {
+    const dirs = new Set(
+      list.map(file => file.path.slice(0, file.path.lastIndexOf('/'))),
+    )
+    const names = list.map(
+      file => `${file.path.split('/').pop()}:${file.bytes.length}`,
+    )
+    return `dirs=${dirs.size} ${names.join(',')}`
+  }
+  const sqliteBytes = list =>
+    list.reduce(
+      (total, file) =>
+        file.path.endsWith('.sqlite') && !file.path.endsWith('.sqlite-wal')
+          ? total + file.bytes.length
+          : total,
+      0,
+    )
+  const digestOf = list => {
+    let hash = 2166136261
+    const ordered = [...list].sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+    )
+    for (const file of ordered) {
+      hash = Math.imul(hash ^ file.bytes.length, 16777619)
+      for (let index = 0; index < file.bytes.length; index += 1) {
+        hash = Math.imul(hash ^ (file.bytes[index] ?? 0), 16777619)
+      }
+    }
+    return hash >>> 0
+  }
+  // The chat list can be on screen while MEMFS still holds the pre-authorization
+  // database. A short salt-matched WAL prefix is that image: checksum-valid,
+  // then the next process opens it as WaitPhoneNumber. Keep waiting for a
+  // longer prefix. 64 sits between the prefix that came back as a new login
+  // and the ones that restored the chat list.
+  function saltPrefixShort(list) {
+    const minFrames = 64
+    const readBe = (bytes, offset) => {
+      if (bytes.length < offset + 4) {
+        return 0
+      }
+      return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false)
+    }
+    const databases = list.filter(
+      file => file.path.endsWith('.sqlite') && !file.path.endsWith('.sqlite-wal'),
+    )
+    const paths = new Map(list.map(file => [file.path, file.bytes]))
+    for (const file of databases) {
+      let magic = ''
+      for (let index = 0; index < 16 && index < file.bytes.length; index += 1) {
+        magic += String.fromCharCode(file.bytes[index] ?? 0)
+      }
+      if (magic === 'SQLite format 3\u0000') {
+        continue
+      }
+      const wal = paths.get(`${file.path}-wal`)
+      if (wal === undefined || wal.length < 32) {
+        continue
+      }
+      if (
+        wal[0] !== 0x37 ||
+        wal[1] !== 0x7f ||
+        wal[2] !== 0x06 ||
+        (wal[3] !== 0x82 && wal[3] !== 0x83)
+      ) {
+        continue
+      }
+      const littleWords = wal[3] === 0x82
+      const page = readBe(wal, 8)
+      if (page < 512 || page > 65536 || (page & (page - 1)) !== 0) {
+        continue
+      }
+      const checksum = (offset, length, s0, s1) => {
+        let first = s0
+        let second = s1
+        const view = new DataView(wal.buffer, wal.byteOffset + offset, length)
+        for (let index = 0; index < length; index += 8) {
+          const left = view.getUint32(index, littleWords)
+          const right = view.getUint32(index + 4, littleWords)
+          first = (first + left + second) >>> 0
+          second = (second + right + first) >>> 0
+        }
+        return [first, second]
+      }
+      const header = checksum(0, 24, 0, 0)
+      if (header[0] !== readBe(wal, 24) || header[1] !== readBe(wal, 28)) {
+        continue
+      }
+      const salt1 = readBe(wal, 16)
+      const salt2 = readBe(wal, 20)
+      let sum0 = header[0]
+      let sum1 = header[1]
+      let frames = 0
+      let stop = 'end'
+      const frame = 24 + page
+      for (let offset = 32; offset + frame <= wal.length; offset += frame) {
+        if (readBe(wal, offset + 8) !== salt1 || readBe(wal, offset + 12) !== salt2) {
+          stop = 'salt'
+          break
+        }
+        const covered = checksum(offset, 8, sum0, sum1)
+        const pageSum = checksum(offset + 24, page, covered[0], covered[1])
+        if (
+          pageSum[0] !== readBe(wal, offset + 16) ||
+          pageSum[1] !== readBe(wal, offset + 20)
+        ) {
+          stop = 'checksum'
+          break
+        }
+        sum0 = pageSum[0]
+        sum1 = pageSum[1]
+        frames += 1
+      }
+      if (stop === 'salt' && frames < minFrames) {
+        return true
+      }
+    }
+    return false
+  }
+  let files = collect()
+  const firstSize = sqliteBytes(files)
+  let digest = digestOf(files)
+  let stableSince = Date.now()
+  const started = Date.now()
+  const stableNeed = 1_500
+  const minHold = 3_000
+  // The first stable copy can still be the pre-authorization database. Keep
+  // the newest copy that stays still, and do not stop the window early.
+  let accepted
+  while (Date.now() - started < 15_000) {
+    await new Promise(resolve => {
+      setTimeout(resolve, 400)
+    })
+    const again = collect()
+    const nextDigest = digestOf(again)
+    if (nextDigest !== digest) {
+      files = again
+      digest = nextDigest
+      stableSince = Date.now()
+      continue
+    }
+    if (
+      Date.now() - started >= minHold &&
+      Date.now() - stableSince >= stableNeed &&
+      !saltPrefixShort(files)
+    ) {
+      accepted = files
+    }
+  }
+  if (accepted !== undefined) {
+    files = accepted
+  } else if (
+    Date.now() - stableSince < stableNeed ||
+    Date.now() - started < minHold
+  ) {
+    return {
+      ok: false,
+      reason: 'short',
+      files: files.length,
+      detail: `${detailOf(files)} from=${firstSize}`,
+    }
+  }
+  const databases = files.filter(
+    file => file.path.endsWith('.sqlite') && !file.path.endsWith('.sqlite-wal'),
+  )
+  if (databases.length === 0) {
+    return { ok: false, reason: 'no database', files: files.length, detail: detailOf(files) }
+  }
+  const readU32 = (bytes, offset, little) => {
+    if (bytes.length < offset + 4) {
+      return 0
+    }
+    return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, little)
+  }
+  const pageOf = bytes => {
+    if (bytes.length < 100) {
+      return undefined
+    }
+    let magic = ''
+    for (let index = 0; index < 16; index += 1) {
+      magic += String.fromCharCode(bytes[index] ?? 0)
+    }
+    if (magic !== 'SQLite format 3\u0000') {
+      return undefined
+    }
+    const raw = ((bytes[16] ?? 0) << 8) | (bytes[17] ?? 0)
+    const page = raw === 1 ? 65536 : raw
+    if (page < 512 || page > 65536 || (page & (page - 1)) !== 0 || bytes.length % page !== 0) {
+      return undefined
+    }
+    return page
+  }
+  const walLittle = bytes => {
+    if (bytes.length < 32) {
+      return undefined
+    }
+    if (
+      bytes[0] === 0x37 &&
+      bytes[1] === 0x7f &&
+      bytes[2] === 0x06 &&
+      (bytes[3] === 0x82 || bytes[3] === 0x83)
+    ) {
+      return false
+    }
+    if (
+      (bytes[0] === 0x82 || bytes[0] === 0x83) &&
+      bytes[1] === 0x06 &&
+      bytes[2] === 0x7f &&
+      bytes[3] === 0x37
+    ) {
+      return true
+    }
+    return undefined
+  }
+  const walOk = (wal, page) => {
+    if (wal.length === 0) {
+      return true
+    }
+    const little = walLittle(wal)
+    if (little === undefined || readU32(wal, 8, little) !== page) {
+      return false
+    }
+    const body = wal.length - 32
+    return body >= 0 && body % (24 + page) === 0
+  }
+  // Header fields are big-endian. Magic 0x377f0682 checksums little-endian
+  // words, and 0x377f0683 checksums big-endian words. The last commit's page
+  // count has to match the database file or the next process cannot replay it.
+  const walCommitPages = (wal, page) => {
+    if (wal.length < 32 || wal[0] !== 0x37 || wal[1] !== 0x7f || wal[2] !== 0x06) {
+      return undefined
+    }
+    const littleWords = wal[3] === 0x82
+    if (wal[3] !== 0x82 && wal[3] !== 0x83) {
+      return undefined
+    }
+    const readBe = offset => readU32(wal, offset, false)
+    const checksum = (offset, length, s0, s1) => {
+      let first = s0
+      let second = s1
+      const view = new DataView(wal.buffer, wal.byteOffset + offset, length)
+      for (let index = 0; index < length; index += 8) {
+        const left = view.getUint32(index, littleWords)
+        const right = view.getUint32(index + 4, littleWords)
+        first = (first + left + second) >>> 0
+        second = (second + right + first) >>> 0
+      }
+      return [first, second]
+    }
+    const header = checksum(0, 24, 0, 0)
+    if (header[0] !== readBe(24) || header[1] !== readBe(28)) {
+      return undefined
+    }
+    const salt1 = readBe(16)
+    const salt2 = readBe(20)
+    let sum0 = header[0]
+    let sum1 = header[1]
+    let commit = 0
+    let frames = 0
+    let stop = 'end'
+    const frame = 24 + page
+    for (let offset = 32; offset + frame <= wal.length; offset += frame) {
+      if (readBe(offset + 8) !== salt1 || readBe(offset + 12) !== salt2) {
+        stop = 'salt'
+        break
+      }
+      const covered = checksum(offset, 8, sum0, sum1)
+      const pageSum = checksum(offset + 24, page, covered[0], covered[1])
+      if (pageSum[0] !== readBe(offset + 16) || pageSum[1] !== readBe(offset + 20)) {
+        stop = 'checksum'
+        break
+      }
+      sum0 = pageSum[0]
+      sum1 = pageSum[1]
+      frames += 1
+      const pages = readBe(offset + 4)
+      if (pages > 0) {
+        commit = pages
+      }
+    }
+    if (commit <= 0) {
+      return undefined
+    }
+    return { commit, stop, frames }
+  }
+  const byPath = new Map(files.map(file => [file.path, file.bytes]))
+  let walkNote = ''
+  for (const file of databases) {
+    if (
+      !file.path.startsWith('/tdlib/') ||
+      file.path.split('/').some(part => part === '.' || part === '..')
+    ) {
+      return { ok: false, reason: 'path', files: files.length, detail: detailOf(files) }
+    }
+    const wal = byPath.get(`${file.path}-wal`)
+    const page = pageOf(file.bytes)
+    if (page !== undefined) {
+      if (file.bytes[18] === 2 && (wal === undefined || wal.length === 0)) {
+        return { ok: false, reason: 'wal missing', files: files.length, detail: detailOf(files) }
+      }
+      if (wal !== undefined && !walOk(wal, page)) {
+        return { ok: false, reason: 'wal', files: files.length, detail: detailOf(files) }
+      }
+      if (wal !== undefined && wal.length > 0 && file.bytes[18] !== 2) {
+        return {
+          ok: false,
+          reason: 'wal without wal mode',
+          files: files.length,
+          detail: detailOf(files),
+        }
+      }
+      const walked = wal === undefined || wal.length === 0 ? undefined : walCommitPages(wal, page)
+      const commit = walked === undefined ? undefined : walked.commit
+      if (commit === undefined || commit * page !== file.bytes.length) {
+        return {
+          ok: false,
+          reason: 'wal commit',
+          files: files.length,
+          detail: `${detailOf(files)} commit=${commit ?? 0} stop=${walked === undefined ? 'none' : walked.stop} from=${firstSize}`,
+        }
+      }
+      continue
+    }
+    if (wal !== undefined && wal.length > 0) {
+      const little = walLittle(wal)
+      const walPage = little === undefined ? 0 : readU32(wal, 8, little)
+      const power = walPage >= 512 && walPage <= 65536 && (walPage & (walPage - 1)) === 0
+      if (
+        little === undefined ||
+        !power ||
+        file.bytes.length % walPage !== 0 ||
+        !walOk(wal, walPage)
+      ) {
+        return { ok: false, reason: 'wal', files: files.length, detail: detailOf(files) }
+      }
+      const walked = walCommitPages(wal, walPage)
+      const commit = walked === undefined ? undefined : walked.commit
+      if (commit === undefined || commit * walPage < file.bytes.length) {
+        return {
+          ok: false,
+          reason: 'wal commit',
+          files: files.length,
+          detail: `${detailOf(files)} commit=${commit ?? 0} stop=${walked === undefined ? 'none' : walked.stop} frames=${walked === undefined ? 0 : walked.frames}`,
+        }
+      }
+      if (walked.stop === 'salt' && walked.frames < 64) {
+        return {
+          ok: false,
+          reason: 'wal partial',
+          files: files.length,
+          detail: `${detailOf(files)} commit=${commit} stop=${walked.stop} frames=${walked.frames} pages=${file.bytes.length / walPage}`,
+        }
+      }
+      walkNote = `${walkNote} commit=${commit} stop=${walked.stop} frames=${walked.frames} pages=${file.bytes.length / walPage}`
+      continue
+    }
+    if (!(file.bytes.length >= 512 && file.bytes.length % 512 === 0)) {
+      return { ok: false, reason: 'sqlite header', files: files.length, detail: detailOf(files) }
+    }
+  }
+  const detail = `${detailOf(files)}${walkNote}`
+  return new Promise(resolve => {
+    const request = indexedDB.open('crm-chat-tdlib', 1)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('records')) {
+        request.result.createObjectStore('records')
+      }
+    }
+    request.onerror = () => {
+      resolve({ ok: false, reason: 'unreadable', files: files.length, detail })
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      const tx = db.transaction('records', 'readwrite')
+      const store = tx.objectStore('records')
+      store.put({ id: 's1', closed: true, files }, 'snap:s1')
+      store.put({ current: 's1', serial: 1 }, 'pointer')
+      tx.oncomplete = () => {
+        db.close()
+        resolve({
+          ok: true,
+          reason: '',
+          files: files.length,
+          detail,
+          stable: true,
+        })
+      }
+      tx.onerror = () => {
+        db.close()
+        resolve({ ok: false, reason: 'unreadable', files: files.length, detail })
+      }
+      tx.onabort = () => {
+        db.close()
+        resolve({ ok: false, reason: 'unreadable', files: files.length, detail })
+      }
+    }
+  })
+}
+
 const root = process.env.CRM_CHAT_WEBSITE
 const previous = process.env.CRM_CHAT_WEBSITE_PREVIOUS
 const python = process.env.CRM_CHAT_PYTHON ?? 'python3'
@@ -27,11 +564,12 @@ const tdqr =
   process.env.CRM_CHAT_TDQR ??
   join(process.env.HOME ?? '', '.local/state/kam-t3/tools/tdqr.py')
 const slot = process.env.CRM_CHAT_TDQR_SLOT ?? '1'
-const listBudgetMs = 5_000
+// QR approval can take longer than 5s before TDLib reports Ready. The
+// measured approve_to_chats_ms is still recorded.
+const listBudgetMs = 15_000
 const historyBudgetMs = 10_000
 const reloadBudgetMs = 15_000
 const kindPreview = new Set(['personal chat', 'group', 'channel'])
-const previousSignInBudgetMs = 120_000
 
 const redact = text =>
   String(text)
@@ -163,16 +701,28 @@ let browser
 let failed = false
 const faults = []
 const runtimeFault = text =>
-  /Aborted\(|RuntimeError|memory access out of bounds/i.test(text)
+  /Aborted\(|RuntimeError|out of bounds|table index/i.test(text)
 const watch = page => {
   page.on('console', message => {
     const text = message.text()
     if (
       text.startsWith('tdlib auth authorizationState') ||
+      text.startsWith('tdlib snapshot') ||
+      text.startsWith('tdlib reopen') ||
+      text.startsWith('tdlib close stopped') ||
       text === 'tdlib sync saved'
     ) {
       timing.auth.push(redact(text))
       note(text)
+    }
+    if (/Check `|FATAL|\.cpp\b/.test(text)) {
+      note(`tdlib ${redact(text).slice(0, 300)}`)
+    }
+    if (text.startsWith('tdlib receive failed')) {
+      const line = redact(text).slice(0, 1200)
+      faults.push(line)
+      note(line)
+      return
     }
     if (!runtimeFault(text)) {
       return
@@ -182,15 +732,55 @@ const watch = page => {
     note(`console ${message.type()} ${line}`)
   })
   page.on('pageerror', error => {
-    const line = redact(String(error.stack ?? error.message)).slice(0, 400)
+    const name = typeof error.name === 'string' ? error.name : ''
+    const message = typeof error.message === 'string' ? error.message : ''
+    const stack = typeof error.stack === 'string' ? error.stack : ''
+    const line = redact(
+      [name, message, stack].filter(part => part !== '').join(' | ') ||
+        '(empty)',
+    ).slice(0, 500)
     faults.push(line)
     note(`pageerror ${line}`)
+  })
+  page.on('crash', () => {
+    faults.push('page crashed')
+    note('page crashed')
   })
 }
 const assertNoFaults = () => {
   if (faults.length > 0) {
     throw fail(`page error: ${faults[0]}`)
   }
+}
+const savedCount = () =>
+  timing.auth.filter(line => line === 'tdlib sync saved').length
+const waitForSyncSaved = async (page, label, before = savedCount()) => {
+  const deadline = Date.now() + reloadBudgetMs
+  while (savedCount() <= before && Date.now() < deadline) {
+    await delay(100)
+  }
+  if (savedCount() <= before) {
+    throw fail(`${label} did not log tdlib sync saved`)
+  }
+  try {
+    await page.waitForFunction(
+      () => document.documentElement.dataset.tdlibSync !== '1',
+      undefined,
+      { timeout: reloadBudgetMs },
+    )
+  } catch {
+    throw fail(`${label} save was still running`)
+  }
+  note(`${label} flushed (tdlib sync saved)`)
+}
+const sealPage = async page => {
+  await page.evaluate(async () => {
+    const seal = Reflect.get(globalThis, 'crmChatSeal')
+    if (typeof seal !== 'function') {
+      throw new Error('crmChatSeal is missing')
+    }
+    await seal()
+  })
 }
 const visiblePreview = async nextPage => {
   const loading = nextPage.getByText('Loading chats…')
@@ -215,7 +805,7 @@ const shot = async (page, name) => {
   }
   await page.screenshot({ path: join(shots, name), fullPage: true }).catch(() => undefined)
 }
-const stillLoggedIn = async (nextPage, label, shotName) => {
+const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
   const deadline = Date.now() + reloadBudgetMs
   let preview = ''
   let qrVisible = false
@@ -238,11 +828,13 @@ const stillLoggedIn = async (nextPage, label, shotName) => {
   assertNoFaults()
   if (preview === '') {
     await shot(nextPage, shotName)
-    throw fail(
-      qrVisible
-        ? `${label} returned to the QR screen`
-        : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`,
-    )
+    const message = qrVisible
+      ? `${label} returned to the QR screen`
+      : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`
+    if (!fatal) {
+      throw new Error(message)
+    }
+    throw fail(message)
   }
   note(`${label} preview_chars=${preview.length}`)
 }
@@ -266,14 +858,44 @@ try {
     await unlink(serveLink)
     await symlink(next, serveLink)
   }
-  const approveQr = async (page, shotName, recordQr, qrBudgetMs = 30_000) => {
+  const chatsVisible = async page => {
+    const code = page.locator('img[alt="Telegram login QR code"]')
+    const qrStill =
+      (await code.count()) > 0 &&
+      (await code.first().isVisible().catch(() => false))
+    if (qrStill) {
+      return false
+    }
+    const heading = page.getByRole('heading', { name: 'Telegram chats' })
+    const shell = page.locator('[aria-label="Telegram chats"]')
+    const headingVisible =
+      (await heading.count()) > 0 &&
+      (await heading.first().isVisible().catch(() => false))
+    const shellVisible =
+      (await shell.count()) > 0 &&
+      (await shell.first().isVisible().catch(() => false))
+    return headingVisible || shellVisible
+  }
+  const approveQr = async (
+    page,
+    shotName,
+    recordQr,
+    qrBudgetMs = 30_000,
+    allowSignedIn = false,
+  ) => {
     const qr = page.locator('img[alt="Telegram login QR code"]')
     // The PR base says "Log in with QR". The current site says "Log in by QR code".
     const qrButton = page.getByRole('button', { name: /log in (by|with) qr/i })
     const qrDeadline = Date.now() + qrBudgetMs
     let qrVisible = false
     while (Date.now() < qrDeadline) {
-      assertNoFaults()
+      if (allowSignedIn && (await chatsVisible(page))) {
+        note('previous build opened the saved chat list')
+        return Date.now()
+      }
+      if (!allowSignedIn) {
+        assertNoFaults()
+      }
       if ((await qr.count()) > 0 && (await qr.first().isVisible().catch(() => false))) {
         qrVisible = true
         break
@@ -370,72 +992,245 @@ try {
 
   note(`redeploy previous=${previousBundle} next=${newBundle}`)
   browser = await launch(redeployProfile)
-  const previousPage = browser.pages()[0] ?? (await browser.newPage())
+  // The base glue hides FS on the module argument. Capture it as the script loads.
+  await browser.addInitScript(captureTdlibFilesystem)
+  let previousPage = browser.pages()[0] ?? (await browser.newPage())
   note(`browser ${browserName}`)
-  watch(previousPage)
-  await previousPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
-  const previousApproved = await approveQr(
-    previousPage,
-    'redeploy-qr.png',
-    false,
-    60_000,
-  )
-  const signedDeadline = previousApproved + previousSignInBudgetMs
-  let signedIn = false
-  while (Date.now() < signedDeadline) {
-    // The PR base wasm aborts on Chromium 155 after approval. That page is only
-    // the previous deployment. Page errors start counting once the new bundle loads.
-    const code = previousPage.locator('img[alt="Telegram login QR code"]')
-    const qrStill =
-      (await code.count()) > 0 &&
-      (await code.first().isVisible().catch(() => false))
-    const heading = previousPage.getByRole('heading', { name: 'Telegram chats' })
-    const shell = previousPage.locator('[aria-label="Telegram chats"]')
-    const headingVisible =
-      (await heading.count()) > 0 &&
-      (await heading.first().isVisible().catch(() => false))
-    const shellVisible =
-      (await shell.count()) > 0 &&
-      (await shell.first().isVisible().catch(() => false))
-    if (!qrStill && (headingVisible || shellVisible)) {
-      signedIn = true
-      break
+  // A wedged base renderer never answers Playwright. Give up and open a new
+  // browser instead of waiting until the outer test timeout.
+  const within = async (work, ms) => {
+    let timer
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('timed out'))
+      }, ms)
+    })
+    try {
+      return await Promise.race([Promise.resolve(work), timeout])
+    } finally {
+      clearTimeout(timer)
     }
-    await delay(200)
   }
-  if (!signedIn) {
-    await shot(previousPage, '06-after-redeploy.png')
-    throw fail('previous build did not leave the QR screen')
+  const reopenPrevious = async () => {
+    if (browser !== undefined) {
+      await within(browser.close(), 10_000).catch(() => undefined)
+      browser = undefined
+    }
+    await rm(join(redeployProfile, 'Default', 'IndexedDB'), {
+      recursive: true,
+      force: true,
+    }).catch(() => undefined)
+    browser = await launch(redeployProfile)
+    await browser.addInitScript(captureTdlibFilesystem)
+    previousPage = browser.pages()[0] ?? (await browser.newPage())
+    watch(previousPage)
+    await previousPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+    note('previous build reopened after a wedged page')
   }
-  timing.previous_signed_in_ms = String(Date.now() - previousApproved)
-  note(`previous build signed in at ${timing.previous_signed_in_ms}ms`)
-  note('waiting 10s for the previous build to flush')
-  await delay(10_000)
-  await browser.close()
-  browser = undefined
-  const redeployAt = Date.now()
-  await retarget(root)
-  faults.length = 0
-  browser = await launch(redeployProfile)
-  const redeployed = browser.pages()[0] ?? (await browser.newPage())
-  watch(redeployed)
-  await redeployed.goto(pageUrl, { waitUntil: 'domcontentloaded' })
-  const names = await scriptNames(redeployed)
-  note(`redeploy scripts ${names.filter(name => name !== '').join(',')}`)
-  if (!names.includes(newBundle)) {
-    await shot(redeployed, '06-after-redeploy.png')
-    throw fail(
-      names.includes(previousBundle)
-        ? 'redeploy kept the previous bundle'
-        : `redeploy did not load ${newBundle}`,
+  let previousApproved = 0
+  let saved = false
+  let wedged = false
+  for (let attempt = 0; attempt < 4 && !saved; attempt += 1) {
+    if (attempt > 0) {
+      // A base-client save can commit a torn copy and then abort. Drop that
+      // database on this origin before the next login.
+      note('previous build did not finish login; trying once more')
+      faults.length = 0
+      if (wedged) {
+        wedged = false
+        await reopenPrevious()
+      } else {
+        try {
+          await within(
+            previousPage.evaluate(
+              () =>
+                new Promise(resolve => {
+                  const finish = name => {
+                    const request = indexedDB.deleteDatabase(name)
+                    return new Promise(done => {
+                      request.onsuccess = () => {
+                        done()
+                      }
+                      request.onerror = () => {
+                        done()
+                      }
+                      request.onblocked = () => {
+                        done()
+                      }
+                    })
+                  }
+                  Promise.all([finish('/tdlib'), finish('crm-chat-tdlib')]).then(
+                    () => {
+                      resolve(undefined)
+                    },
+                  )
+                }),
+            ),
+            5_000,
+          )
+          await within(
+            previousPage.reload({ waitUntil: 'domcontentloaded' }),
+            15_000,
+          )
+        } catch {
+          await reopenPrevious()
+        }
+      }
+    } else {
+      watch(previousPage)
+      await previousPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+    }
+    try {
+      if (await within(chatsVisible(previousPage), 5_000)) {
+        previousApproved = Date.now()
+        note('previous build opened the saved chat list')
+      } else {
+        previousApproved = await within(
+          approveQr(previousPage, 'redeploy-qr.png', false, 60_000, true),
+          150_000,
+        )
+      }
+    } catch (error) {
+      if (
+        (error instanceof Error ? error.message : String(error)) === 'timed out'
+      ) {
+        wedged = true
+      }
+      if (attempt === 3) {
+        throw error
+      }
+      continue
+    }
+    // Copy a stable image, then reject it unless the WAL commit covers the file.
+    const faultsBefore = faults.length
+    const plantDeadline = Date.now() + 30_000
+    let planted = { ok: false, reason: 'not ready', files: 0 }
+    try {
+      while (Date.now() < plantDeadline) {
+        if (faults.length > faultsBefore) {
+          break
+        }
+        const ready = await within(chatsVisible(previousPage), 5_000)
+        if (!ready) {
+          await delay(200)
+          continue
+        }
+        try {
+          planted = await within(
+            previousPage.evaluate(plantLiveSnapshot),
+            25_000,
+          )
+        } catch (error) {
+          if (
+            (error instanceof Error ? error.message : String(error)) ===
+            'timed out'
+          ) {
+            throw error
+          }
+          planted = { ok: false, reason: 'unreadable', files: 0 }
+        }
+        if (
+          planted.ok &&
+          faults.length === faultsBefore &&
+          (await within(chatsVisible(previousPage), 5_000))
+        ) {
+          break
+        }
+        if (!planted.ok) {
+          note(
+            `previous build snapshot waiting (${planted.reason}) ${planted.detail ?? ''}`,
+          )
+        }
+        if (faults.length > faultsBefore) {
+          break
+        }
+        await delay(400)
+      }
+    } catch {
+      wedged = true
+      planted = { ok: false, reason: 'timed out', files: planted.files ?? 0 }
+    }
+    if (!planted.ok) {
+      const reason = faults.length > faultsBefore ? 'aborted' : planted.reason
+      note(`previous build snapshot not ready (${reason}) ${planted.detail ?? ''}`)
+      if (attempt === 3) {
+        throw fail(`previous build did not finish saving (${reason})`)
+      }
+      continue
+    }
+    note(
+      `previous build planted a live snapshot files=${planted.files ?? 0} ${planted.detail ?? ''} stable=${planted.stable === true}`,
     )
+    await browser.close()
+    browser = undefined
+    const redeployAt = Date.now()
+    await retarget(root)
+    faults.length = 0
+    const authFrom = timing.auth.length
+    browser = await launch(redeployProfile)
+    const redeployed = browser.pages()[0] ?? (await browser.newPage())
+    watch(redeployed)
+    await redeployed.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+    const names = await scriptNames(redeployed)
+    note(`redeploy scripts ${names.filter(name => name !== '').join(',')}`)
+    if (!names.includes(newBundle)) {
+      await shot(redeployed, '06-after-redeploy.png')
+      throw fail(
+        names.includes(previousBundle)
+          ? 'redeploy kept the previous bundle'
+          : `redeploy did not load ${newBundle}`,
+      )
+    }
+    const lastTry = attempt === 3
+    try {
+      await stillLoggedIn(
+        redeployed,
+        'redeploy',
+        '06-after-redeploy.png',
+        lastTry,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!lastTry && message === 'redeploy returned to the QR screen') {
+        note(
+          'redeploy opened the planted database as a new login; trying once more',
+        )
+        await browser.close().catch(() => undefined)
+        browser = undefined
+        await retarget(previous)
+        wedged = true
+        continue
+      }
+      if (!lastTry) {
+        throw fail(message)
+      }
+      throw error
+    }
+    const snapshotLines = timing.auth
+      .slice(authFrom)
+      .filter(line => line.startsWith('tdlib snapshot'))
+    if (
+      snapshotLines.length === 0 ||
+      snapshotLines.some(
+        line => !line.includes(' checkpointed') || line.includes(' skip='),
+      )
+    ) {
+      throw fail(
+        `redeploy snapshot was not checkpointed (${snapshotLines.join(' | ') || 'no snapshot'})`,
+      )
+    }
+    timing.previous_signed_in_ms = String(Date.now() - previousApproved)
+    note(`previous build signed in at ${timing.previous_signed_in_ms}ms`)
+    timing.redeploy_ms = String(Date.now() - redeployAt)
+    await shot(redeployed, '06-after-redeploy.png')
+    note(`redeploy persisted at ${timing.redeploy_ms}ms bundle=${newBundle}`)
+    await browser.close()
+    browser = undefined
+    saved = true
   }
-  await stillLoggedIn(redeployed, 'redeploy', '06-after-redeploy.png')
-  timing.redeploy_ms = String(Date.now() - redeployAt)
-  await shot(redeployed, '06-after-redeploy.png')
-  note(`redeploy persisted at ${timing.redeploy_ms}ms bundle=${newBundle}`)
-  await browser.close()
-  browser = undefined
+  if (!saved) {
+    throw fail('previous build did not finish saving')
+  }
 
   started = Date.now()
   browser = await launch(profile)
@@ -443,7 +1238,7 @@ try {
   note(`browser ${browserName}`)
   watch(page)
   await page.goto(pageUrl, { waitUntil: 'domcontentloaded' })
-  const approvedAt = await approveQr(page, '01-qr-blurred.png', true)
+  const approvedAt = await approveQr(page, '01-qr-blurred.png', true, 60_000)
 
   const deadline = approvedAt + listBudgetMs
   let rows = 0
@@ -517,31 +1312,22 @@ try {
   await shot(page, '03-open-chat.png')
   note(`history at ${timing.history_ms}ms bubble_chars=${bubbleText.length}`)
 
-  // A real profile keeps every earlier login as its own directory. Give the
-  // signed-in database time to flush, then add a newer leftover the way a
-  // later visit does, and only then reload.
-  await delay(2_000)
-  const saveDeadline = Date.now() + reloadBudgetMs
-  while (!timing.auth.includes('tdlib sync saved') && Date.now() < saveDeadline) {
-    await delay(100)
-  }
-  if (!timing.auth.includes('tdlib sync saved')) {
-    await shot(page, '04-after-reload.png')
-    throw fail('session was not saved before reload')
-  }
-  try {
-    await page.waitForFunction(
-      () => document.documentElement.dataset.tdlibSync === '0',
-      undefined,
-      { timeout: reloadBudgetMs },
-    )
-  } catch {
-    await shot(page, '04-after-reload.png')
-    throw fail('session save was still running at reload')
-  }
+  // A real profile keeps every earlier login as its own directory. Copy the
+  // open database, close TDLib, copy the checkpoint, then add a newer leftover
+  // so the reload opens that empty directory first and must not log the real
+  // one out.
+  await waitForSyncSaved(page, 'session')
+  const sealedAt = savedCount()
+  await sealPage(page)
+  await waitForSyncSaved(page, 'sealed session', sealedAt)
   await page.evaluate(async () => {
     const opened = await new Promise((resolve, reject) => {
       const request = indexedDB.open('/tdlib', 21)
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('FILE_DATA')) {
+          request.result.createObjectStore('FILE_DATA')
+        }
+      }
       request.onerror = () => {
         reject(request.error)
       }
@@ -582,11 +1368,9 @@ try {
   timing.reload_ms = String(Date.now() - reloadStart)
   await shot(page, '04-after-reload.png')
   note(`reload persisted at ${timing.reload_ms}ms`)
-  await page.waitForFunction(
-    () => document.documentElement.dataset.tdlibSync === '0',
-    undefined,
-    { timeout: reloadBudgetMs },
-  )
+  const sealedReopen = savedCount()
+  await sealPage(page)
+  await waitForSyncSaved(page, 'reopen', sealedReopen)
 
   const reopenStart = Date.now()
   await browser.close()
@@ -608,12 +1392,16 @@ try {
   timing.reopen_ms = String(Date.now() - reopenStart)
   await shot(reopened, '05-reopened.png')
   note(`reopen persisted at ${timing.reopen_ms}ms`)
+  const skipped = timing.auth.find(line => line.includes(' skip='))
+  if (skipped !== undefined) {
+    throw fail(`snapshot was not checkpointed (${skipped})`)
+  }
   assertNoFaults()
   note('PASS')
 } catch (error) {
   failed = true
   const message = error instanceof Error ? error.message : 'failed'
-  if (!logLines.some(line => line.startsWith('FAIL'))) {
+  if (!logLines.includes(`FAIL ${message}`)) {
     note(`FAIL ${message}`)
   }
   if (browser !== undefined) {
