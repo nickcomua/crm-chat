@@ -1,10 +1,14 @@
 #!/usr/bin/env node
-// Production-website QR login. Serves the website with integration/website_serve.py,
+// Production-website login. Serves the website with integration/website_serve.py,
 // approves the QR with a copy of a saved test-account session, and checks the
 // chat list, a real last-message preview, opened history, a reload, and a
-// redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. Never prints
-// secrets.
+// redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. A fresh
+// profile then signs in by phone. The login code is read from the copied
+// session's Telegram service chat. One account gets a temporary cloud
+// password for the 2FA screen; the helper removes it before exit. Never
+// prints secrets.
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -563,6 +567,9 @@ const shots =
 const tdqr =
   process.env.CRM_CHAT_TDQR ??
   join(process.env.HOME ?? '', '.local/state/kam-t3/tools/tdqr.py')
+const accountTool =
+  process.env.CRM_CHAT_TD_ACCOUNT ??
+  fileURLToPath(new URL('./tdlib_account.py', import.meta.url))
 const slot = process.env.CRM_CHAT_TDQR_SLOT ?? '1'
 // QR approval can take longer than 5s before TDLib reports Ready. The
 // measured approve_to_chats_ms is still recorded.
@@ -575,6 +582,9 @@ const redact = text =>
   String(text)
     .replace(/tg:\/\/\S+/gi, 'tg://[redacted]')
     .replace(/token=[^\s&'"]+/gi, 'token=[redacted]')
+    .replace(/\+\d{6,15}/g, '+[redacted]')
+    .replace(/(?<!\d)\d{8,15}(?!\d)/g, '[redacted]')
+    .replace(/[\w.+-]+@[\w.-]+/g, '[redacted-email]')
     .replace(/\b[a-f0-9]{32}\b/gi, '[redacted]')
     .replace(
       /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
@@ -620,6 +630,10 @@ if (!existsSync(tdqr)) {
   console.error('integration-test-web: saved-session helper is missing')
   process.exit(1)
 }
+if (!existsSync(accountTool)) {
+  console.error('integration-test-web: account helper is missing')
+  process.exit(1)
+}
 
 const apiId = process.env.TG_ID ?? ''
 const apiHash = process.env.TG_HASH ?? ''
@@ -641,6 +655,7 @@ if (newBundle === '' || previousBundle === '' || newBundle === previousBundle) {
 
 await mkdir(shots, { recursive: true })
 const work = await mkdtemp(join(tmpdir(), 'crm-web-login-'))
+const secretPath = join(work, 'login-secret.json')
 const profile = join(work, 'profile')
 const redeployProfile = join(work, 'redeploy-profile')
 const serveLink = join(work, 'site')
@@ -699,6 +714,73 @@ const writeTiming = async () => {
 
 let browser
 let failed = false
+let accountHelper
+let passwordArmed = false
+const readSecret = async () => {
+  let parsed
+  try {
+    parsed = JSON.parse(await readFile(secretPath, 'utf8'))
+  } catch {
+    throw fail('login secret file was unreadable')
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    throw fail('login secret file was unreadable')
+  }
+  return parsed
+}
+const wipeSecret = async () => {
+  await writeFile(secretPath, '{}\n', { mode: 0o600 }).catch(() => undefined)
+}
+const stopAccountHelper = async () => {
+  const helper = accountHelper
+  if (helper === undefined) {
+    return
+  }
+  accountHelper = undefined
+  try {
+    if (passwordArmed) {
+      let line = ''
+      try {
+        line = await helper.request('clear', 45_000)
+      } catch {
+        line = ''
+      }
+      passwordArmed = false
+      if (!line.includes('has_password=false')) {
+        note(
+          'BLOCKED: cloud password cleanup failed; the account password state was not confirmed clear',
+        )
+        failed = true
+      } else {
+        note('cloud password removed and confirmed unset')
+      }
+    }
+    await helper.request('quit', 15_000).catch(() => undefined)
+  } finally {
+    const exited = () =>
+      helper.child.exitCode !== null || helper.child.signalCode !== null
+    if (!exited()) {
+      helper.child.kill('SIGTERM')
+    }
+    await new Promise(resolve => {
+      if (exited()) {
+        resolve()
+        return
+      }
+      const timer = setTimeout(() => {
+        if (!exited()) {
+          helper.child.kill('SIGKILL')
+        }
+        resolve()
+      }, 15_000)
+      helper.child.once('exit', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    await wipeSecret()
+  }
+}
 const faults = []
 const runtimeFault = text =>
   /Aborted\(|RuntimeError|out of bounds|table index/i.test(text)
@@ -799,14 +881,39 @@ const visiblePreview = async nextPage => {
       .find(text => text !== '' && !kindPreview.has(text)) ?? ''
   )
 }
+const maskSecrets = async page => {
+  if (page === undefined) {
+    return
+  }
+  await page
+    .evaluate(() => {
+      const digits = /\d{5,}/
+      for (const node of document.querySelectorAll(
+        'input, textarea, .tg-dial, .chat-row, .tg-bubble',
+      )) {
+        const text = node.matches('input, textarea') ? '' : node.textContent || ''
+        if (node.matches('input, textarea') || digits.test(text)) {
+          node.style.filter = 'blur(16px)'
+        }
+      }
+    })
+    .catch(() => undefined)
+}
 const shot = async (page, name) => {
   if (page === undefined) {
     return
   }
+  await maskSecrets(page)
   await page.screenshot({ path: join(shots, name), fullPage: true }).catch(() => undefined)
 }
-const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
-  const deadline = Date.now() + reloadBudgetMs
+const stillLoggedIn = async (
+  nextPage,
+  label,
+  shotName,
+  fatal = true,
+  budgetMs = reloadBudgetMs,
+) => {
+  const deadline = Date.now() + budgetMs
   let preview = ''
   let qrVisible = false
   while (Date.now() < deadline) {
@@ -830,7 +937,7 @@ const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
     await shot(nextPage, shotName)
     const message = qrVisible
       ? `${label} returned to the QR screen`
-      : `${label} did not keep a last-message preview within ${reloadBudgetMs}ms`
+      : `${label} did not keep a last-message preview within ${budgetMs}ms`
     if (!fatal) {
       throw new Error(message)
     }
@@ -1404,42 +1511,78 @@ try {
       'NEEDS TEST ACCOUNTS: a second legacy account, different from the QR slot, is required to attach another login',
     )
   } else {
-    await reopened.getByRole('button', { name: 'Menu' }).click()
-    await reopened.getByRole('button', { name: 'Add account' }).click()
-    const secondApproved = await approveQr(
-      reopened,
-      '07-second-qr-blurred.png',
-      false,
-      60_000,
-      false,
-      secondSlot,
-    )
-    const secondDeadline = secondApproved + 60_000
+    const attachSecondAccount = async () => {
+      await reopened.getByRole('button', { name: 'Menu' }).click()
+      await reopened.getByRole('button', { name: 'Add account' }).click()
+      const secondApproved = await approveQr(
+        reopened,
+        '07-second-qr-blurred.png',
+        false,
+        60_000,
+        false,
+        secondSlot,
+      )
+      const secondDeadline = secondApproved + 70_000
+      let attached = false
+      let needsPassword = false
+      while (Date.now() < secondDeadline) {
+        assertNoFaults()
+        const password = reopened.getByRole('textbox', {
+          name: 'Cloud password',
+        })
+        if ((await password.count()) > 0) {
+          needsPassword = true
+          break
+        }
+        const shell = reopened.locator('[aria-label="Telegram chats"]')
+        if (
+          (await shell.count()) > 0 &&
+          (await reopened.locator('.chat-row').count()) > 0
+        ) {
+          attached = true
+          break
+        }
+        await delay(100)
+      }
+      return { attached, needsPassword }
+    }
     let attached = false
     let needsPassword = false
-    while (Date.now() < secondDeadline) {
-      assertNoFaults()
-      const password = reopened.getByRole('textbox', { name: 'Cloud password' })
-      if ((await password.count()) > 0) {
-        needsPassword = true
-        break
-      }
-      const shell = reopened.locator('[aria-label="Telegram chats"]')
-      if (
-        (await shell.count()) > 0 &&
-        (await reopened.locator('.chat-row').count()) > 0
-      ) {
-        attached = true
-        break
-      }
-      await delay(100)
+    ;({ attached, needsPassword } = await attachSecondAccount())
+    if (!attached && !needsPassword) {
+      // The approver can accept a QR the page never finishes. The first
+      // account is already checkpointed, so a reload clears the stuck login
+      // and one more confirm can attach the second account.
+      note('second account stayed on the QR after confirm; retrying once')
+      await reopened.reload({ waitUntil: 'domcontentloaded' })
+      await stillLoggedIn(
+        reopened,
+        'second account retry',
+        '07-second-retry.png',
+        true,
+        45_000,
+      )
+      ;({ attached, needsPassword } = await attachSecondAccount())
     }
     if (needsPassword) {
       note(
         'NEEDS TEST ACCOUNTS: the second legacy account is waiting for a cloud password and none is stored',
       )
     } else if (!attached) {
-      throw fail('the second account did not reach the chat list')
+      const alert = await reopened
+        .locator('[role="alert"]')
+        .first()
+        .textContent({ timeout: 200 })
+        .catch(() => '')
+      const safe = redact(String(alert ?? '').replace(/\s+/g, ' ').trim()).slice(
+        0,
+        180,
+      )
+      throw fail(
+        safe === ''
+          ? 'the second account did not reach the chat list'
+          : `the second account did not reach the chat list (${safe})`,
+      )
     } else {
       await shot(reopened, '08-second-account.png')
       await reopened.getByRole('button', { name: 'Menu' }).click()
@@ -1467,6 +1610,8 @@ try {
         reopened,
         'two accounts',
         '10-two-accounts-reload.png',
+        true,
+        45_000,
       )
       await reopened.getByRole('button', { name: 'Menu' }).click()
       if (
@@ -1478,12 +1623,473 @@ try {
       note('two accounts survived reload')
     }
   }
-  note(
-    'NEEDS TEST ACCOUNTS: phone-code login needs a login code delivered to a legacy account. The harness confirms QR instead.',
-  )
-  note(
-    'NEEDS TEST ACCOUNTS: cloud password login needs an account with two-step verification. The legacy accounts sign in without it.',
-  )
+  const alertText = async page => {
+    const alert = page.locator('[role="alert"]')
+    if ((await alert.count()) === 0) {
+      return ''
+    }
+    const text = await alert
+      .first()
+      .textContent({ timeout: 200 })
+      .catch(() => '')
+    return redact(String(text ?? '').replace(/\s+/g, ' ').trim()).slice(0, 180)
+  }
+  const startAccountHelper = cloudPassword => {
+    const child = spawn(python, [accountTool, slot], {
+      env: {
+        ...process.env,
+        CRM_CHAT_SECRET_FILE: secretPath,
+        CRM_CHAT_CLOUD_PASSWORD: cloudPassword,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const lines = []
+    const waiters = []
+    let buffer = ''
+    let exited = false
+    const deliver = line => {
+      const trimmed = line.trim()
+      if (trimmed === '') {
+        return
+      }
+      note(redact(trimmed))
+      if (waiters.length > 0) {
+        waiters.shift().resolve(trimmed)
+        return
+      }
+      lines.push(trimmed)
+    }
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      const parts = buffer.split('\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        deliver(part)
+      }
+    })
+    child.stderr.on('data', chunk => {
+      for (const line of String(chunk).split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed !== '') {
+          note(redact(trimmed))
+        }
+      }
+    })
+    const nextLine = timeoutMs =>
+      new Promise((resolve, reject) => {
+        if (lines.length > 0) {
+          resolve(lines.shift())
+          return
+        }
+        if (exited) {
+          reject(new Error('saved session helper exited'))
+          return
+        }
+        const entry = {}
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(entry)
+          if (index >= 0) {
+            waiters.splice(index, 1)
+          }
+          reject(new Error('saved session helper timed out'))
+        }, timeoutMs)
+        entry.resolve = line => {
+          clearTimeout(timer)
+          resolve(line)
+        }
+        entry.reject = error => {
+          clearTimeout(timer)
+          reject(error)
+        }
+        waiters.push(entry)
+      })
+    child.on('exit', () => {
+      exited = true
+      while (waiters.length > 0) {
+        waiters.shift().reject(new Error('saved session helper exited'))
+      }
+    })
+    child.on('error', () => {
+      exited = true
+    })
+    const request = async (command, timeoutMs) => {
+      if (exited) {
+        throw new Error('saved session helper exited')
+      }
+      child.stdin.write(`${command}\n`)
+      return nextLine(timeoutMs)
+    }
+    return { child, request, nextLine }
+  }
+  const fillSecret = async (locator, value) => {
+    await locator.fill(value)
+    const applied = await locator.evaluate(
+      (element, expected) => element.value === expected,
+      value,
+    )
+    if (applied) {
+      return
+    }
+    await locator.click()
+    await locator.fill('')
+    await locator.pressSequentially(value, { delay: 15 })
+  }
+  const openPhoneForm = async page => {
+    const phoneBox = page.getByRole('textbox', { name: 'Phone number' })
+    const phoneButton = page.getByRole('button', { name: 'Log in by phone number' })
+    const closeCount = () =>
+      timing.auth.filter(line => line.includes('tdlib close stopped')).length
+    const deadline = Date.now() + 45_000
+    let qrAtClick = false
+    let closesAtClick = closeCount()
+    while ((await phoneBox.isVisible().catch(() => false)) === false) {
+      if (Date.now() > deadline) {
+        throw fail('phone number form did not open')
+      }
+      const enabled =
+        (await phoneButton.count()) > 0 &&
+        (await phoneButton.first().isEnabled().catch(() => false))
+      if (enabled) {
+        const qrVisible = await page
+          .locator('img[alt="Telegram login QR code"]')
+          .first()
+          .isVisible()
+          .catch(() => false)
+        if (qrVisible) {
+          qrAtClick = true
+          closesAtClick = closeCount()
+        }
+        await phoneButton.first().click().catch(() => undefined)
+      }
+      await delay(100)
+    }
+    if (qrAtClick) {
+      const closeDeadline = Date.now() + 20_000
+      while (closeCount() <= closesAtClick && Date.now() < closeDeadline) {
+        await delay(100)
+      }
+    }
+    const next = page.getByRole('button', { name: 'Next' })
+    const readyDeadline = Date.now() + 20_000
+    while (Date.now() < readyDeadline) {
+      const connecting = await page
+        .getByText('Connecting to Telegram…')
+        .isVisible()
+        .catch(() => false)
+      if (!connecting && (await next.isEnabled().catch(() => false))) {
+        return phoneBox
+      }
+      await delay(100)
+    }
+    throw fail('phone number form was not ready')
+  }
+  const phoneChatList = async (page, label) => {
+    const startedAt = Date.now()
+    const deadline = startedAt + 45_000
+    let rows = 0
+    let realPreview = ''
+    while (Date.now() < deadline) {
+      assertNoFaults()
+      const alert = await alertText(page)
+      if (alert.includes('Could not load chats')) {
+        throw fail(`${label} chat list failed to load`)
+      }
+      const shell = page.locator('[aria-label="Telegram chats"]')
+      rows = await page.locator('.chat-row').count()
+      if ((await shell.count()) > 0 && rows > 0) {
+        const previews = await page
+          .locator('.chat-row .chat-row-meta.truncate')
+          .allTextContents()
+        realPreview =
+          previews
+            .map(text => text.trim())
+            .find(text => text !== '' && !kindPreview.has(text)) ?? ''
+        if (realPreview !== '') {
+          break
+        }
+      }
+      await delay(100)
+    }
+    const elapsed = Date.now() - startedAt
+    await shot(page, '14-phone-chat-list.png')
+    if (realPreview === '') {
+      throw fail(
+        `${label} chat list with a preview was not visible within 45000ms (rows=${rows}, ms=${elapsed})`,
+      )
+    }
+    note(
+      `${label} chat list at ${elapsed}ms rows=${rows} preview_chars=${realPreview.length}`,
+    )
+    const rowsLocator = page.locator('.chat-row')
+    const count = await rowsLocator.count()
+    let index = 0
+    for (let i = 0; i < count; i += 1) {
+      const text = await rowsLocator.nth(i).innerText().catch(() => '')
+      if (!/\d{5}/.test(text)) {
+        index = i
+        break
+      }
+    }
+    await rowsLocator.nth(index).click()
+    const bubble = page.locator('.tg-bubble').first()
+    const historyStart = Date.now()
+    try {
+      await bubble.waitFor({ state: 'visible', timeout: historyBudgetMs })
+    } catch {
+      await shot(page, '15-phone-history.png')
+      throw fail(`${label} opened chat did not render a message`)
+    }
+    const bubbleText = (await bubble.innerText()).replace(/\s+/g, ' ').trim()
+    if (bubbleText === '' || (await page.getByText('No messages yet').count()) > 0) {
+      await shot(page, '15-phone-history.png')
+      throw fail(`${label} opened chat has no message text`)
+    }
+    await shot(page, '15-phone-history.png')
+    note(
+      `${label} history at ${Date.now() - historyStart}ms bubble_chars=${bubbleText.length}`,
+    )
+    const reloadStart = Date.now()
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await stillLoggedIn(page, 'phone reload', '16-phone-reload.png')
+    await shot(page, '16-phone-reload.png')
+    note(`phone reload persisted at ${Date.now() - reloadStart}ms`)
+  }
+  const runFreshPhoneLogin = async () => {
+    const cloudPassword = `Aa1${randomBytes(18).toString('base64url')}`
+    await writeFile(secretPath, '{}\n', { mode: 0o600 })
+    const helper = startAccountHelper(cloudPassword)
+    accountHelper = helper
+    const ready = await helper.nextLine(90_000)
+    if (!ready.includes(': ready')) {
+      throw fail(redact(ready).slice(0, 180))
+    }
+    const stored = await readSecret()
+    const phone = typeof stored.phone === 'string' ? stored.phone : ''
+    if (!/^\+\d{8,15}$/.test(phone)) {
+      throw fail('saved session did not provide a phone number')
+    }
+    const stateLine = await helper.request('state', 40_000)
+    if (!stateLine.includes('has_password=')) {
+      throw fail('could not read cloud password state')
+    }
+    if (stateLine.includes('has_password=true')) {
+      note(
+        'BLOCKED: cloud password was not set (account already has one; it was left unchanged)',
+      )
+      throw fail('cloud password was already set')
+    }
+    const setLine = await helper.request('set', 50_000)
+    let expectPassword = false
+    if (setLine.includes('password set')) {
+      passwordArmed = true
+      expectPassword = true
+      note('cloud password set for this login')
+    } else if (setLine.includes('has_password=true')) {
+      passwordArmed = true
+      note(
+        'BLOCKED: cloud password cleanup failed; password state has_password=true',
+      )
+      failed = true
+      throw fail('cloud password cleanup failed')
+    } else if (setLine.includes('password blocked')) {
+      const reason = setLine
+        .slice(setLine.indexOf('password blocked') + 'password blocked'.length)
+        .trim()
+      note(`BLOCKED: cloud password was not set (${reason || 'rejected'})`)
+    } else {
+      throw fail('cloud password request returned an unexpected status')
+    }
+    if (browser !== undefined) {
+      await browser.close().catch(() => undefined)
+      browser = undefined
+    }
+    const phoneProfile = join(work, 'phone-profile')
+    browser = await launch(phoneProfile)
+    // Click the phone entry on the first frame, before Restore starts QR.
+    // Cancelling a live QR calls logOut and the next phone request fails.
+    await browser.addInitScript(() => {
+      const arm = () => {
+        if (!document.documentElement) {
+          return false
+        }
+        if (document.querySelector('#telegram-phone')) {
+          return true
+        }
+        const phone = [...document.querySelectorAll('button')].find(
+          button =>
+            (button.textContent || '').trim() === 'Log in by phone number' &&
+            !button.disabled,
+        )
+        if (phone) {
+          phone.click()
+        }
+        return document.querySelector('#telegram-phone') !== null
+      }
+      const start = () => {
+        const root = document.documentElement
+        if (!root) {
+          return
+        }
+        let observer
+        try {
+          observer = new MutationObserver(() => {
+            if (arm() && observer) {
+              observer.disconnect()
+            }
+          })
+          observer.observe(root, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+          })
+        } catch {
+          observer = undefined
+        }
+        const timer = window.setInterval(() => {
+          if (arm()) {
+            window.clearInterval(timer)
+            if (observer) {
+              observer.disconnect()
+            }
+          }
+        }, 16)
+        window.setTimeout(() => {
+          window.clearInterval(timer)
+          if (observer) {
+            observer.disconnect()
+          }
+        }, 20_000)
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start, { once: true })
+      } else {
+        start()
+      }
+    })
+    const phonePage = browser.pages()[0] ?? (await browser.newPage())
+    watch(phonePage)
+    const authFrom = timing.auth.length
+    await phonePage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
+    const phoneBox = await openPhoneForm(phonePage)
+    const phoneAuth = () => timing.auth.slice(authFrom)
+    const qrStarted = phoneAuth().some(line =>
+      line.includes('authorizationStateWaitOtherDeviceConfirmation'),
+    )
+    note(qrStarted ? 'phone form opened after QR' : 'phone form opened before QR')
+    if (qrStarted) {
+      const settled = Date.now() + 30_000
+      while (Date.now() < settled) {
+        const lines = phoneAuth()
+        if (
+          lines.some(
+            line =>
+              line.includes('authorizationStateClosed') ||
+              line.includes('tdlib close stopped'),
+          )
+        ) {
+          break
+        }
+        await delay(100)
+      }
+      await delay(1000)
+    }
+    await fillSecret(phoneBox, phone)
+    await shot(phonePage, '11-phone-masked.png')
+    const marked = await helper.request('mark', 40_000)
+    if (!marked.includes('marked')) {
+      throw fail('saved session did not mark the service chat')
+    }
+    const codeBox = phonePage.getByRole('textbox', { name: 'Login code' })
+    const waitForCodeScreen = async () => {
+      const codeDeadline = Date.now() + 60_000
+      while ((await codeBox.isVisible().catch(() => false)) === false) {
+        const alert = await alertText(phonePage)
+        if (alert !== '') {
+          throw fail(`phone login was rejected (${alert})`)
+        }
+        if (Date.now() > codeDeadline) {
+          throw fail('login code screen did not appear')
+        }
+        await delay(150)
+      }
+    }
+    await phonePage.getByRole('button', { name: 'Next' }).click()
+    try {
+      await waitForCodeScreen()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (!message.includes('REQUEST_FAILED')) {
+        throw error
+      }
+      note('phone login retry after a dropped request')
+      await delay(2000)
+      await fillSecret(phoneBox, phone)
+      await phonePage.getByRole('button', { name: 'Next' }).click()
+      await waitForCodeScreen()
+    }
+    const codeLine = await helper.request('code', 75_000)
+    if (!codeLine.includes('code ready')) {
+      throw fail('login code was not delivered')
+    }
+    const coded = await readSecret()
+    const code = typeof coded.code === 'string' ? coded.code : ''
+    await wipeSecret()
+    if (!/^\d{5}$/.test(code)) {
+      throw fail('login code was not delivered')
+    }
+    await fillSecret(codeBox, code)
+    await shot(phonePage, '12-code-masked.png')
+    await phonePage.getByRole('button', { name: 'Next' }).click()
+    const passwordBox = phonePage.getByRole('textbox', { name: 'Cloud password' })
+    const afterCode = Date.now() + 60_000
+    let stage = ''
+    while (Date.now() < afterCode) {
+      assertNoFaults()
+      const alert = await alertText(phonePage)
+      if (alert !== '') {
+        throw fail(`phone login was rejected (${alert})`)
+      }
+      if (
+        (await passwordBox.count()) > 0 &&
+        (await passwordBox.isVisible().catch(() => false))
+      ) {
+        stage = 'password'
+        break
+      }
+      if (await chatsVisible(phonePage)) {
+        stage = 'chats'
+        break
+      }
+      await delay(150)
+    }
+    if (expectPassword) {
+      if (stage !== 'password') {
+        throw fail('cloud password screen did not appear')
+      }
+      const hint = phonePage.getByText('Hint: crm-chat', { exact: true })
+      if ((await hint.count()) < 1) {
+        throw fail('cloud password hint was not shown')
+      }
+      await fillSecret(passwordBox, cloudPassword)
+      await shot(phonePage, '13-password-masked.png')
+      await phonePage.getByRole('button', { name: 'Next' }).click()
+      note('cloud password submitted')
+    } else if (stage === 'password') {
+      throw fail('phone login stopped on a cloud password')
+    } else if (stage !== 'chats') {
+      throw fail('phone login did not reach the chat list')
+    }
+    await phoneChatList(phonePage, 'phone')
+    await browser.close().catch(() => undefined)
+    browser = undefined
+    await helper.request('drop-web', 40_000).catch(() => undefined)
+    note('phone login pass')
+  }
+  await runFreshPhoneLogin()
+  await stopAccountHelper()
+  if (failed) {
+    throw fail('cloud password cleanup failed')
+  }
   note('PASS')
 } catch (error) {
   failed = true
@@ -1496,6 +2102,7 @@ try {
     await shot(page, 'failure.png')
   }
 } finally {
+  await stopAccountHelper()
   await writeTiming()
   if (browser !== undefined) {
     await browser.close().catch(() => undefined)

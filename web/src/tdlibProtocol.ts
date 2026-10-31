@@ -336,6 +336,7 @@ export class TdAccount {
   previews: Array<ChatPreview> = []
   private readonly waiters: Array<() => void> = []
   private foldersReady = false
+  private refetchChats = false
   private readonly folderWaiters: Array<() => void> = []
 
   constructor(
@@ -376,6 +377,14 @@ export class TdAccount {
 
   holdWaiters(): void {
     this.generation += 1
+  }
+
+  // The folder update belongs to the client that was just dropped. The next
+  // loadChats has to wait for the reopened client's own update, or it runs
+  // before the filter list exists and the chat list stays empty.
+  forgetFolders(): void {
+    this.foldersReady = false
+    this.refetchChats = true
   }
 
   holdReady(): void {
@@ -631,6 +640,21 @@ export class TdAccount {
       this.chatListError = undefined
       const again = await this.loadChatIds()
       if (again !== undefined) {
+        ids = again
+      }
+    }
+    // A reopened client can answer getChats before the network list arrives.
+    // Keep asking while the list is empty so the shell does not stay blank.
+    if (this.refetchChats) {
+      this.refetchChats = false
+      let emptyPasses = 0
+      while (ids !== undefined && ids.length === 0 && emptyPasses < 4) {
+        emptyPasses += 1
+        this.chatListError = undefined
+        const again = await this.loadChatIds()
+        if (again === undefined) {
+          break
+        }
         ids = again
       }
     }

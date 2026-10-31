@@ -639,8 +639,15 @@ export class TdWasmRuntime {
     this.isolateNext = false
     const snapshotCapable = canSnapshot(created.FS)
     const held = isolate || !snapshotCapable ? undefined : this.hotFiles
+    // A torn or empty wal is not a checkpoint. Reopening onto it logs an
+    // unsigned snapshot and can discard the IndexedDB copy that just
+    // restored the chat list. Use the saved checkpoint instead.
+    const heldReady =
+      held !== undefined &&
+      held.length > 0 &&
+      settleSnapshotFiles(held, this.foldGrow).checkpointed
     const snapshot =
-      held !== undefined && held.length > 0
+      heldReady && held !== undefined
         ? { files: held }
         : snapshotCapable && !isolate
           ? await this.snapshots.load().catch(() => undefined)
@@ -948,6 +955,7 @@ export class TdWasmRuntime {
     const slots = [...this.slots.values()]
     for (const slot of slots) {
       slot.account.holdWaiters()
+      slot.account.forgetFolders()
       // The failed open already stored Ready. Put the account back in Opening
       // so a timed-out untilOpened does not treat the dead runtime as signed in.
       slot.account.apply({

@@ -278,6 +278,34 @@ describe('TDLib browser protocol', () => {
     ])
   })
 
+  test('a reopened client waits for chat folders again', async () => {
+    const { account, sent } = scripted([
+      { response: { '@type': 'user', first_name: 'Ada' } },
+      { response: { '@type': 'chats', chat_ids: [] } },
+      { response: { '@type': 'ok' } },
+      { response: { '@type': 'chats', chat_ids: [7] } },
+      {
+        response: {
+          '@type': 'chat',
+          title: 'Ada',
+          type: { '@type': 'chatTypePrivate' },
+        },
+      },
+    ])
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
+    account.forgetFolders()
+    const pending = account.readAccount()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sent.map(query => query['@type'])).toEqual(['getMe', 'getChats'])
+    account.apply({ '@type': 'updateChatFolders', chat_folders: [] })
+    await expect(pending).resolves.toMatchObject({
+      chats: [{ id: 'one:7', title: 'Ada', kind: 'Dialog' }],
+    })
+    expect(sent.map(query => query['@type'])).toContain('loadChats')
+  })
+
   test('loads chats only after chat folders arrive', async () => {
     const { account, sent } = scripted([
       { response: { '@type': 'user', first_name: 'Ada' } },

@@ -281,6 +281,7 @@
             else website
           }
           export CRM_CHAT_WEBSITE_SERVE=${./integration/website_serve.py}
+          export CRM_CHAT_TD_ACCOUNT=${./integration/tdlib_account.py}
           export CRM_CHAT_PYTHON=${pkgs.python3}/bin/python3
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           export PLAYWRIGHT_CORE=${pkgs.playwright-driver}/index.mjs
