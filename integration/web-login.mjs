@@ -2,8 +2,9 @@
 // Production-website QR login. Serves the website with integration/website_serve.py,
 // approves the QR with a copy of a saved test-account session, and checks the
 // chat list, a real last-message preview, opened history, a reload, and a
-// redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. Never prints
-// secrets.
+// redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. Screenshots
+// are compared with the Telegram Web K references in CRM_CHAT_WEBK_SHOTS.
+// Skips when TG_ID and TG_HASH are both absent. Never prints secrets.
 import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -559,7 +560,7 @@ const playwrightCore = process.env.PLAYWRIGHT_CORE
 const chromium = process.env.CHROMIUM
 const shots =
   process.env.CRM_CHAT_WEB_SHOTS ??
-  join(process.env.HOME ?? tmpdir(), '.local/state/kam-t3/shots/fix-web-connect')
+  join(process.env.HOME ?? tmpdir(), '.local/state/kam-t3/shots/kam-57')
 const tdqr =
   process.env.CRM_CHAT_TDQR ??
   join(process.env.HOME ?? '', '.local/state/kam-t3/tools/tdqr.py')
@@ -598,6 +599,19 @@ const bundleName = html => {
   return match === null ? '' : match[0].split('/').pop()
 }
 
+const apiId = process.env.TG_ID ?? ''
+const apiHash = process.env.TG_HASH ?? ''
+if (apiId === '' && apiHash === '') {
+  console.log('integration-test-web: skip (TG_ID and TG_HASH are absent)')
+  process.exit(0)
+}
+if (!/^[1-9]\d*$/.test(apiId) || !/^[a-fA-F\d]{32}$/.test(apiHash)) {
+  console.error(
+    'integration-test-web: TG_ID or TG_HASH is not in the shape the app accepts',
+  )
+  process.exit(1)
+}
+
 if (!root || !existsSync(join(root, 'index.html'))) {
   console.error('integration-test-web: CRM_CHAT_WEBSITE is not a website build')
   process.exit(1)
@@ -618,13 +632,6 @@ if (!playwrightCore || !chromium || !existsSync(chromium)) {
 }
 if (!existsSync(tdqr)) {
   console.error('integration-test-web: saved-session helper is missing')
-  process.exit(1)
-}
-
-const apiId = process.env.TG_ID ?? ''
-const apiHash = process.env.TG_HASH ?? ''
-if (!/^[1-9]\d*$/.test(apiId) || !/^[a-fA-F\d]{32}$/.test(apiHash)) {
-  console.error('integration-test-web: app scope did not provide TG_ID and TG_HASH')
   process.exit(1)
 }
 
@@ -714,6 +721,12 @@ const watch = page => {
     ) {
       timing.auth.push(redact(text))
       note(text)
+      // The page replaces a wedged wasm runtime and logs `tdlib reopen`.
+      // The Aborted() line from that wedge is not a failed login.
+      if (text.startsWith('tdlib reopen') && faults.length > 0) {
+        faults.length = 0
+        note('runtime fault cleared after tdlib reopen')
+      }
     }
     if (/Check `|FATAL|\.cpp\b/.test(text)) {
       note(`tdlib ${redact(text).slice(0, 300)}`)
@@ -804,6 +817,42 @@ const shot = async (page, name) => {
     return
   }
   await page.screenshot({ path: join(shots, name), fullPage: true }).catch(() => undefined)
+}
+const compareShots = async shotDir => {
+  const script =
+    process.env.CRM_CHAT_WEB_SHOT_COMPARE ??
+    fileURLToPath(new URL('./web_shot_compare.py', import.meta.url))
+  const webk =
+    process.env.CRM_CHAT_WEBK_SHOTS ??
+    join(
+      process.env.HOME ?? '',
+      '.local/state/kam-t3/shots/telegram-web-k',
+    )
+  await new Promise((resolve, reject) => {
+    const child = spawn(python, [script, shotDir, webk], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let out = ''
+    const take = chunk => {
+      out += String(chunk)
+    }
+    child.stdout.on('data', take)
+    child.stderr.on('data', take)
+    child.on('error', reject)
+    child.on('close', code => {
+      for (const line of out.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed !== '') {
+          note(trimmed)
+        }
+      }
+      if (code !== 0) {
+        reject(fail('screenshot comparison against Telegram Web K failed'))
+        return
+      }
+      resolve()
+    })
+  })
 }
 const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
   const deadline = Date.now() + reloadBudgetMs
@@ -1209,12 +1258,14 @@ try {
     const snapshotLines = timing.auth
       .slice(authFrom)
       .filter(line => line.startsWith('tdlib snapshot'))
-    if (
-      snapshotLines.length === 0 ||
-      snapshotLines.some(
-        line => !line.includes(' checkpointed') || line.includes(' skip='),
-      )
-    ) {
+    // A fault after Ready reopens TDLib on the hot database. That copy has
+    // already dropped its wal, so the second install log has no "checkpointed"
+    // word and no skip reason. The first install still has to have folded one.
+    const checkpointed = snapshotLines.some(line =>
+      line.includes(' checkpointed'),
+    )
+    const skipped = snapshotLines.some(line => line.includes(' skip='))
+    if (snapshotLines.length === 0 || !checkpointed || skipped) {
       throw fail(
         `redeploy snapshot was not checkpointed (${snapshotLines.join(' | ') || 'no snapshot'})`,
       )
@@ -1397,6 +1448,7 @@ try {
     throw fail(`snapshot was not checkpointed (${skipped})`)
   }
   assertNoFaults()
+  await compareShots(shots)
   note('PASS')
 } catch (error) {
   failed = true

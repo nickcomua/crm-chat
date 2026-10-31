@@ -181,3 +181,34 @@ Tokens and secret values are not printed. Output is pass, or a TDLib error
 code.
 
 Do not paste command output that contains secret values.
+
+## Web integration test
+
+The browser check is separate from `nix flake check` and from the desktop
+`integration-test` app. It drives the built website in both Playwright
+Chromium and the system Chromium:
+
+    nix run .#integration-test-web --accept-flake-config
+
+It needs network, `bws` and `secretspec` on `PATH`, and the user-local BWS
+config. The app scope must resolve `TG_ID` and `TG_HASH`. When both are
+absent, the command prints `integration-test-web: skip (TG_ID and TG_HASH
+are absent)` and exits 0, so a run without the vault does not fail.
+`nix flake check` covers that skip without contacting BWS
+(`checks.<system>.integration-web-skip`). A value that is present but not
+in the shape the app accepts still fails.
+
+The test does not implement phone, code, or 2FA login. That login UI belongs
+to KAM-42. This harness covers the QR login that is already on main: a copy
+of saved test account 1 approves the code, then the page must show a chat
+list with a real last-message preview, open that chat, survive a reload, and
+survive a redeploy from the previous website bundle onto the new one. It
+does not create Telegram accounts. It does not log the saved desktop session
+out. It does not print secrets, phone numbers, login links, or user ids.
+
+Screenshots, with the QR blurred, are written to
+`~/.local/state/kam-t3/shots/kam-57/<browser>/`. The run compares the chat
+column and the composer band with the Telegram Web K captures in
+`~/.local/state/kam-t3/shots/telegram-web-k/` (`k-02-qr-blurred.png`,
+`k-03-chat-list.png`, `k-04-open-chat.png`). A saved QR that a barcode
+decoder can still read fails the run.
