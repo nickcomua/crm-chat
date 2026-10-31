@@ -187,6 +187,36 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
   )
 })
 
+test('a workspace failure is one line and a healthy store adds none', () => {
+  const notice = 'Person notes are unavailable (https://crm-chat.example)'
+  scene(
+    { update, view },
+    given(initialModel),
+    expect(role('status', { name: 'Person notes' })).not.toExist(),
+    expect(role('region', { name: 'Telegram login' })).not.toContainText(
+      'Person notes are unavailable',
+    ),
+  )
+  scene(
+    { update, view },
+    given(modifyFields(initialModel, { workspaceNotice: () => notice })),
+    expect(role('status', { name: 'Person notes' })).toHaveText(notice),
+  )
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        login: () => ({ _tag: 'Closed' }),
+        accounts: () => [account],
+        selectedAccountId: () => account.id,
+        workspaceNotice: () => notice,
+      }),
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(notice),
+    expect(role('status', { name: 'Person notes' })).toHaveText(notice),
+  )
+})
+
 test('supplied application credentials are not rendered as inputs', () => {
   scene(
     { update, view },

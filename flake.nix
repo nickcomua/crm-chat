@@ -74,6 +74,7 @@
             (pkgs.lib.fileset.maybeMissing ./integration))
           ./integration/desktop/Cargo.toml
           ./integration/desktop/src
+          ./crates/workspace/src/schema_v1.sql
           ./third_party/tdlib-rs/tdlib-rs/tl
         ];
         src = pkgs.lib.fileset.toSource {
@@ -237,7 +238,7 @@
             doInstallCargoArtifacts = false;
             buildPhaseCargoCommand = ''
               export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
-              cargo test -p crm-chat-core -p crm-chat-telegram --locked
+              cargo test -p crm-chat-core -p crm-chat-telegram -p crm-chat-workspace --locked
               # Offline half of the desktop integration test. Credentials and
               # saved accounts stay in the integration-test app (network, BWS).
               cargo test -p crm-chat-integration-desktop --locked

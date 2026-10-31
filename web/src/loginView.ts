@@ -11,6 +11,7 @@ import { countryFlag } from './flag'
 import { Login } from './login'
 import type { Model } from './main'
 import { Message } from './message'
+import { personNotesNotice } from './shellView'
 
 const fieldClass = 'tg-input'
 
@@ -316,6 +317,7 @@ export const loginScreen = (model: Model, h: HtmlBuilder<Message>) => {
       h.section(
         [h.Class('login-card'), h.AriaLabel('Telegram login')],
         [
+          personNotesNotice(model.workspaceNotice, h),
           showLogo ? logo(h) : h.empty,
           model.login._tag === 'Qr'
             ? h.empty

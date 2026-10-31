@@ -6,6 +6,7 @@ import { StoredFace } from './chatFace'
 import type { Chat } from './generated/core'
 import { type AuthStep, type ChatPreview, TdAccount } from './tdlibProtocol'
 import { browserRuntime } from './tdlibWasm'
+import { noteLoggedOut, rememberAccounts } from './workspace'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -155,7 +156,11 @@ export const restoreAccounts = async (
       apiId: String(apiId),
       apiHash,
     })
-    return Array.isArray(value) ? value.map(decodeAccount) : []
+    const accounts = Array.isArray(value) ? value.map(decodeAccount) : []
+    await rememberAccounts(
+      accounts.map(account => ({ id: account.id, title: account.title })),
+    )
+    return accounts
   }
   const accounts = await browserRuntime.restore(apiId, apiHash)
   const loaded = []
@@ -163,6 +168,9 @@ export const restoreAccounts = async (
     sessions.set(account.id, account)
     loaded.push(await account.readAccount())
   }
+  await rememberAccounts(
+    loaded.map(account => ({ id: account.id, title: account.title })),
+  )
   return loaded
 }
 
@@ -192,6 +200,15 @@ export const AuthResult = defineTaggedUnion({
 })
 export type AuthResult = typeof AuthResult.Type
 
+const rememberResult = async (result: AuthResult): Promise<AuthResult> => {
+  if (result._tag === 'Authorized') {
+    await rememberAccounts([
+      { id: result.account.id, title: result.account.title },
+    ])
+  }
+  return result
+}
+
 const withFaces = (session: TdAccount, result: AuthResult): AuthResult => {
   if (result._tag !== 'Authorized' || session.previews.length === 0) {
     return result
@@ -212,13 +229,16 @@ const sessionFor = (id: string): TdAccount => {
 export const loadAccount = async (id: string): Promise<Account> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
-    return decodeAccount(await invoke('telegram_load_account', { id }))
+    const account = decodeAccount(await invoke('telegram_load_account', { id }))
+    await rememberAccounts([{ id: account.id, title: account.title }])
+    return account
   }
   const session = sessionFor(id)
   const account = await session.readAccount()
   if (session.chatListError !== undefined) {
     throw new Error(session.chatListError)
   }
+  await rememberAccounts([{ id: account.id, title: account.title }])
   return account
 }
 
@@ -242,21 +262,23 @@ export const beginLogin = async (
 ): Promise<AuthResult> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
-    return nativeAuth(
-      await invoke('telegram_begin_login', {
-        id,
-        phone,
-        qr,
-        apiId: String(apiId),
-        apiHash,
-      }),
+    return rememberResult(
+      await nativeAuth(
+        await invoke('telegram_begin_login', {
+          id,
+          phone,
+          qr,
+          apiId: String(apiId),
+          apiHash,
+        }),
+      ),
     )
   }
   const account = await browserRuntime.open(id, apiId, apiHash)
   sessions.set(id, account)
   try {
     const step = qr ? await account.beginQr() : await account.beginPhone(phone)
-    return withFaces(account, await toAuthResult(step))
+    return rememberResult(withFaces(account, await toAuthResult(step)))
   } catch (error) {
     if (account.phase._tag !== 'Ready') {
       sessions.delete(id)
@@ -272,10 +294,14 @@ export const submitCode = async (
 ): Promise<AuthResult> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
-    return nativeAuth(await invoke('telegram_submit_code', { id, code }))
+    return rememberResult(
+      await nativeAuth(await invoke('telegram_submit_code', { id, code })),
+    )
   }
   const session = sessionFor(id)
-  return withFaces(session, await toAuthResult(await session.submitCode(code)))
+  return rememberResult(
+    withFaces(session, await toAuthResult(await session.submitCode(code))),
+  )
 }
 
 export const submitPassword = async (
@@ -284,24 +310,32 @@ export const submitPassword = async (
 ): Promise<AuthResult> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
-    return nativeAuth(
-      await invoke('telegram_submit_password', { id, password }),
+    return rememberResult(
+      await nativeAuth(
+        await invoke('telegram_submit_password', { id, password }),
+      ),
     )
   }
   const session = sessionFor(id)
-  return withFaces(
-    session,
-    await toAuthResult(await session.submitPassword(password)),
+  return rememberResult(
+    withFaces(
+      session,
+      await toAuthResult(await session.submitPassword(password)),
+    ),
   )
 }
 
 export const pollAccount = async (id: string): Promise<AuthResult> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
-    return nativeAuth(await invoke('telegram_poll', { id }))
+    return rememberResult(
+      await nativeAuth(await invoke('telegram_poll', { id })),
+    )
   }
   const session = sessionFor(id)
-  return withFaces(session, await toAuthResult(await session.poll()))
+  return rememberResult(
+    withFaces(session, await toAuthResult(await session.poll())),
+  )
 }
 
 export const pollQr = pollAccount
@@ -317,4 +351,5 @@ export const removeConnection = async (id: string): Promise<void> => {
   if (session) {
     await session.logout()
   }
+  await noteLoggedOut(id)
 }
