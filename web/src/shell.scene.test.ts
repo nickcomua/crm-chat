@@ -23,6 +23,17 @@ const signedIn = modifyFields(initialModel, {
   faces: () => fixtureFaces(),
 })
 
+test('a healthy workspace does not add a person-notes line', () => {
+  scene(
+    { update, view },
+    given(signedIn),
+    expect(role('status', { name: 'Person notes' })).not.toExist(),
+    expect(role('region', { name: 'Telegram chats' })).not.toContainText(
+      'Person notes are unavailable',
+    ),
+  )
+})
+
 test('opens a fixture chat, shows a caption, and returns with back', () => {
   scene(
     { update, view },
@@ -129,7 +140,9 @@ test('the Groups folder shows only groups', () => {
     expect(role('tab', { name: 'All' })).toExist(),
     click(role('tab', { name: 'Groups' })),
     expectAll(all.role('listitem')).toHaveCount(4),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Book club'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'Book club',
+    ),
     expect(role('region', { name: 'Telegram chats' })).toContainText('Ops'),
     expect(role('region', { name: 'Telegram chats' })).not.toContainText('Ada'),
     expect(role('region', { name: 'Telegram chats' })).not.toContainText(

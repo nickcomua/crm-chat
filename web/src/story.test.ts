@@ -8,6 +8,7 @@ import {
   Disconnect,
   Message,
   type Model,
+  OpenWorkspace,
   Refresh,
   Restore,
   initialModel,
@@ -240,10 +241,18 @@ test('startup restores a saved account after credentials load', () => {
       expect(current.selectedAccountId).toBe('first')
       expect(current.faces[0]?.preview).toBe('joined Telegram')
     }),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     message(
       Message.CompletedLoadAppCredentials({
         credentials: { _tag: 'Absent' },
       }),
+    ),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
     ),
     model(current => {
       expect(current.accounts).toEqual([first])
