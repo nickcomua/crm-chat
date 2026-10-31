@@ -31,18 +31,19 @@ Application credentials, the same key names the legacy worker read:
 Integration-test account material, optional so a missing test secret does not
 block the app:
 
-- `TG_API_ID_1`, `TG_API_HASH_1`, `TG_SESSION_FILE_1`, `TG_USER_ID_1`
-- `TG_API_ID_2`, `TG_API_HASH_2`, `TG_SESSION_FILE_2`
+- `TG_API_ID_1`, `TG_API_HASH_1`, `TG_USER_ID_1`
+- `TG_API_ID_2`, `TG_API_HASH_2`
+- `TG_USER_NUMERIC_ID_1`, `TG_USER_NUMERIC_ID_2`
 
-Those file and `TG_USER_ID_1` names are legacy entries already in BWS. The
-login command does not read, overwrite, change, or delete them.
+Those names are leftovers already stored in BWS. The TDLib login command and
+the integration test do not read or write them. Do not delete or change the
+BWS entries.
 
-The authenticated check uses these optional keys instead:
-
-- `TG_SESSION_GRAMMERS_1`, `TG_USER_NUMERIC_ID_1`
-- `TG_SESSION_GRAMMERS_2`, `TG_USER_NUMERIC_ID_2`
-
-`TG_SESSION_GRAMMERS_<slot>` is a base64 grammers SqliteSession. `TG_USER_NUMERIC_ID_<slot>` is the decimal user id from `getMe()`. Both are written only by the login command below.
+`TG_SESSION_FILE_1`, `TG_SESSION_FILE_2`, `TG_SESSION_GRAMMERS_1`, and
+`TG_SESSION_GRAMMERS_2` are not declared. Nothing in this repo reads them.
+If those names still exist in BWS, leave them. Do not delete or change them.
+The authenticated check copies the desktop TDLib directory. It does not read
+a session file or a grammers session.
 
 `CACHIX_AUTH_TOKEN` remains optional build-tooling material. GitHub Actions
 still reads that token from GitHub's secret store. Local BWS configuration is
@@ -108,10 +109,11 @@ BWS CLI can place it on a process command line. Do not paste it into chat,
 tickets, pull requests, or commits. Repeat for `TG_HASH` if you need to
 rotate the application credentials.
 
-Do not use `secretspec set` for `TG_SESSION_GRAMMERS_<slot>` or
-`TG_USER_NUMERIC_ID_<slot>`. Those are written by the login command, which
-refuses when the name already exists. It never overwrites, changes, or
-deletes an existing BWS entry.
+Do not delete or change an existing BWS entry. `secretspec set` is how you
+rotate `TG_ID` and `TG_HASH`. Do not use it to overwrite leftover test-account
+names. The TDLib login command does not write `TG_USER_NUMERIC_ID_<slot>`,
+and it does not write session files or grammers sessions, because those
+session names are not declared.
 
 Check resolution without printing values:
 
@@ -142,9 +144,9 @@ It does not overwrite, change, or delete an existing BWS entry. It does not
 print the session, a user id, the phone number, the code, the password, the
 API hash, or vault identifiers.
 
-`TG_SESSION_GRAMMERS_<slot>` and `TG_USER_NUMERIC_ID_<slot>` are leftover
-declarations. Do not delete or change those BWS entries. The login command
-does not read them.
+`TG_USER_NUMERIC_ID_1` and `TG_USER_NUMERIC_ID_2` stay optional declarations.
+The login command does not read or write them. Session-file and grammers
+session names are not declared. Do not delete or change those BWS entries.
 
 Do not create Telegram accounts with this command. A phone that is not
 already registered is rejected.
@@ -152,7 +154,11 @@ already registered is rejected.
 ## Integration test
 
 `nix flake check` does not call Telegram or BWS. Its sandbox has neither
-network nor vault access. From this repository, with `bws` on `PATH` and the
+network nor vault access. The check `integration-offline` runs the integration
+binary's `shape` command, which asserts the desktop `Authorized` JSON and does
+not open a database. `credentials` and `account` stay in the app below.
+
+From this repository, with `bws` on `PATH` and the
 user-local SecretSpec config in place. Use the workstation `secretspec` on
 `PATH` (the one that can reach BWS), not a bare Nix package that has no
 vault token:
@@ -165,10 +171,11 @@ It fails if `TG_ID` or `TG_HASH` do not resolve, or if they are not in the
 shape the apps accept. The app scope must inject only those two Telegram keys.
 The same values are then used for a real TDLib connection. The check opens a
 throwaway database, requests QR login, and requires Telegram to accept the
-application credentials. It does not print the login link. It then looks for
-logged-in accounts in the desktop TDLib directory. If that directory has no
-account, the command prints `NEEDS TEST ACCOUNTS:` and exits 2. It does not
-read BWS session entries.
+application credentials. It does not print the login link. It then copies the
+desktop TDLib directory and restores logged-in accounts from the copy. Each
+account must match the desktop `Authorized` shape. The saved directory is not
+modified. If it has no account, the command prints `NEEDS TEST ACCOUNTS:` and
+exits 2. It does not read BWS session entries.
 
 Tokens and secret values are not printed. Output is pass, or a TDLib error
 code.

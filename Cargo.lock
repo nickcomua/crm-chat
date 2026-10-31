@@ -504,9 +504,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "crm-chat-integration-desktop"
+version = "0.1.0"
+dependencies = [
+ "crm-chat-telegram",
+ "tokio",
+]
+
+[[package]]
 name = "crm-chat-telegram"
 version = "0.1.0"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "tdlib-rs",

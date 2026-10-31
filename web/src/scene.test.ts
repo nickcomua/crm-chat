@@ -6,6 +6,7 @@ import {
   expect,
   expectAll,
   given,
+  nth,
   role,
   scene,
   type,
@@ -15,6 +16,7 @@ import { test } from 'vitest'
 
 import {
   BeginLogin,
+  LoadHistory,
   Message,
   Refresh,
   SubmitAnswer,
@@ -38,13 +40,14 @@ test('phone login requests 2FA then loads distinct chat types', () => {
   scene(
     { update, view },
     given(initialModel),
+    click(role('button', { name: 'Log in by phone number' })),
     type(role('textbox', { name: 'API ID' }), '12345'),
     type(
       role('textbox', { name: 'API hash' }),
       '0123456789abcdef0123456789abcdef',
     ),
     type(role('textbox', { name: 'Phone number' }), '+31000000000'),
-    click(role('button', { name: 'Log in with phone' })),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       BeginLogin,
       Message.SucceededAuthenticate({
@@ -73,9 +76,56 @@ test('phone login requests 2FA then loads distinct chat types', () => {
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('region', { name: 'Telegram login' })).not.toExist(),
     expectAll(all.role('listitem')).toHaveCount(3),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Dialog'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Group'),
-    expect(role('region', { name: 'Telegram chats' })).toContainText('Channel'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'personal chat',
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('group'),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('channel'),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'Select a chat to start messaging',
+    ),
+  )
+})
+
+test('opening a chat loads its message history', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        login: () => ({ _tag: 'Closed' }),
+        accounts: () => [account],
+        selectedAccountId: () => 'one',
+        faces: () => [
+          {
+            id: 'one:1',
+            time: '12:00',
+            preview: 'Bring the notes.',
+            unread: 0,
+            receipt: 'none',
+            lines: [],
+          },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'Bring the notes.',
+    ),
+    click(nth(all.role('listitem'), 0)),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'one:1',
+        lines: [
+          { text: 'See you at the station.', mine: false, time: '12:04' },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'See you at the station.',
+    ),
+    expect(role('region', { name: 'Open chat' })).not.toContainText(
+      'No messages yet',
+    ),
   )
 })
 
@@ -88,7 +138,7 @@ test('QR login displays a scannable image', () => {
         apiHash: () => Redacted.make('0123456789abcdef0123456789abcdef'),
       }),
     ),
-    click(role('button', { name: 'Log in with QR' })),
+    click(role('button', { name: 'Log in by QR code' })),
     Command.resolve(
       BeginLogin,
       Message.SucceededAuthenticate({
@@ -133,7 +183,7 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
     expect(role('alert')).not.toExist(),
-    expect(role('heading', { name: 'Telegram chats' })).toExist(),
+    expect(role('region', { name: 'Telegram chats' })).toExist(),
   )
 })
 
@@ -149,7 +199,14 @@ test('supplied application credentials are not rendered as inputs', () => {
     ),
     expect(role('textbox', { name: 'API ID' })).not.toExist(),
     expect(role('textbox', { name: 'API hash' })).not.toExist(),
+    expect(role('textbox', { name: 'Phone number' })).not.toExist(),
+    expect(role('checkbox', { name: 'Keep me signed in' })).not.toExist(),
+    expect(role('button', { name: 'Log in by QR code' })).toExist(),
+    expect(role('button', { name: 'Log in by phone number' })).toExist(),
+    click(role('button', { name: 'Log in by phone number' })),
+    expect(role('button', { name: 'Country' })).toExist(),
     expect(role('textbox', { name: 'Phone number' })).toExist(),
-    expect(role('button', { name: 'Log in with QR' })).toExist(),
+    expect(role('region', { name: 'Telegram login' })).toContainText('+31'),
+    expect(role('checkbox', { name: 'Keep me signed in' })).not.toExist(),
   )
 })

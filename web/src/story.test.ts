@@ -217,12 +217,28 @@ test('startup restores a saved account after credentials load', () => {
       expect(current.appCredentials).toBe('Supplied')
       expect(current.status).toBe('Busy')
     }),
-    Command.resolve(Restore, Message.CompletedRestore({ accounts: [first] })),
-    Command.resolve(Refresh, Message.SucceededRefresh({ account: first })),
+    Command.resolve(
+      Restore,
+      Message.CompletedRestore({
+        accounts: [first],
+        faces: [
+          {
+            id: 'first:1',
+            time: '18:35',
+            preview: 'joined Telegram',
+            unread: 0,
+            receipt: 'none',
+            lines: [],
+          },
+        ],
+      }),
+    ),
     model(current => {
       expect(current.login._tag).toBe('Closed')
+      expect(current.status).toBe('Ready')
       expect(current.accounts).toEqual([first])
       expect(current.selectedAccountId).toBe('first')
+      expect(current.faces[0]?.preview).toBe('joined Telegram')
     }),
     message(
       Message.CompletedLoadAppCredentials({

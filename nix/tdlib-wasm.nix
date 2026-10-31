@@ -4,10 +4,11 @@
   fetchurl,
   cmake,
   gperf,
-  perl,
+  ninja,
   python311,
   pkg-config,
   emscripten,
+  opensslWasm,
   tdlibSrc,
 }:
 stdenv.mkDerivation {
@@ -15,11 +16,6 @@ stdenv.mkDerivation {
   version = "1.8.69";
 
   src = tdlibSrc;
-
-  opensslSrc = fetchurl {
-    url = "https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_0l.tar.gz";
-    hash = "sha256-4qzwz1jZv/K0Ly3ArueTQMj/4sXkXTykUz3V1PV3Wx0=";
-  };
 
   # emscripten 3.1.1's zlib port. TDLib's wasm flags pass -s USE_ZLIB=1, and
   # the port fetcher names the cache file from the first dot in the URL leaf
@@ -32,7 +28,7 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     cmake
     gperf
-    perl
+    ninja
     python311
     pkg-config
     emscripten
@@ -50,15 +46,11 @@ stdenv.mkDerivation {
         export EM_CACHE=$TMPDIR/emscripten-cache
         export CMAKE_BUILD_PARALLEL_LEVEL=''${NIX_BUILD_CORES:-4}
         cd example/web
-        # OpenSSL's Configure starts with #!/usr/bin/env perl. The Nix sandbox has
-        # no /usr/bin/env, so that exec fails with ENOENT. Repack the pinned
-        # tarball with a store perl shebang, then run the official scripts.
-        tar -xzf $opensslSrc
-        sed -i "1s|.*|#!${perl}/bin/perl|" openssl-OpenSSL_1_1_0l/Configure
-        tar -czf OpenSSL_1_1_0l.tar.gz openssl-OpenSSL_1_1_0l
-        rm -rf openssl-OpenSSL_1_1_0l
-        chmod +x build-openssl.sh build-tdlib.sh
-        ./build-openssl.sh
+        # OpenSSL comes from nix/openssl-wasm.nix. example/web/build-tdlib.sh
+        # reads ./build/crypto and does not delete that directory.
+        mkdir -p build
+        ln -s ${opensslWasm} build/crypto
+        chmod +x build-tdlib.sh
         # CMake 4's FindThreads probes emscripten 3.1.1 and fails. The C++17 flag
         # probe also fails in the sandbox even though em++ accepts -std=c++17, so
         # that result is set directly. The native generate step does not set
@@ -73,9 +65,14 @@ stdenv.mkDerivation {
       add_library(Threads::Threads INTERFACE IMPORTED)
     endif()
     EOF
+        # option(TD_ENABLE_LTO) in TDLib's CMakeLists has no default, so CMake
+        # leaves it OFF. example/web/build-tdlib.sh does not pass it either.
+        # -DTD_ENABLE_LTO=OFF matches that official web build. Ninja replaces
+        # Unix Makefiles. BUILD_TESTING=OFF skips test/; td_wasm does not link it.
         sed -i \
-          "s|eval emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel|eval env -u CC -u CXX -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CMAKE_INCLUDE_PATH -u CMAKE_LIBRARY_PATH -u CMAKE_PREFIX_PATH emcmake cmake -DCMAKE_TOOLCHAIN_FILE=${emscripten}/emscripten/cmake/Modules/Platform/Emscripten.cmake -DCMAKE_MODULE_PATH=\$TMPDIR/cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DHAVE_STD17=TRUE -DCMAKE_CXX_FLAGS=-std=c++17 -DCMAKE_BUILD_TYPE=MinSizeRel|" \
+          "s|eval emcmake cmake -DCMAKE_BUILD_TYPE=MinSizeRel|eval env -u CC -u CXX -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CMAKE_INCLUDE_PATH -u CMAKE_LIBRARY_PATH -u CMAKE_PREFIX_PATH emcmake cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=${emscripten}/emscripten/cmake/Modules/Platform/Emscripten.cmake -DCMAKE_MODULE_PATH=\$TMPDIR/cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DHAVE_STD17=TRUE -DCMAKE_CXX_FLAGS=-std=c++17 -DTD_ENABLE_LTO=OFF -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=MinSizeRel|" \
           build-tdlib.sh
+        sed -i 's|cmake -DTD_GENERATE_SOURCE_FILES=ON|cmake -G Ninja -DTD_GENERATE_SOURCE_FILES=ON|' build-tdlib.sh
         mkdir -p $EM_CACHE/ports/zlib
         cp $zlibPort $EM_CACHE/ports/zlib.2.11.zip
         python3 -c 'import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' $zlibPort $EM_CACHE/ports/zlib

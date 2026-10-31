@@ -2,9 +2,10 @@ import * as Schema from 'effect/Schema'
 import { defineTaggedUnion } from 'foldkit/schema'
 import QRCode from 'qrcode'
 
+import { StoredFace } from './chatFace'
 import type { Chat } from './generated/core'
+import { type AuthStep, type ChatPreview, TdAccount } from './tdlibProtocol'
 import { browserRuntime } from './tdlibWasm'
-import { type AuthStep, TdAccount } from './tdlibProtocol'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -61,17 +62,16 @@ const nativeAuth = async (value: unknown): Promise<AuthResult> => {
   if (!isRecord(value) || typeof value['_tag'] !== 'string') {
     throw new Error('Telegram could not complete the request.')
   }
-  const id = stringField(value, 'id')
   if (value['_tag'] === 'Code') {
-    return { _tag: 'Code', id }
+    return { _tag: 'Code', id: stringField(value, 'id') }
   }
   if (value['_tag'] === 'Password') {
-    return { _tag: 'Password', id }
+    return { _tag: 'Password', id: stringField(value, 'id') }
   }
   if (value['_tag'] === 'Qr') {
     return {
       _tag: 'Qr',
-      id,
+      id: stringField(value, 'id'),
       image: await QRCode.toDataURL(stringField(value, 'link')),
     }
   }
@@ -134,7 +134,9 @@ export const toAuthResult = async (step: AuthStep): Promise<AuthResult> => {
 export const loadMessages = async (
   id: string,
   chatId: string,
-): Promise<Array<{ id: string; text: string; outgoing: boolean; date: number }>> => {
+): Promise<
+  Array<{ id: string; text: string; outgoing: boolean; date: number }>
+> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
     const value = await invoke('telegram_messages', { id, chatId })
@@ -176,13 +178,26 @@ export const Account = Schema.Struct({
 })
 export type Account = typeof Account.Type
 
+const storedFaces = (previews: ReadonlyArray<ChatPreview>): Array<StoredFace> =>
+  previews.map(preview => ({ ...preview, lines: [] }))
+
 export const AuthResult = defineTaggedUnion({
   Code: { id: Schema.String },
   Password: { id: Schema.String },
   Qr: { id: Schema.String, image: Schema.String },
-  Authorized: { account: Account },
+  Authorized: {
+    account: Account,
+    faces: Schema.optional(Schema.Array(StoredFace)),
+  },
 })
 export type AuthResult = typeof AuthResult.Type
+
+const withFaces = (session: TdAccount, result: AuthResult): AuthResult => {
+  if (result._tag !== 'Authorized' || session.previews.length === 0) {
+    return result
+  }
+  return { ...result, faces: storedFaces(session.previews) }
+}
 
 const sessions = new Map<string, TdAccount>()
 
@@ -199,7 +214,23 @@ export const loadAccount = async (id: string): Promise<Account> => {
   if (invoke !== undefined) {
     return decodeAccount(await invoke('telegram_load_account', { id }))
   }
-  return sessionFor(id).readAccount()
+  const session = sessionFor(id)
+  const account = await session.readAccount()
+  if (session.chatListError !== undefined) {
+    throw new Error(session.chatListError)
+  }
+  return account
+}
+
+export const accountFaces = (id: string): Array<StoredFace> => {
+  if (tauriInvoke() !== undefined) {
+    return []
+  }
+  const session = sessions.get(id)
+  if (session === undefined) {
+    return []
+  }
+  return storedFaces(session.previews)
 }
 
 export const beginLogin = async (
@@ -225,10 +256,12 @@ export const beginLogin = async (
   sessions.set(id, account)
   try {
     const step = qr ? await account.beginQr() : await account.beginPhone(phone)
-    return await toAuthResult(step)
+    return withFaces(account, await toAuthResult(step))
   } catch (error) {
-    sessions.delete(id)
-    await account.logout()
+    if (account.phase._tag !== 'Ready') {
+      sessions.delete(id)
+      await account.logout()
+    }
     throw error
   }
 }
@@ -241,7 +274,8 @@ export const submitCode = async (
   if (invoke !== undefined) {
     return nativeAuth(await invoke('telegram_submit_code', { id, code }))
   }
-  return toAuthResult(await sessionFor(id).submitCode(code))
+  const session = sessionFor(id)
+  return withFaces(session, await toAuthResult(await session.submitCode(code)))
 }
 
 export const submitPassword = async (
@@ -254,7 +288,11 @@ export const submitPassword = async (
       await invoke('telegram_submit_password', { id, password }),
     )
   }
-  return toAuthResult(await sessionFor(id).submitPassword(password))
+  const session = sessionFor(id)
+  return withFaces(
+    session,
+    await toAuthResult(await session.submitPassword(password)),
+  )
 }
 
 export const pollAccount = async (id: string): Promise<AuthResult> => {
@@ -262,7 +300,8 @@ export const pollAccount = async (id: string): Promise<AuthResult> => {
   if (invoke !== undefined) {
     return nativeAuth(await invoke('telegram_poll', { id }))
   }
-  return toAuthResult(await sessionFor(id).poll())
+  const session = sessionFor(id)
+  return withFaces(session, await toAuthResult(await session.poll()))
 }
 
 export const pollQr = pollAccount

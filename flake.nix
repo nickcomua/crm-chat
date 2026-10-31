@@ -10,6 +10,10 @@
       url = "https://flakehub.com/f/nix-community/fenix/0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # PR #9 base, nick/kam-43-tdlib. The web test logs in on this website,
+    # then redeploys the current one on the same origin.
+    prBase.url = "github:nickcomua/crm-chat/d4770a4e547d610cc5868908c24071f275ded4cf";
   };
 
   nixConfig = {
@@ -30,6 +34,7 @@
     nixpkgs,
     crane,
     fenix,
+    prBase,
   }: let
     systems = [
       "x86_64-linux"
@@ -50,8 +55,9 @@
         ];
         tdlib = pkgs.callPackage ./nix/tdlib.nix {};
         emscripten = pkgs.callPackage ./nix/emscripten.nix {};
+        opensslWasm = pkgs.callPackage ./nix/openssl-wasm.nix {inherit emscripten;};
         tdlibWasm = pkgs.callPackage ./nix/tdlib-wasm.nix {
-          inherit emscripten;
+          inherit emscripten opensslWasm;
           tdlibSrc = tdlib.src;
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
@@ -66,8 +72,9 @@
           (pkgs.lib.fileset.difference
             (craneLib.fileset.commonCargoSources ./.)
             (pkgs.lib.fileset.maybeMissing ./integration))
+          ./integration/desktop/Cargo.toml
+          ./integration/desktop/src
           ./third_party/tdlib-rs/tdlib-rs/tl
-          ./nix/tdlib.nix
         ];
         src = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -107,7 +114,21 @@
           version = "0.1.0";
           src = pkgs.lib.fileset.toSource {
             root = ./web;
-            fileset = pkgs.lib.fileset.difference ./web (pkgs.lib.fileset.maybeMissing ./web/repos);
+            fileset = pkgs.lib.fileset.unions [
+              ./web/package.json
+              ./web/package-lock.json
+              ./web/index.html
+              ./web/preview.html
+              ./web/tsconfig.json
+              ./web/vite.config.ts
+              ./web/vitest.config.ts
+              ./web/eslint.config.js
+              ./web/.oxlintrc.json
+              ./web/.oxlintrc.effect.json
+              ./web/.oxfmtrc.json
+              ./web/src
+              ./web/public
+            ];
           };
           npmDeps = pkgs.importNpmLock {npmRoot = ./web;};
           npmConfigHook = pkgs.importNpmLock.npmConfigHook;
@@ -198,10 +219,12 @@
             '';
           }
         );
-        coreTypes = craneLib.mkCargoDerivation (
+        # One cargo test builds both packages. coreTypes and telegramTests are
+        # the same derivation so flake check does not compile the workspace twice.
+        cargoTests = craneLib.mkCargoDerivation (
           commonArgs
           // {
-            pname = "crm-chat-core-types";
+            pname = "crm-chat-cargo-tests";
             version = "0.1.0";
             inherit cargoArtifacts;
             src = pkgs.lib.fileset.toSource {
@@ -213,7 +236,12 @@
             };
             doInstallCargoArtifacts = false;
             buildPhaseCargoCommand = ''
-              cargo test -p crm-chat-core --locked
+              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
+              cargo test -p crm-chat-core -p crm-chat-telegram --locked
+              # Offline half of the desktop integration test. Credentials and
+              # saved accounts stay in the integration-test app (network, BWS).
+              cargo test -p crm-chat-integration-desktop --locked
+              cargo run -p crm-chat-integration-desktop --locked -- shape
             '';
             installPhaseCommand = ''
               mkdir -p $out
@@ -238,6 +266,69 @@
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           exec ${pkgs.bash}/bin/bash ${./integration/run.sh}
         '';
+        integrationTestWeb = pkgs.writeShellScript "crm-chat-integration-test-web" ''
+          set -euo pipefail
+          export PATH=${
+            pkgs.lib.makeBinPath [
+              pkgs.nodejs
+              pkgs.zbar
+            ]
+          }:$PATH
+          export CRM_CHAT_WEBSITE=${website}
+          export CRM_CHAT_WEBSITE_PREVIOUS=${
+            if system == "x86_64-linux"
+            then prBase.packages.${system}.website
+            else website
+          }
+          export CRM_CHAT_WEBSITE_SERVE=${./integration/website_serve.py}
+          export CRM_CHAT_PYTHON=${pkgs.python3}/bin/python3
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          export PLAYWRIGHT_CORE=${pkgs.playwright-driver}/index.mjs
+          browsers=${pkgs.playwright-driver.browsers}
+          playwright_chrome=
+          for candidate in "$browsers"/chromium-*/chrome-linux64/chrome "$browsers"/chromium-*/chrome-linux/chrome; do
+            if [ -x "$candidate" ]; then
+              playwright_chrome=$candidate
+              break
+            fi
+          done
+          if [ -z "$playwright_chrome" ]; then
+            echo "integration-test-web: Playwright Chromium is missing from the nix package" >&2
+            exit 1
+          fi
+          system_chrome=$(command -v chromium || true)
+          if [ -z "$system_chrome" ] || [ ! -x "$system_chrome" ]; then
+            echo "integration-test-web: system chromium is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v secretspec >/dev/null 2>&1; then
+            echo "integration-test-web: secretspec is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v bws >/dev/null 2>&1; then
+            echo "integration-test-web: bws is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v zbarimg >/dev/null 2>&1; then
+            echo "integration-test-web: zbarimg is not on PATH" >&2
+            exit 1
+          fi
+          export CRM_CHAT_PLAYWRIGHT_CHROMIUM="$playwright_chrome"
+          export CRM_CHAT_SYSTEM_CHROMIUM="$system_chrome"
+          exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
+            ${pkgs.bash}/bin/bash -c ${pkgs.lib.escapeShellArg ''
+            set -euo pipefail
+            run() {
+              echo "integration-test-web: $1"
+              CRM_CHAT_CHROMIUM_NAME=$1 \
+              CHROMIUM=$2 \
+              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/fix-web-connect/$1" \
+                ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
+            }
+            run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM"
+            run system "$CRM_CHAT_SYSTEM_CHROMIUM"
+          ''}
+        '';
         loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
           set -euo pipefail
           export PATH=${
@@ -256,6 +347,24 @@
           export CRM_CHAT_SECRETS=${./secretspec.toml}
           exec ${pkgs.bash}/bin/bash ${./integration/login.sh} "$@"
         '';
+        websiteServe = pkgs.writeShellScript "crm-chat-website-serve" ''
+          set -euo pipefail
+          if [ "$#" -ne 2 ]; then
+            echo "usage: website-serve ROOT PORT" >&2
+            exit 1
+          fi
+          if ! command -v secretspec >/dev/null 2>&1; then
+            echo "website-serve: secretspec is not on PATH" >&2
+            exit 1
+          fi
+          if ! command -v bws >/dev/null 2>&1; then
+            echo "website-serve: bws is not on PATH" >&2
+            exit 1
+          fi
+          export CRM_CHAT_SECRETS=${./secretspec.toml}
+          exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
+            ${pkgs.python3}/bin/python3 ${./integration/website_serve.py} "$1" "$2"
+        '';
         regenerateTdlibBindings = pkgs.writeShellScript "regenerate-tdlib-bindings" ''
           set -euo pipefail
           if [ ! -f third_party/tdlib-rs/tdlib-rs/tl/api.tl ]; then
@@ -265,23 +374,9 @@
           cp ${tdlib.src}/td/generate/scheme/td_api.tl third_party/tdlib-rs/tdlib-rs/tl/api.tl
           echo "updated third_party/tdlib-rs/tdlib-rs/tl/api.tl from TDLib ${tdlib.version}"
         '';
-        telegramTests = craneLib.mkCargoDerivation (
-          commonArgs
-          // {
-            pname = "crm-chat-telegram-tests";
-            version = "0.1.0";
-            inherit cargoArtifacts;
-            doInstallCargoArtifacts = false;
-            buildPhaseCargoCommand = ''
-              export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
-              cargo test -p crm-chat-telegram --locked
-            '';
-            installPhaseCommand = ''
-              mkdir -p $out
-              touch $out/checked
-            '';
-          }
-        );
+        # tauri-build only checks that frontendDist exists. Clippy does not need
+        # the website, which would pull the wasm TDLib build into this check.
+        frontendStub = pkgs.writeTextDir "index.html" "<!doctype html><title></title>\n";
       in {
         formatter = pkgs.alejandra;
         packages =
@@ -302,6 +397,13 @@
               alejandra --check $src
               touch $out
             '';
+          website-serve =
+            pkgs.runCommand "crm-chat-website-serve-test" {
+              nativeBuildInputs = [pkgs.python3];
+            } ''
+              python3 ${./integration/website_serve_test.py} ${./integration/website_serve.py}
+              touch $out
+            '';
           nix-lint =
             pkgs.runCommand "crm-chat-nix-lint" {
               nativeBuildInputs = [pkgs.statix];
@@ -310,8 +412,25 @@
               statix check $src
               touch $out
             '';
-          inherit website wasm32 coreTypes telegramTests;
-          inherit desktop;
+          inherit website wasm32 desktop;
+          coreTypes = cargoTests;
+          telegramTests = cargoTests;
+          integrationOffline = cargoTests;
+          # Same fetch for native and wasm, and the vendored scheme is that
+          # commit's td_api.tl. This does not build either library.
+          tdlib-pin =
+            pkgs.runCommand "tdlib-pin" {
+              nativeSrc = tdlib.src;
+              wasmSrc = tdlibWasm.src;
+              bindings = ./third_party/tdlib-rs/tdlib-rs/tl/api.tl;
+            } ''
+              if [ "$nativeSrc" != "$wasmSrc" ]; then
+                echo "native TDLib source $nativeSrc does not match wasm source $wasmSrc" >&2
+                exit 1
+              fi
+              cmp "$nativeSrc/td/generate/scheme/td_api.tl" "$bindings"
+              touch $out
+            '';
           tdlibWasm =
             if system == "x86_64-linux"
             then
@@ -365,12 +484,15 @@
             // {
               inherit cargoArtifacts;
               src = appSrc;
-              TAURI_CONFIG = builtins.toJSON {build.frontendDist = "${website}";};
+              TAURI_CONFIG = builtins.toJSON {build.frontendDist = "${frontendStub}";};
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
             }
           );
           typescript = website.overrideAttrs {
             pname = "crm-chat-typescript";
+            # Typecheck, lint, and vitest do not read the wasm binary. Drop the
+            # website preBuild so this check does not wait on tdlibWasm.
+            preBuild = "";
             buildPhase = ''
               npm run typecheck
               npm run lint
@@ -405,6 +527,10 @@
             type = "app";
             program = "${integrationTest}";
           };
+          integration-test-web = {
+            type = "app";
+            program = "${integrationTestWeb}";
+          };
           login-test-account = {
             type = "app";
             program = "${loginTestAccount}";
@@ -412,6 +538,10 @@
           regenerate-tdlib-bindings = {
             type = "app";
             program = "${regenerateTdlibBindings}";
+          };
+          website-serve = {
+            type = "app";
+            program = "${websiteServe}";
           };
         };
       }

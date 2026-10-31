@@ -1,0 +1,86 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted: #f4f4f5;
+  --muted-foreground: #707579;
+  --destructive: #e53935;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted: #181818;
+  --muted-foreground: #aaaaaa;
+  --destructive: #e53935;
+  --border: #0f0f0f;
+  --input: #3a3a3a;
+  --ring: #3390ec;
+}
+
+.ui-textarea-grow {
+  display: grid;
+  max-height: 12rem;
+  width: 100%;
+}
+
+.ui-textarea-grow::after {
+  border: 1px solid transparent;
+  content: attr(data-value) ' ';
+  font: inherit;
+  font-size: 0.9375rem;
+  grid-area: 1 / 1;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  padding: 0.625rem 0.75rem;
+  visibility: hidden;
+  white-space: pre-wrap;
+}
+
+.ui-textarea {
+  background: var(--background, #ffffff);
+  border: 1px solid var(--input, #dadce0);
+  border-radius: var(--radius, 0.75rem);
+  box-sizing: border-box;
+  color: var(--foreground, #222222);
+  font: inherit;
+  font-size: 0.9375rem;
+  grid-area: 1 / 1;
+  line-height: 1.4;
+  max-height: 12rem;
+  min-height: 2.75rem;
+  overflow: auto;
+  padding: 0.625rem 0.75rem;
+  resize: none;
+  width: 100%;
+}
+
+.ui-textarea::placeholder {
+  color: var(--muted-foreground, #707579);
+}
+
+.ui-textarea:focus-visible {
+  border-color: var(--ring, #3390ec);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #3390ec) 28%, transparent);
+  outline: none;
+}
+
+.ui-textarea[aria-invalid='true'] {
+  border-color: var(--destructive, #e53935);
+}
+
+.ui-textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-textarea-demo {
+  max-width: 24rem;
+}

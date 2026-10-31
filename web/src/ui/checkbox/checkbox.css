@@ -1,0 +1,89 @@
+:root {
+  --background: #ffffff;
+  --foreground: #222222;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #707579;
+  --destructive: #e53935;
+  --border: #dadce0;
+  --input: #dadce0;
+  --ring: #3390ec;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --muted-foreground: #aaaaaa;
+  --destructive: #e53935;
+  --border: #0f0f0f;
+  --input: #3a3a3a;
+  --ring: #3390ec;
+}
+
+.ui-checkbox {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.625rem;
+}
+
+.ui-checkbox-control {
+  align-items: center;
+  background: var(--background, #ffffff);
+  border: 1px solid var(--input, #dadce0);
+  border-radius: 0.375rem;
+  box-sizing: border-box;
+  color: var(--primary-foreground, #ffffff);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.25rem;
+  justify-content: center;
+  margin-top: 0.1rem;
+  padding: 0;
+  width: 1.25rem;
+}
+
+.ui-checkbox-control[data-state='checked'],
+.ui-checkbox-control[data-state='indeterminate'] {
+  background: var(--primary, #3390ec);
+  border-color: var(--primary, #3390ec);
+}
+
+.ui-checkbox-indicator {
+  display: block;
+  height: 0.75rem;
+  width: 0.75rem;
+}
+
+.ui-checkbox-control[data-state='checked'] .ui-checkbox-indicator {
+  background: var(--primary-foreground, #ffffff);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
+}
+
+.ui-checkbox-control[data-state='indeterminate'] .ui-checkbox-indicator {
+  background: var(--primary-foreground, #ffffff);
+  height: 0.125rem;
+  width: 0.625rem;
+}
+
+.ui-checkbox-control:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring, #3390ec) 28%, transparent);
+  outline: none;
+}
+
+.ui-checkbox-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-checkbox-control[data-readonly] {
+  cursor: default;
+}
+
+.ui-checkbox-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

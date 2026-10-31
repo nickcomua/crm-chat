@@ -22,10 +22,14 @@ database directory per account at:
 is empty, so the files are protected by the OS user account, not by a key in
 this repo. `CRM_CHAT_TDLIB_DIR` overrides the directory for tests.
 
-`nix run .#integration-test` opens that directory with TDLib and the
-SecretSpec application credentials (`TG_ID`, `TG_HASH`). It does not read BWS
-session entries. If the directory has no logged-in account, it prints
-`NEEDS TEST ACCOUNTS:` and exits 2. Log in once in the desktop shell, or with
+`nix run .#integration-test` copies that directory, then opens the copy with
+TDLib and the SecretSpec application credentials (`TG_ID`, `TG_HASH`). It does
+not read BWS session entries and it does not write to the saved directory. A
+restored account must match the desktop `Authorized` shape: `_tag` is
+`Authorized`, and `account` holds the id, title, and chats. If the directory
+has no logged-in account, it prints `NEEDS TEST ACCOUNTS:` and exits 2.
+`nix flake check` runs only the offline `shape` command. Log in once in the
+desktop shell, or with
 `nix run .#login-test-account --accept-flake-config -- <1|2>`. That command
 writes account `1` or `2` into the same directory. It does not create, delete,
 or change BWS entries.
