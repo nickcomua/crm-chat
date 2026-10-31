@@ -315,6 +315,38 @@
           fi
           export CRM_CHAT_PLAYWRIGHT_CHROMIUM="$playwright_chrome"
           export CRM_CHAT_SYSTEM_CHROMIUM="$system_chrome"
+          export CRM_CHAT_WEB_SHOT_COMPARE=${./integration/web_shot_compare.py}
+          export CRM_CHAT_WEBK_SHOTS="$HOME/.local/state/kam-t3/shots/telegram-web-k"
+          gate=$(mktemp)
+          set +e
+          secretspec check -f "$CRM_CHAT_SECRETS" --provider bws --scope app --json --no-prompt >"$gate" 2>/dev/null
+          set -e
+          set +e
+          ${pkgs.nodejs}/bin/node --input-type=module -e ${pkgs.lib.escapeShellArg ''
+            import { readFileSync } from 'node:fs'
+            let data
+            try {
+              data = JSON.parse(readFileSync(process.argv[1], 'utf8'))
+            } catch {
+              process.exit(2)
+            }
+            const want = ['TG_ID', 'TG_HASH']
+            const found = new Map((data.secrets ?? []).map(item => [item.name, item.status]))
+            const missing = want.filter(name => found.get(name) !== 'resolved')
+            if (missing.length === 0) process.exit(0)
+            process.exit(missing.length === want.length ? 10 : 11)
+          ''} "$gate"
+          gate_code=$?
+          set -e
+          rm -f "$gate"
+          if [ "$gate_code" -eq 10 ]; then
+            echo "integration-test-web: skip (TG_ID and TG_HASH are absent)"
+            exit 0
+          fi
+          if [ "$gate_code" -ne 0 ]; then
+            echo "integration-test-web: could not resolve TG_ID and TG_HASH" >&2
+            exit 1
+          fi
           exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
             ${pkgs.bash}/bin/bash -c ${pkgs.lib.escapeShellArg ''
             set -euo pipefail
@@ -322,7 +354,7 @@
               echo "integration-test-web: $1"
               CRM_CHAT_CHROMIUM_NAME=$1 \
               CHROMIUM=$2 \
-              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/fix-web-connect/$1" \
+              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/kam-57/$1" \
                 ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
             }
             run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM"
@@ -402,6 +434,29 @@
               nativeBuildInputs = [pkgs.python3];
             } ''
               python3 ${./integration/website_serve_test.py} ${./integration/website_serve.py}
+              touch $out
+            '';
+          integration-web-skip =
+            pkgs.runCommand "crm-chat-integration-web-skip" {
+              nativeBuildInputs = [pkgs.nodejs];
+            } ''
+              env -u TG_ID -u TG_HASH ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs} >"$TMPDIR/skip.out"
+              grep -q 'integration-test-web: skip (TG_ID and TG_HASH are absent)' "$TMPDIR/skip.out"
+              if env TG_ID=1 TG_HASH= ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs} >"$TMPDIR/bad.out" 2>&1; then
+                echo "malformed credentials should fail" >&2
+                exit 1
+              fi
+              if grep -q 'integration-test-web: skip' "$TMPDIR/bad.out"; then
+                echo "malformed credentials skipped" >&2
+                exit 1
+              fi
+              touch $out
+            '';
+          web-shot-compare =
+            pkgs.runCommand "crm-chat-web-shot-compare" {
+              nativeBuildInputs = [pkgs.python3];
+            } ''
+              python3 ${./integration/web_shot_compare.py} --self-test
               touch $out
             '';
           nix-lint =
