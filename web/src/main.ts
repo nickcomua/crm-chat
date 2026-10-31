@@ -13,7 +13,12 @@ import { modifyFields } from 'foldkit/struct'
 import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
 
 import { readAppCredentials } from './appCredentials'
-import { type ChatLine, StoredFace, deliverLive } from './chatFace'
+import {
+  type ChatLine,
+  StoredFace,
+  deliverLive,
+  headerSponsored,
+} from './chatFace'
 import { countryByIso, defaultCountryIso, dialFor } from './countries'
 import { Login } from './login'
 import { loginScreen } from './loginView'
@@ -24,6 +29,7 @@ import {
   Account,
   accountFaces,
   beginLogin,
+  clickSponsored,
   closeTelegramChat,
   desktopFailure,
   loadAccount,
@@ -36,6 +42,7 @@ import {
   submitCode,
   submitPassword,
   takeIncoming,
+  viewSponsored,
 } from './telegram'
 
 export { Message }
@@ -192,7 +199,7 @@ export const Refresh = Command.define('Refresh', {
 })
 export const LoadHistory = Command.define('LoadHistory', {
   args: { accountId: Schema.String, chatId: Schema.String },
-  messages: [Message.LoadedHistory],
+  messages: [Message.LoadedHistory, Message.FailedHistory],
   execute: ({ accountId, chatId }) =>
     Effect.tryPromise(() => loadMessages(accountId, chatId)).pipe(
       Effect.map(messages =>
@@ -213,7 +220,7 @@ export const LoadHistory = Command.define('LoadHistory', {
         }),
       ),
       Effect.catch(() =>
-        Effect.succeed(Message.LoadedHistory({ id: chatId, lines: [] })),
+        Effect.succeed(Message.FailedHistory({ id: chatId })),
       ),
     ),
 })
@@ -257,12 +264,49 @@ export const LoadSponsored = Command.define('LoadSponsored', {
             button: item.button,
             recommended: item.recommended,
             info: item.info,
+            ...(item.media === undefined ? {} : { media: item.media }),
+            ...(item.mediaSrc === undefined ? {} : { mediaSrc: item.mediaSrc }),
           })),
         }),
       ),
       Effect.catch(() =>
         Effect.succeed(Message.FailedSponsored({ id: chatId })),
       ),
+    ),
+})
+export const ViewSponsored = Command.define('ViewSponsored', {
+  args: {
+    accountId: Schema.String,
+    chatId: Schema.String,
+    messageIds: Schema.Array(Schema.String),
+  },
+  messages: [Message.CompletedViewSponsored],
+  execute: ({ accountId, chatId, messageIds }) =>
+    Effect.tryPromise(() =>
+      viewSponsored(accountId, chatId, messageIds),
+    ).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedViewSponsored(),
+        onFailure: () => Message.CompletedViewSponsored(),
+      }),
+    ),
+})
+export const ClickSponsored = Command.define('ClickSponsored', {
+  args: {
+    accountId: Schema.String,
+    chatId: Schema.String,
+    messageId: Schema.String,
+    media: Schema.Boolean,
+  },
+  messages: [Message.CompletedClickSponsored],
+  execute: ({ accountId, chatId, messageId, media }) =>
+    Effect.tryPromise(() =>
+      clickSponsored(accountId, chatId, messageId, media),
+    ).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedClickSponsored(),
+        onFailure: () => Message.CompletedClickSponsored(),
+      }),
     ),
 })
 export const Disconnect = Command.define('Disconnect', {
@@ -646,7 +690,12 @@ export const update = (model: Model, message: Message) =>
                   chatId: id,
                 }),
               ]),
-          ...(chat?.kind === 'Channel' && face?.sponsoredLoaded !== true
+          // Channels and bot dialogs both carry sponsored messages. A bot
+          // is a private chat, so every dialog is asked; an ordinary
+          // dialog gets an empty page or a failure and can be opened again.
+          ...(chat !== undefined &&
+          chat.kind !== 'Group' &&
+          face?.sponsoredLoaded !== true
             ? [
                 LoadSponsored({
                   accountId: model.selectedAccountId,
@@ -657,6 +706,20 @@ export const update = (model: Model, message: Message) =>
         ],
       }
     },
+    ClickedSponsored: ({ chatId, messageId, media }) =>
+      model.fixturePreview || model.selectedAccountId === ''
+        ? { model }
+        : {
+            model,
+            commands: [
+              ClickSponsored({
+                accountId: model.selectedAccountId,
+                chatId,
+                messageId,
+                media,
+              }),
+            ],
+          },
     ClickedBack: () => {
       const closing = realOpenChat(model)
       return {
@@ -916,6 +979,7 @@ export const update = (model: Model, message: Message) =>
         },
       }),
     }),
+    FailedHistory: () => ({ model }),
     ArrivedMessages: ({ accountId, items }) => {
       if (accountId !== model.selectedAccountId || items.length === 0) {
         return { model }
@@ -938,57 +1002,96 @@ export const update = (model: Model, message: Message) =>
         const list = grouped.get(item.chatId)
         if (list === undefined) {
           grouped.set(item.chatId, [line])
-        } else {
+        } else if (!list.some(current => current.id === line.id)) {
           list.push(line)
         }
       }
       if (grouped.size === 0) {
         return { model }
       }
+      let changed = false
+      const faces = model.faces.map(face => face)
+      for (const [chatId, lines] of grouped) {
+        const index = faces.findIndex(face => face.id === chatId)
+        const previous = index < 0 ? blankFace(chatId) : faces[index]
+        if (previous === undefined) {
+          continue
+        }
+        const known = new Set(
+          [...previous.lines, ...(previous.pending ?? [])].flatMap(line =>
+            line.id === undefined ? [] : [line.id],
+          ),
+        )
+        const novel = lines.filter(
+          line => line.id === undefined || !known.has(line.id),
+        )
+        if (novel.length === 0) {
+          continue
+        }
+        changed = true
+        const updated = withArrival(previous, novel, chatId === openId)
+        if (index < 0) {
+          faces.push(updated)
+        } else {
+          faces[index] = updated
+        }
+      }
+      if (!changed) {
+        return { model }
+      }
       return {
+        model: modifyFields(model, { faces: () => faces }),
+      }
+    },
+    LoadedSponsored: ({ id, between, lines }) => {
+      const openId = Option.match(model.maybeOpenChatId, {
+        onNone: () => '',
+        onSome: chatId => chatId,
+      })
+      const pinned = headerSponsored(lines)
+      const next = {
         model: modifyFields(model, {
           faces: current => {
-            const next = [...current]
-            for (const [chatId, lines] of grouped) {
-              const index = next.findIndex(face => face.id === chatId)
-              const previous = index < 0 ? blankFace(chatId) : next[index]
-              if (previous === undefined) {
-                continue
-              }
-              const updated = withArrival(previous, lines, chatId === openId)
-              if (index < 0) {
-                next.push(updated)
-              } else {
-                next[index] = updated
-              }
+            const index = current.findIndex(face => face.id === id)
+            const previous = index < 0 ? blankFace(id) : current[index]
+            if (previous === undefined) {
+              return current
             }
-            return next
+            const updated: StoredFace = {
+              ...previous,
+              sponsored: lines,
+              sponsoredBetween: between,
+              sponsoredLoaded: true,
+            }
+            if (index < 0) {
+              return [...current, updated]
+            }
+            return current.map(face => (face.id === id ? updated : face))
           },
         }),
       }
+      if (
+        pinned === undefined ||
+        openId !== id ||
+        model.selectedAccountId === '' ||
+        model.fixturePreview
+      ) {
+        return next
+      }
+      return {
+        ...next,
+        commands: [
+          ViewSponsored({
+            accountId: model.selectedAccountId,
+            chatId: id,
+            messageIds: [pinned.id],
+          }),
+        ],
+      }
     },
-    LoadedSponsored: ({ id, between, lines }) => ({
-      model: modifyFields(model, {
-        faces: current => {
-          const index = current.findIndex(face => face.id === id)
-          const previous = index < 0 ? blankFace(id) : current[index]
-          if (previous === undefined) {
-            return current
-          }
-          const updated: StoredFace = {
-            ...previous,
-            sponsored: lines,
-            sponsoredBetween: between,
-            sponsoredLoaded: true,
-          }
-          if (index < 0) {
-            return [...current, updated]
-          }
-          return current.map(face => (face.id === id ? updated : face))
-        },
-      }),
-    }),
     FailedSponsored: () => ({ model }),
+    CompletedViewSponsored: () => ({ model }),
+    CompletedClickSponsored: () => ({ model }),
     CompletedOpenChat: () => ({ model }),
     CompletedCloseChat: () => ({ model }),
     FailedRefresh: () => ({
@@ -1084,23 +1187,11 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   ),
 })
 
-const seenLiveIds = new Set<string>()
 const liveTicks = { count: 0 }
 
-const rememberSeen = (key: string): boolean => {
-  if (seenLiveIds.has(key)) {
-    return false
-  }
-  seenLiveIds.add(key)
-  if (seenLiveIds.size > 500) {
-    const oldest = seenLiveIds.values().next().value
-    if (typeof oldest === 'string') {
-      seenLiveIds.delete(oldest)
-    }
-  }
-  return true
-}
-
+// Ids are not recorded here. The subscription drops an in-flight result when
+// the account or the open chat changes, and a module-level seen set would
+// keep those ids from the history refill and from the next click.
 const pollLive = (
   accountId: string,
   chatId: string,
@@ -1111,9 +1202,7 @@ const pollLive = (
     const incoming = yield* Effect.tryPromise(() =>
       takeIncoming(accountId),
     ).pipe(Effect.catch(() => Effect.succeed<Array<LiveItem>>([])))
-    const fresh = incoming.filter(
-      item => item.text !== '' && rememberSeen(`${item.chatId}:${item.id}`),
-    )
+    const fresh = incoming.filter(item => item.text !== '')
     if (chatId !== '' && tick % 3 === 0) {
       const history = yield* Effect.tryPromise(() =>
         loadMessages(accountId, chatId),
@@ -1129,10 +1218,7 @@ const pollLive = (
         }),
       )
       for (const message of history) {
-        if (
-          message.text === '' ||
-          !rememberSeen(`${chatId}:${message.id}`)
-        ) {
+        if (message.text === '') {
           continue
         }
         fresh.push({

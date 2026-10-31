@@ -18,12 +18,14 @@ import { test } from 'vitest'
 
 import {
   BeginLogin,
+  ClickSponsored,
   LoadHistory,
   LoadSponsored,
   Message,
   OpenChat,
   Refresh,
   SubmitAnswer,
+  ViewSponsored,
   initialModel,
   update,
   view,
@@ -125,6 +127,10 @@ test('opening a chat loads its message history', () => {
         ],
       }),
     ),
+    Command.resolve(
+      LoadSponsored,
+      Message.LoadedSponsored({ id: 'one:1', between: 0, lines: [] }),
+    ),
     expect(role('region', { name: 'Open chat' })).toContainText(
       'See you at the station.',
     ),
@@ -190,6 +196,7 @@ test('a channel shows Telegram sponsored messages with their label', () => {
         ],
       }),
     ),
+    Command.resolve(ViewSponsored, Message.CompletedViewSponsored()),
     expect(role('region', { name: 'Open chat' })).toContainText(
       'Harbor opens at dawn.',
     ),
@@ -197,6 +204,9 @@ test('a channel shows Telegram sponsored messages with their label', () => {
     expect(role('note', { name: 'Sponsored' })).toContainText('Harbor'),
     expect(role('note', { name: 'Sponsored' })).toContainText('Open'),
     expect(role('note', { name: 'Sponsored' })).toContainText('About this ad'),
+    expect(role('button', { name: 'Open' })).toExist(),
+    click(role('button', { name: 'Open' })),
+    Command.resolve(ClickSponsored, Message.CompletedClickSponsored()),
   )
 })
 

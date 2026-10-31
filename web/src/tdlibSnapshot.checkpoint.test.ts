@@ -108,10 +108,22 @@ test('a committed wal is folded into the database and the wal is dropped', () =>
       file('/tdlib/acct/db.sqlite', database),
       file('/tdlib/acct/db.sqlite-wal', new Uint8Array()),
     ])
-    expect(emptyWal.checkpointed).toBe(false)
+    expect(emptyWal.checkpointed).toBe(true)
     expect(emptyWal.reason).toBe('')
     expect(emptyWal.files.map(item => item.path)).toEqual([
       '/tdlib/acct/db.sqlite',
+    ])
+
+    const bare = settleSnapshotFiles([
+      file('/tdlib/acct/db.sqlite', database),
+      file('/tdlib/acct/td.binlog', new Uint8Array([1, 2, 3])),
+    ])
+    expect(bare.checkpointed).toBe(true)
+    expect(bare.reason).toBe('')
+    expect(bare.files).toHaveLength(2)
+    expect(bare.files.map(item => item.path)).toEqual([
+      '/tdlib/acct/db.sqlite',
+      '/tdlib/acct/td.binlog',
     ])
 
     const torn = wal.slice()

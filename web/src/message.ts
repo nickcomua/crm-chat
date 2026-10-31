@@ -33,6 +33,11 @@ export const Message = defineMessageUnion({
   SelectedAccount: { id: Schema.String },
   ClickedRefresh: {},
   ClickedChat: { id: Schema.String },
+  ClickedSponsored: {
+    chatId: Schema.String,
+    messageId: Schema.String,
+    media: Schema.Boolean,
+  },
   ClickedBack: {},
   ClickedMenu: {},
   ClickedMore: {},
@@ -60,6 +65,7 @@ export const Message = defineMessageUnion({
     faces: Schema.optional(Schema.Array(StoredFace)),
   },
   LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
+  FailedHistory: { id: Schema.String },
   ArrivedMessages: {
     accountId: Schema.String,
     items: Schema.Array(
@@ -78,6 +84,8 @@ export const Message = defineMessageUnion({
     lines: Schema.Array(SponsoredLine),
   },
   FailedSponsored: { id: Schema.String },
+  CompletedViewSponsored: {},
+  CompletedClickSponsored: {},
   CompletedOpenChat: {},
   CompletedCloseChat: {},
   FailedRefresh: {},

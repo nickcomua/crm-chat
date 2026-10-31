@@ -197,6 +197,8 @@ const decodeSponsored = (value: unknown): SponsoredPage => {
       ) {
         return []
       }
+      const media = item['media']
+      const mediaSrc = item['mediaSrc']
       return [
         {
           id: item['id'],
@@ -205,6 +207,12 @@ const decodeSponsored = (value: unknown): SponsoredPage => {
           button: item['button'],
           recommended: item['recommended'] === true,
           info: item['info'],
+          ...(media === 'photo' || media === 'video' || media === 'animation'
+            ? { media }
+            : {}),
+          ...(typeof mediaSrc === 'string' && mediaSrc !== ''
+            ? { mediaSrc }
+            : {}),
         },
       ]
     }),
@@ -256,6 +264,38 @@ export const loadSponsored = async (
     return decodeSponsored(await invoke('telegram_sponsored', { id, chatId }))
   }
   return sessionFor(id).sponsored(chatId)
+}
+
+export const viewSponsored = async (
+  id: string,
+  chatId: string,
+  messageIds: ReadonlyArray<string>,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_view_sponsored', { id, chatId, messageIds })
+    return
+  }
+  await sessionFor(id).viewSponsored(chatId, messageIds)
+}
+
+export const clickSponsored = async (
+  id: string,
+  chatId: string,
+  messageId: string,
+  media: boolean,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_click_sponsored', {
+      id,
+      chatId,
+      messageId,
+      media,
+    })
+    return
+  }
+  await sessionFor(id).clickSponsored(chatId, messageId, media)
 }
 
 export const restoreAccounts = async (

@@ -425,18 +425,7 @@ async fn ensure_room(
     };
     client.add_member(&owner.id, &chat_id, other_user).await?;
     if kind == ChatKind::Channel {
-        if let Err(error) = client
-            .grant_channel_post(&owner.id, &chat_id, other_user)
-            .await
-        {
-            if error != "USER_NOT_PARTICIPANT" {
-                return Err(error);
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            client
-                .grant_channel_post(&owner.id, &chat_id, other_user)
-                .await?;
-        }
+        allow_channel_post(client, &owner.id, &chat_id, other_user).await?;
     }
     seed_history(client, &owner.id, &chat_id, label).await?;
     println!(
@@ -633,6 +622,12 @@ fn live_marker(label: &str) -> String {
     format!("crm-chat live {label} {millis}")
 }
 
+fn channel_post_pending(error: &str) -> bool {
+    error == "CHAT_WRITE_FORBIDDEN" || error == "CHAT_ADMIN_REQUIRED"
+}
+
+/// A copied database can still say this member cannot post until Telegram's
+/// membership update arrives. Keep asking. A forbidden reply is not success.
 async fn send_room(
     client: &Client,
     account_id: &str,
@@ -640,14 +635,35 @@ async fn send_room(
     text: &str,
     kind: ChatKind,
 ) -> Result<(), String> {
-    match client.send_text(account_id, chat_id, text).await {
+    let mut attempt = client.send_text(account_id, chat_id, text).await;
+    if kind != ChatKind::Channel {
+        return attempt;
+    }
+    for _ in 0..8 {
+        match &attempt {
+            Ok(()) => return Ok(()),
+            Err(error) if channel_post_pending(error) => {}
+            Err(_) => return attempt,
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        attempt = client.send_text(account_id, chat_id, text).await;
+    }
+    attempt
+}
+
+/// The saved copy can be older than the server membership. Posting rights are
+/// set again from the channel owner before the other test account sends.
+async fn allow_channel_post(
+    client: &Client,
+    owner_id: &str,
+    chat_id: &str,
+    user_id: i64,
+) -> Result<(), String> {
+    match client.grant_channel_post(owner_id, chat_id, user_id).await {
         Ok(()) => Ok(()),
-        Err(error)
-            if kind == ChatKind::Channel
-                && (error == "CHAT_WRITE_FORBIDDEN" || error == "CHAT_ADMIN_REQUIRED") =>
-        {
+        Err(error) if error == "USER_NOT_PARTICIPANT" => {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            client.send_text(account_id, chat_id, text).await
+            client.grant_channel_post(owner_id, chat_id, user_id).await
         }
         Err(error) => Err(error),
     }
@@ -682,11 +698,6 @@ async fn prove_room_live(
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    }
-    let history = client.messages(&recipient.id, &recipient_chat.id).await?;
-    if history.iter().any(|message| message.text == marker) {
-        println!("live {label}: pass via history");
-        return Ok(());
     }
     Err(format!("live {label}: the marker did not arrive"))
 }
@@ -745,11 +756,6 @@ async fn prove_live(
         }
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
     }
-    let history = client.messages(&recipient.id, &recipient_chat).await?;
-    if history.iter().any(|message| message.text == marker) {
-        println!("live update: pass via history");
-        return Ok(());
-    }
     Err("live update: the marker did not arrive".into())
 }
 
@@ -778,23 +784,47 @@ async fn signal(room: &str) -> Result<(), String> {
     )
     .await
     .map_err(|error| format!("signal {room}: {error}"))?;
+    let owner = &refreshed[0];
     let sender = &refreshed[1];
-    let found = locate_chat(&sender.chats, title, kind)
-        .map_err(|error| format!("signal {room}: {error}"))?
-        .cloned();
-    let chat = if let Some(chat) = found {
-        chat
-    } else {
-        client
-            .find_titled(&sender.id, title, kind)
+    let chat = titled_chat(&client, sender, title, kind)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
+    if kind == ChatKind::Channel {
+        let owner_chat = titled_chat(&client, owner, title, kind)
             .await
-            .map_err(|error| format!("signal {room}: {error}"))?
-            .ok_or_else(|| format!("signal {room}: missing"))?
-    };
-    client.open_chat(&sender.id, &chat.id).await?;
-    send_room(&client, &sender.id, &chat.id, &live_marker(room), kind).await?;
+            .map_err(|error| format!("signal {room}: {error}"))?;
+        client
+            .open_chat(&owner.id, &owner_chat.id)
+            .await
+            .map_err(|error| format!("signal {room}: {error}"))?;
+        allow_channel_post(&client, &owner.id, &owner_chat.id, second_user)
+            .await
+            .map_err(|error| format!("signal {room}: {error}"))?;
+    }
+    client
+        .open_chat(&sender.id, &chat.id)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
+    send_room(&client, &sender.id, &chat.id, &live_marker(room), kind)
+        .await
+        .map_err(|error| format!("signal {room}: {error}"))?;
     println!("signal {room}: sent");
     Ok(())
+}
+
+async fn titled_chat(
+    client: &Client,
+    account: &Account,
+    title: &str,
+    kind: ChatKind,
+) -> Result<crm_chat_telegram::Chat, String> {
+    if let Some(chat) = locate_chat(&account.chats, title, kind)?.cloned() {
+        return Ok(chat);
+    }
+    client
+        .find_titled(&account.id, title, kind)
+        .await?
+        .ok_or_else(|| "missing".to_owned())
 }
 
 async fn login(slot: &str) -> Result<(), String> {
@@ -826,7 +856,7 @@ async fn login(slot: &str) -> Result<(), String> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_default();
     let result = match command.as_str() {
@@ -839,14 +869,17 @@ async fn main() {
             Err("usage: shape | credentials | account | login <1|2> | signal group|channel".into())
         }
     };
+    // A normal return flushes both streams. process::exit skips that flush,
+    // so the harness was recording an empty stderr for a real send failure.
     if let Err(error) = result {
         if error.starts_with("NEEDS TEST ACCOUNTS:") {
             println!("{error}");
-            std::process::exit(2);
+            return std::process::ExitCode::from(2);
         }
         eprintln!("desktop tdlib: {error}");
-        std::process::exit(1);
+        return std::process::ExitCode::from(1);
     }
+    std::process::ExitCode::SUCCESS
 }
 
 #[cfg(test)]

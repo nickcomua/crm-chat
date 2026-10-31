@@ -20,6 +20,8 @@ export const SponsoredLine = Schema.Struct({
   button: Schema.String,
   recommended: Schema.Boolean,
   info: Schema.String,
+  media: Schema.optional(Schema.Literals(['photo', 'video', 'animation'])),
+  mediaSrc: Schema.optional(Schema.String),
 })
 export type SponsoredLine = typeof SponsoredLine.Type
 
@@ -99,9 +101,18 @@ const messageEntry = (line: ChatLine, index: number): ThreadEntry => ({
   line,
 })
 
-// messages_between of 0 means one ad after the ordinary messages.
-// A positive gap inserts the next ad after each full group, and still
-// shows one ad when the history is shorter than that gap.
+const visibleAd = (ad: SponsoredLine): boolean =>
+  ad.title !== '' ||
+  ad.text !== '' ||
+  ad.button !== '' ||
+  ad.media !== undefined
+
+// The open-chat card sits under the header. messages_between of 0 shows
+// only that card. A positive gap inserts each later ad after a full group.
+export const headerSponsored = (
+  sponsored: ReadonlyArray<SponsoredLine>,
+): SponsoredLine | undefined => sponsored.find(visibleAd)
+
 export const threadEntries = (
   lines: ReadonlyArray<ChatLine>,
   pending: ReadonlyArray<ChatLine>,
@@ -109,16 +120,13 @@ export const threadEntries = (
   between: number,
 ): ReadonlyArray<ThreadEntry> => {
   const messages = [...lines, ...pending].map(messageEntry)
-  const ads = sponsored.filter(ad => ad.title !== '' || ad.text !== '')
+  const pinned = headerSponsored(sponsored)
+  const ads = sponsored.filter(
+    ad => ad !== pinned && (ad.title !== '' || ad.text !== ''),
+  )
   const first = ads[0]
-  if (first === undefined) {
+  if (first === undefined || between <= 0) {
     return messages
-  }
-  if (between <= 0) {
-    return [
-      ...messages,
-      { kind: 'sponsored', key: `ad-${first.id}`, line: first },
-    ]
   }
   const entries: Array<ThreadEntry> = []
   let adIndex = 0

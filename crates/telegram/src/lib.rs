@@ -90,6 +90,14 @@ pub struct SponsoredLine {
     pub button: String,
     pub recommended: bool,
     pub info: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_src: Option<String>,
+    #[serde(skip)]
+    pub file_id: Option<i32>,
+    #[serde(skip)]
+    pub mime: Option<String>,
 }
 
 struct StoredLive {
@@ -711,7 +719,116 @@ impl Client {
             }),
         )
         .await;
-        sponsored_from_json(&response)
+        let mut page = sponsored_from_json(&response)?;
+        for line in &mut page.messages {
+            let Some(file_id) = line.file_id else {
+                continue;
+            };
+            let Some(mime) = line.mime.clone() else {
+                continue;
+            };
+            if let Some(src) = self.embed_media(client_id, file_id, &mime).await {
+                line.media_src = Some(src);
+            }
+        }
+        Ok(page)
+    }
+
+    /// Marks a sponsored message viewed once its full text is on screen.
+    pub async fn view_sponsored(
+        &self,
+        id: &str,
+        chat_id: &str,
+        message_ids: &[i64],
+    ) -> Result<(), String> {
+        if message_ids.is_empty() {
+            return Ok(());
+        }
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "viewMessages",
+                "chat_id": td_chat_id,
+                "message_ids": message_ids,
+                "source": null,
+                "force_read": false,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub async fn click_sponsored(
+        &self,
+        id: &str,
+        chat_id: &str,
+        message_id: i64,
+        media: bool,
+    ) -> Result<(), String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "clickChatSponsoredMessage",
+                "chat_id": td_chat_id,
+                "message_id": message_id,
+                "is_media_click": media,
+                "from_fullscreen": false,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn embed_media(&self, client_id: i32, file_id: i32, mime: &str) -> Option<String> {
+        let root = self.database_directory(client_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "downloadFile",
+                "file_id": file_id,
+                "priority": 32,
+                "offset": 0,
+                "limit": 0,
+                "synchronous": true,
+            }),
+        )
+        .await;
+        if public_error(&response).is_some() {
+            return None;
+        }
+        let completed = response
+            .pointer("/local/is_downloading_completed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let path = response.pointer("/local/path").and_then(Value::as_str)?;
+        if !completed {
+            return None;
+        }
+        let file = Path::new(path);
+        if !file.starts_with(&root) {
+            return None;
+        }
+        let bytes = std::fs::read(file).ok()?;
+        embed_bytes(&bytes, mime)
+    }
+
+    fn database_directory(&self, client_id: i32) -> Option<std::path::PathBuf> {
+        self.shared
+            .slots
+            .lock()
+            .expect("slots")
+            .get(&client_id)
+            .map(|slot| slot.directory.clone())
     }
 
     pub async fn self_user_id(&self, id: &str) -> Result<i64, String> {
@@ -1345,6 +1462,134 @@ fn message_from_json(value: &Value) -> Option<Message> {
     })
 }
 
+const MEDIA_BYTES: usize = 1_500_000;
+
+struct MediaSource {
+    kind: &'static str,
+    file_id: i32,
+    mime: String,
+}
+
+fn json_i32(value: Option<&Value>) -> Option<i32> {
+    let number = json_i64(value)?;
+    i32::try_from(number).ok()
+}
+
+fn sponsored_text(content: &Value) -> String {
+    let type_name = content.get("@type").and_then(Value::as_str).unwrap_or("");
+    if type_name == "messageText" {
+        return content
+            .pointer("/text/text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+    }
+    content
+        .pointer("/caption/text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn largest_photo_id(photo: &Value) -> Option<i32> {
+    let sizes = photo.get("sizes").and_then(Value::as_array)?;
+    let mut best: Option<(i64, i32)> = None;
+    for size in sizes {
+        let Some(id) = json_i32(size.pointer("/photo/id")) else {
+            continue;
+        };
+        let width = size.get("width").and_then(Value::as_i64).unwrap_or(0);
+        if width <= 1280 && best.map(|(chosen, _)| width >= chosen).unwrap_or(true) {
+            best = Some((width, id));
+        }
+    }
+    best.map(|(_, id)| id).or_else(|| {
+        sizes
+            .iter()
+            .find_map(|size| json_i32(size.pointer("/photo/id")))
+    })
+}
+
+fn sponsored_media(content: &Value) -> Option<MediaSource> {
+    match content.get("@type").and_then(Value::as_str)? {
+        "messagePhoto" => {
+            let file_id = largest_photo_id(content.get("photo")?)?;
+            Some(MediaSource {
+                kind: "photo",
+                file_id,
+                mime: "image/jpeg".to_owned(),
+            })
+        }
+        "messageVideo" => {
+            let file_id = json_i32(content.pointer("/video/video/id"))?;
+            let mime = content
+                .pointer("/video/mime_type")
+                .and_then(Value::as_str)
+                .filter(|mime| !mime.is_empty())
+                .unwrap_or("video/mp4")
+                .to_owned();
+            Some(MediaSource {
+                kind: "video",
+                file_id,
+                mime,
+            })
+        }
+        "messageAnimation" => {
+            let file_id = json_i32(content.pointer("/animation/animation/id"))?;
+            let mime = content
+                .pointer("/animation/mime_type")
+                .and_then(Value::as_str)
+                .filter(|mime| !mime.is_empty())
+                .unwrap_or("video/mp4")
+                .to_owned();
+            Some(MediaSource {
+                kind: "animation",
+                file_id,
+                mime,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    let mut index = 0;
+    while index + 3 <= bytes.len() {
+        let chunk = ((bytes[index] as u32) << 16)
+            | ((bytes[index + 1] as u32) << 8)
+            | bytes[index + 2] as u32;
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 63) as usize] as char);
+        out.push(TABLE[(chunk & 63) as usize] as char);
+        index += 3;
+    }
+    let rest = bytes.len() - index;
+    if rest == 1 {
+        let chunk = (bytes[index] as u32) << 16;
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rest == 2 {
+        let chunk = ((bytes[index] as u32) << 16) | ((bytes[index + 1] as u32) << 8);
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 63) as usize] as char);
+        out.push('=');
+    }
+    out
+}
+
+fn embed_bytes(bytes: &[u8], mime: &str) -> Option<String> {
+    if bytes.is_empty() || bytes.len() > MEDIA_BYTES {
+        return None;
+    }
+    Some(format!("data:{mime};base64,{}", base64_encode(bytes)))
+}
+
 fn content_text(content: &Value) -> String {
     let type_name = content.get("@type").and_then(Value::as_str).unwrap_or("");
     if type_name == "messageText" {
@@ -1467,9 +1712,10 @@ fn sponsored_from_json(value: &Value) -> Result<SponsoredPage, String> {
                             .unwrap_or("")
                             .to_owned()
                     };
+                    let source = sponsored_media(content);
                     Some(SponsoredLine {
                         id: id.to_string(),
-                        text: content_text(content),
+                        text: sponsored_text(content),
                         title: text("title"),
                         button: text("button_text"),
                         recommended: message
@@ -1477,6 +1723,10 @@ fn sponsored_from_json(value: &Value) -> Result<SponsoredPage, String> {
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
                         info: text("additional_info"),
+                        media: source.as_ref().map(|item| item.kind.to_owned()),
+                        media_src: None,
+                        file_id: source.as_ref().map(|item| item.file_id),
+                        mime: source.map(|item| item.mime),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1489,10 +1739,11 @@ fn sponsored_from_json(value: &Value) -> Result<SponsoredPage, String> {
 mod tests {
     use super::{
         apply_authorization, apply_parameter_response, apply_refreshed_phase, chat_kind,
-        chat_tdlib_id, chat_with_title, database_root_from, failed_add_count, locate_chat,
-        note_live_update, phase_from_update_json, public_error, publish, publish_authorization,
-        require_desktop_authorized, send_parameters, sponsored_from_json, valid_account_id,
-        Account, AuthStep, Chat, ChatKind, Client, Phase, Shared, Slot, LOG_SILENCE_REQUESTS,
+        chat_tdlib_id, chat_with_title, database_root_from, embed_bytes, failed_add_count,
+        locate_chat, note_live_update, phase_from_update_json, public_error, publish,
+        publish_authorization, require_desktop_authorized, send_parameters, sponsored_from_json,
+        valid_account_id, Account, AuthStep, Chat, ChatKind, Client, Phase, Shared, Slot,
+        LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
@@ -2019,6 +2270,35 @@ mod tests {
         assert_eq!(page.messages[0].button, "Open");
         assert!(!page.messages[0].recommended);
         assert_eq!(page.messages[0].info, "About this ad");
+        assert_eq!(page.messages[0].media, None);
+        assert_eq!(page.messages[0].media_src, None);
+        let photo = sponsored_from_json(&json!({
+            "@type": "sponsoredMessages",
+            "messages_between": 0,
+            "messages": [{
+                "@type": "sponsoredMessage",
+                "message_id": 5,
+                "content": {
+                    "@type": "messagePhoto",
+                    "caption": {"@type": "formattedText", "text": "Pier"},
+                    "photo": {
+                        "sizes": [
+                            {"width": 90, "photo": {"id": 3}},
+                            {"width": 800, "photo": {"id": 9}}
+                        ]
+                    }
+                },
+                "title": "Harbor"
+            }]
+        }))
+        .expect("photo");
+        assert_eq!(photo.messages[0].text, "Pier");
+        assert_eq!(photo.messages[0].media.as_deref(), Some("photo"));
+        assert_eq!(photo.messages[0].file_id, Some(9));
+        assert_eq!(
+            embed_bytes(b"a", "image/jpeg").as_deref(),
+            Some("data:image/jpeg;base64,YQ==")
+        );
         assert_eq!(
             sponsored_from_json(&json!({"@type": "error", "message": "CHAT_NOT_FOUND"}))
                 .expect_err("error"),

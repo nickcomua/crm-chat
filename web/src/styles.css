@@ -442,14 +442,30 @@
   margin: 0;
 }
 
+.tg-sponsored-media {
+  display: block;
+  width: 100%;
+  max-height: 14rem;
+  margin: 0.35rem 0 0.45rem;
+  object-fit: cover;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
 .tg-sponsored-button {
   display: inline-block;
   margin-top: 0.45rem;
+  border: 0;
   border-radius: 999px;
   background: var(--tg-primary);
   color: var(--tg-primary-text);
   padding: 0.2rem 0.7rem;
+  font: inherit;
   font-size: 13px;
+  cursor: pointer;
 }
 
 .tg-sponsored-info {

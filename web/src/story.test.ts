@@ -163,6 +163,86 @@ test('opening a group loads history and a failed sponsored response stays quiet'
   )
 })
 
+test('a failed history load can be opened again', () => {
+  story(
+    update,
+    given(signedIn),
+    message(Message.ClickedChat({ id: 'first:1' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(LoadHistory, Message.FailedHistory({ id: 'first:1' })),
+    Command.resolve(
+      LoadSponsored,
+      Message.FailedSponsored({ id: 'first:1' }),
+    ),
+    model(current => {
+      expect(
+        current.faces.find(item => item.id === 'first:1')?.historyLoaded,
+      ).toBeUndefined()
+    }),
+    message(Message.ClickedChat({ id: 'first:1' })),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'first:1',
+        lines: [{ id: '1', text: 'hello', mine: false, time: '09:00' }],
+      }),
+    ),
+    Command.resolve(
+      LoadSponsored,
+      Message.FailedSponsored({ id: 'first:1' }),
+    ),
+    model(current => {
+      expect(
+        current.faces.find(item => item.id === 'first:1')?.historyLoaded,
+      ).toBe(true)
+    }),
+  )
+})
+
+test('a history row that is already open does not rewrite the preview', () => {
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        maybeOpenChatId: () => Option.some('first:1'),
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '09:01',
+            preview: 'newer',
+            unread: 0,
+            receipt: 'none' as const,
+            historyLoaded: true,
+            lines: [
+              { id: '1', text: 'older', mine: false, time: '09:00' },
+              { id: '2', text: 'newer', mine: false, time: '09:01' },
+            ],
+          },
+        ],
+      }),
+    ),
+    message(
+      Message.ArrivedMessages({
+        accountId: 'first',
+        items: [
+          {
+            chatId: 'first:1',
+            id: '1',
+            text: 'older',
+            outgoing: false,
+            date: 1,
+          },
+        ],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.preview).toBe('newer')
+      expect(current.faces[0]?.lines).toHaveLength(2)
+    }),
+  )
+})
+
 test('opening another chat closes the one Telegram had open', () => {
   const two = {
     id: 'first',

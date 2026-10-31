@@ -27,6 +27,8 @@ export type LiveItem = {
   date: number
 }
 
+export type SponsoredMedia = 'photo' | 'video' | 'animation'
+
 export type SponsoredItem = {
   id: string
   text: string
@@ -34,6 +36,8 @@ export type SponsoredItem = {
   button: string
   recommended: boolean
   info: string
+  media?: SponsoredMedia
+  mediaSrc?: string
 }
 
 export type SponsoredPage = {
@@ -84,6 +88,8 @@ export type TdSink = {
   drop?: () => Promise<void>
   // Copies the in-memory database to IndexedDB. Absent on the desktop sink.
   sync?: () => Promise<void>
+  // Reads a file TDLib wrote under /tdlib. Absent when the host cannot.
+  readFile?: (path: string) => Promise<Uint8Array>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -374,6 +380,105 @@ export const liveMessageFrom = (
   }
 }
 
+const fileIdOf = (value: unknown): number | undefined => {
+  const id = field(value, 'id')
+  return typeof id === 'number' && Number.isInteger(id) ? id : undefined
+}
+
+const largestPhotoFile = (content: unknown): number | undefined => {
+  const sizes = field(field(content, 'photo'), 'sizes')
+  if (!Array.isArray(sizes)) {
+    return undefined
+  }
+  let bestId: number | undefined
+  let bestWidth = -1
+  for (const size of sizes) {
+    const id = fileIdOf(field(size, 'photo'))
+    const width = field(size, 'width')
+    const pixels = typeof width === 'number' ? width : 0
+    if (id === undefined) {
+      continue
+    }
+    if (pixels <= 1280 && pixels >= bestWidth) {
+      bestId = id
+      bestWidth = pixels
+    }
+  }
+  if (bestId !== undefined) {
+    return bestId
+  }
+  for (const size of sizes) {
+    const id = fileIdOf(field(size, 'photo'))
+    if (id !== undefined) {
+      return id
+    }
+  }
+  return undefined
+}
+
+const MEDIA_BYTES = 1_500_000
+
+const sponsoredDraft = (
+  item: SponsoredItem,
+): { fileId?: number; mime?: string } => {
+  const record: unknown = item
+  if (!isRecord(record)) {
+    return {}
+  }
+  const fileId = record['fileId']
+  const mime = record['mime']
+  return {
+    ...(typeof fileId === 'number' ? { fileId } : {}),
+    ...(typeof mime === 'string' && mime !== '' ? { mime } : {}),
+  }
+}
+
+const bytesToBase64 = (bytes: Uint8Array): string => {
+  let binary = ''
+  const step = 0x8000
+  for (let index = 0; index < bytes.length; index += step) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + step))
+  }
+  return btoa(binary)
+}
+
+// Sponsored photo, video, and animation stay media. The chat-list label
+// ("Photo", "Video", "GIF") is the wrong content for the card.
+const sponsoredBody = (
+  content: unknown,
+): {
+  text: string
+  media?: SponsoredMedia
+  fileId?: number
+  mime?: string
+} => {
+  const kind = typeName(content)
+  const caption = plain(field(content, 'caption'))
+  if (kind === 'messageText') {
+    return { text: plain(field(content, 'text')) }
+  }
+  if (kind === 'messagePhoto') {
+    const fileId = largestPhotoFile(content)
+    return fileId === undefined
+      ? { text: caption }
+      : { text: caption, media: 'photo', fileId, mime: 'image/jpeg' }
+  }
+  if (kind === 'messageVideo' || kind === 'messageAnimation') {
+    const media: SponsoredMedia =
+      kind === 'messageVideo' ? 'video' : 'animation'
+    const holder = field(content, media === 'video' ? 'video' : 'animation')
+    const fileId = fileIdOf(field(holder, media === 'video' ? 'video' : 'animation'))
+    const mimeValue = text(field(holder, 'mime_type'))
+    const mime = mimeValue === '' ? 'video/mp4' : mimeValue
+    return fileId === undefined
+      ? { text: caption }
+      : { text: caption, media, fileId, mime }
+  }
+  return { text: messagePreview(content) }
+}
+
+type ParsedSponsored = SponsoredItem & { fileId?: number; mime?: string }
+
 export const sponsoredPageFrom = (value: unknown): SponsoredPage | undefined => {
   if (typeName(value) !== 'sponsoredMessages') {
     return undefined
@@ -388,16 +493,19 @@ export const sponsoredPageFrom = (value: unknown): SponsoredPage | undefined => 
           if (id === undefined) {
             return []
           }
-          return [
-            {
-              id,
-              text: messagePreview(field(message, 'content')),
-              title: stringField(message, 'title'),
-              button: stringField(message, 'button_text'),
-              recommended: field(message, 'is_recommended') === true,
-              info: stringField(message, 'additional_info'),
-            },
-          ]
+          const body = sponsoredBody(field(message, 'content'))
+          const item: ParsedSponsored = {
+            id,
+            text: body.text,
+            title: stringField(message, 'title'),
+            button: stringField(message, 'button_text'),
+            recommended: field(message, 'is_recommended') === true,
+            info: stringField(message, 'additional_info'),
+            ...(body.media === undefined ? {} : { media: body.media }),
+            ...(body.fileId === undefined ? {} : { fileId: body.fileId }),
+            ...(body.mime === undefined ? {} : { mime: body.mime }),
+          }
+          return [item]
         })
       : [],
   }
@@ -840,7 +948,83 @@ export class TdAccount {
     if (page === undefined) {
       throw new Error('REQUEST_FAILED')
     }
-    return page
+    const messages: Array<SponsoredItem> = []
+    for (const item of page.messages) {
+      const draft = sponsoredDraft(item)
+      const src =
+        draft.fileId === undefined || draft.mime === undefined
+          ? undefined
+          : await this.embedMedia(draft.fileId, draft.mime)
+      messages.push({
+        id: item.id,
+        text: item.text,
+        title: item.title,
+        button: item.button,
+        recommended: item.recommended,
+        info: item.info,
+        ...(item.media === undefined ? {} : { media: item.media }),
+        ...(src === undefined ? {} : { mediaSrc: src }),
+      })
+    }
+    return { between: page.between, messages }
+  }
+
+  async viewSponsored(
+    chatId: string,
+    messageIds: ReadonlyArray<string>,
+  ): Promise<void> {
+    if (messageIds.length === 0) {
+      return
+    }
+    await this.send({
+      '@type': 'viewMessages',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+      message_ids: messageIds.map(id => chatIdArgument(id)),
+      source: null,
+      force_read: false,
+    })
+  }
+
+  async clickSponsored(
+    chatId: string,
+    messageId: string,
+    media: boolean,
+  ): Promise<void> {
+    await this.send({
+      '@type': 'clickChatSponsoredMessage',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+      message_id: chatIdArgument(messageId),
+      is_media_click: media,
+      from_fullscreen: false,
+    })
+  }
+
+  private async embedMedia(
+    fileId: number,
+    mime: string,
+  ): Promise<string | undefined> {
+    const downloaded = await this.send({
+      '@type': 'downloadFile',
+      file_id: fileId,
+      priority: 32,
+      offset: 0,
+      limit: 0,
+      synchronous: true,
+    }).catch(() => undefined)
+    const local = field(downloaded, 'local')
+    if (field(local, 'is_downloading_completed') !== true) {
+      return undefined
+    }
+    const path = text(field(local, 'path'))
+    const read = this.sink.readFile
+    if (read === undefined || !path.startsWith('/tdlib/')) {
+      return undefined
+    }
+    const bytes = await read(path).catch(() => new Uint8Array())
+    if (bytes.byteLength === 0 || bytes.byteLength > MEDIA_BYTES) {
+      return undefined
+    }
+    return `data:${mime};base64,${bytesToBase64(bytes)}`
   }
 
   async logout(): Promise<void> {

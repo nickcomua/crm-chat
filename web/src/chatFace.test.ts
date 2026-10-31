@@ -6,6 +6,7 @@ import {
   type StoredFace,
   appendLines,
   deliverLive,
+  headerSponsored,
   threadEntries,
 } from './chatFace'
 
@@ -39,22 +40,19 @@ const face = (historyLoaded?: true): StoredFace => ({
   ...(historyLoaded === undefined ? {} : { historyLoaded }),
 })
 
-test('a zero gap shows one sponsored message after the history', () => {
+test('a zero gap keeps the sponsored message out of the history tail', () => {
+  const sponsored = [ad('a', 'Harbor'), ad('b', 'Other')]
   const entries = threadEntries(
     [line('1', 'older'), line('2', 'newer')],
     [],
-    [ad('a', 'Harbor'), ad('b', 'Other')],
+    sponsored,
     0,
   )
-  expect(entries.map(entry => entry.kind)).toEqual([
-    'message',
-    'message',
-    'sponsored',
-  ])
-  expect(entries[2]).toMatchObject({ line: { id: 'a' } })
+  expect(entries.map(entry => entry.kind)).toEqual(['message', 'message'])
+  expect(headerSponsored(sponsored)?.id).toBe('a')
 })
 
-test('a positive gap inserts each ad after a full group and keeps a short history visible', () => {
+test('a positive gap inserts each later ad after a full group', () => {
   const grouped = threadEntries(
     [line('1', 'a'), line('2', 'b'), line('3', 'c'), line('4', 'd'), line('5', 'e')],
     [],
@@ -67,11 +65,13 @@ test('a positive gap inserts each ad after a full group and keeps a short histor
     'sponsored',
     'message',
     'message',
-    'sponsored',
     'message',
   ])
-  const short = threadEntries([line('1', 'only')], [], [ad('a', 'Harbor')], 10)
-  expect(short.map(entry => entry.kind)).toEqual(['message', 'sponsored'])
+  expect(grouped[2]).toMatchObject({ line: { id: 'b' } })
+  const shortAds = [ad('a', 'Harbor')]
+  const short = threadEntries([line('1', 'only')], [], shortAds, 10)
+  expect(short.map(entry => entry.kind)).toEqual(['message'])
+  expect(headerSponsored(shortAds)?.id).toBe('a')
 })
 
 test('messages that arrive before history stay pending and then merge without duplicates', () => {

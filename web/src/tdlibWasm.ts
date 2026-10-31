@@ -618,10 +618,30 @@ export class TdWasmRuntime {
     // Populate before any td_* call. syncfs while TDLib is running replaces
     // the live file buffers and the next receive faults.
     const snapshotCapable = canSnapshot(created.FS)
-    const held = snapshotCapable ? this.hotFiles : undefined
+    const held =
+      snapshotCapable &&
+      this.hotFiles !== undefined &&
+      this.hotFiles.length > 0
+        ? this.hotFiles
+        : undefined
+    let chosen = held
+    if (
+      chosen !== undefined &&
+      !settleSnapshotFiles(chosen, this.foldGrow).checkpointed
+    ) {
+      const stored = await this.snapshots.load().catch(() => undefined)
+      if (
+        stored !== undefined &&
+        stored.files.length > 0 &&
+        settleSnapshotFiles(stored.files, this.foldGrow).checkpointed
+      ) {
+        chosen = stored.files
+        this.hotFiles = stored.files
+      }
+    }
     const snapshot =
-      held !== undefined && held.length > 0
-        ? { files: held }
+      chosen !== undefined
+        ? { files: chosen }
         : snapshotCapable
           ? await this.snapshots.load().catch(() => undefined)
           : undefined
@@ -655,7 +675,7 @@ export class TdWasmRuntime {
         const settled = settleSnapshotFiles(captured)
         if (!assessFiles(settled.files).ok) {
           removeTree(created.FS, '/tdlib')
-        } else if (settled.checkpointed) {
+        } else if (settled.checkpointed && settled.folded) {
           installSettled(created.FS, captured)
         }
       }
@@ -1059,6 +1079,16 @@ export class TdWasmRuntime {
         this.slots.delete(id)
       },
       sync: () => this.sync(),
+      readFile: async path => {
+        const read = this.module?.FS.readFile
+        if (read === undefined || !path.startsWith('/tdlib/')) {
+          return new Uint8Array()
+        }
+        const bytes = read(path)
+        const copy = new Uint8Array(bytes.byteLength)
+        copy.set(bytes)
+        return copy
+      },
     }
     const account = new TdAccount(sink, id)
     const slot: ClientSlot = {

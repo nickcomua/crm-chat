@@ -40,6 +40,7 @@ const authorization = (name: string, extra?: Record<string, unknown>) => ({
 
 const scripted = (
   plans: Array<Plan>,
+  readFile?: (path: string) => Promise<Uint8Array>,
 ): { account: TdAccount; sent: Array<TdQuery> } => {
   const sent: Array<TdQuery> = []
   let account: TdAccount | undefined
@@ -55,6 +56,7 @@ const scripted = (
       return Promise.resolve(plan?.response ?? { '@type': 'ok' })
     },
     close: () => Promise.resolve(),
+    ...(readFile === undefined ? {} : { readFile }),
   }
   account = new TdAccount(sink, 'one')
   return { account, sent }
@@ -675,6 +677,69 @@ describe('TDLib browser protocol', () => {
       'openChat',
       'closeChat',
     ])
+  })
+
+  test('a sponsored photo is downloaded and a click is reported', async () => {
+    const { account, sent } = scripted(
+      [
+        {
+          response: {
+            '@type': 'sponsoredMessages',
+            messages_between: 0,
+            messages: [
+              {
+                '@type': 'sponsoredMessage',
+                message_id: 4,
+                content: {
+                  '@type': 'messagePhoto',
+                  caption: { text: 'Pier' },
+                  photo: { sizes: [{ width: 800, photo: { id: 15 } }] },
+                },
+                title: 'Harbor',
+                button_text: 'Open',
+              },
+            ],
+          },
+        },
+        {
+          response: {
+            '@type': 'file',
+            local: {
+              path: '/tdlib/one/files/ad.jpg',
+              is_downloading_completed: true,
+            },
+          },
+        },
+        { response: { '@type': 'ok' } },
+        { response: { '@type': 'ok' } },
+      ],
+      () => Promise.resolve(new Uint8Array([1, 2, 3])),
+    )
+    const page = await account.sponsored('one:3')
+    expect(page.messages[0]?.text).toBe('Pier')
+    expect(page.messages[0]?.media).toBe('photo')
+    expect(page.messages[0]?.mediaSrc?.startsWith('data:image/jpeg;base64,')).toBe(
+      true,
+    )
+    expect(page.messages[0]?.text).not.toBe('Photo')
+    await account.viewSponsored('one:3', ['4'])
+    await account.clickSponsored('one:3', '4', true)
+    expect(sent.map(query => query['@type'])).toEqual([
+      'getChatSponsoredMessages',
+      'downloadFile',
+      'viewMessages',
+      'clickChatSponsoredMessage',
+    ])
+    expect(sent[2]).toMatchObject({
+      message_ids: [4],
+      force_read: false,
+      source: null,
+    })
+    expect(sent[3]).toMatchObject({
+      message_id: 4,
+      is_media_click: true,
+      from_fullscreen: false,
+    })
   })
 
   test('desktop live commands use Tauri camelCase argument names', async () => {

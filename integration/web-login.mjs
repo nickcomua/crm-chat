@@ -6,7 +6,7 @@
 // secrets.
 import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
-import { existsSync, openSync } from 'node:fs'
+import { existsSync, openSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -855,7 +855,12 @@ const signalRoom = async room => {
     throw fail(needs)
   }
   if (code !== 0 || !lines.includes(`signal ${room}: sent`)) {
-    throw fail(`signal ${room}: did not send`)
+    const errText = existsSync(errPath) ? readFileSync(errPath, 'utf8') : ''
+    const reason = errText
+      .split('\n')
+      .map(line => line.trim())
+      .find(line => /^desktop tdlib: [A-Za-z][A-Za-z _:()-]{0,180}$/.test(line))
+    throw fail(reason ?? `signal ${room}: did not send`)
   }
 }
 
@@ -939,6 +944,68 @@ const proveRooms = async page => {
     throw fail('group is listed as a channel')
   }
   await openRoom(page, CHANNEL_TITLE, 'channel', '08-channel.png')
+  await proveSponsored(page)
+}
+
+const proveSponsored = async page => {
+  // The Web K open-chat reference is a bot dialog: a private chat with an
+  // audience count, a composer, and the sponsored card under the header.
+  // It is not in the Channels folder. The private test rooms are skipped.
+  await selectFolder(page, 'All')
+  const rows = page.locator('.chat-row')
+  const count = await rows.count()
+  let opened = 0
+  for (let index = 0; index < count && opened < 8; index += 1) {
+    const row = rows.nth(index)
+    const title = (
+      (await row.locator('div.font-medium').first().textContent()) ?? ''
+    ).trim()
+    if (title === CHANNEL_TITLE || title === GROUP_TITLE || title === '') {
+      continue
+    }
+    await row.click()
+    opened += 1
+    const card = page.locator('[aria-label="Open chat"] .tg-sponsored')
+    const visible = await card
+      .first()
+      .waitFor({ state: 'visible', timeout: 12_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!visible) {
+      continue
+    }
+    const placed = await page.evaluate(() => {
+      const root = document.querySelector('[aria-label="Open chat"]')
+      const header = root?.querySelector('header')
+      const sponsored = root?.querySelector('.tg-sponsored')
+      if (header === null || header === undefined || sponsored === null || sponsored === undefined) {
+        return false
+      }
+      const headerBox = header.getBoundingClientRect()
+      const cardBox = sponsored.getBoundingClientRect()
+      const underHeader =
+        cardBox.top >= headerBox.bottom - 4 &&
+        cardBox.top <= headerBox.bottom + 80
+      const bubbles = [...root.querySelectorAll('.tg-bubble')]
+      const historyAbove = bubbles.some(bubble => {
+        const box = bubble.getBoundingClientRect()
+        const onScreen = box.bottom > headerBox.bottom && box.top < window.innerHeight
+        return onScreen && box.top + 4 < cardBox.top
+      })
+      const text = [...sponsored.querySelectorAll('.tg-sponsored-text')].some(node =>
+        ['Photo', 'Video', 'GIF'].includes((node.textContent ?? '').trim()),
+      )
+      const fakeButton = sponsored.querySelector('span.tg-sponsored-button') !== null
+      return underHeader && !historyAbove && !text && !fakeButton
+    })
+    if (!placed) {
+      throw fail('sponsored card is not under the header')
+    }
+    await shot(page, '09-sponsored.png')
+    note('sponsored card is under the header')
+    return
+  }
+  throw fail('sponsored card was not on screen')
 }
 const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
   const deadline = Date.now() + reloadBudgetMs
