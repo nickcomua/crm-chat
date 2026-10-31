@@ -309,7 +309,136 @@ async fn accounts() -> Result<(), String> {
         "login: pass (desktop tdlib, qr, chats={})",
         logged_in.chats.len()
     );
+    prove_history(&client, &listed).await?;
+    prove_live(&client, &listed).await?;
     Ok(())
+}
+
+fn kind_label(kind: &crm_chat_telegram::ChatKind) -> &'static str {
+    match kind {
+        crm_chat_telegram::ChatKind::Dialog => "dialog",
+        crm_chat_telegram::ChatKind::Group => "group",
+        crm_chat_telegram::ChatKind::Channel => "channel",
+    }
+}
+
+async fn prove_kind(
+    client: &Client,
+    accounts: &[crm_chat_telegram::Account],
+    kind: crm_chat_telegram::ChatKind,
+) -> Result<(), String> {
+    let label = kind_label(&kind);
+    let mut attempts = 0;
+    let mut last_error = String::new();
+    for account in accounts {
+        for chat in account.chats.iter().filter(|chat| chat.kind == kind) {
+            attempts += 1;
+            let messages = match client.messages(&account.id, &chat.id).await {
+                Ok(messages) => messages,
+                Err(error) => {
+                    last_error = error;
+                    continue;
+                }
+            };
+            if kind == crm_chat_telegram::ChatKind::Channel {
+                match client.sponsored(&account.id, &chat.id).await {
+                    Ok(page) => {
+                        println!(
+                            "history channel: pass (messages={}, sponsored={})",
+                            messages.len(),
+                            page.messages.len()
+                        );
+                        return Ok(());
+                    }
+                    Err(error) => last_error = error,
+                }
+                continue;
+            }
+            println!("history {label}: pass (messages={})", messages.len());
+            return Ok(());
+        }
+    }
+    if attempts == 0 {
+        println!("history {label}: skipped (no saved {label})");
+        return Ok(());
+    }
+    Err(format!("history {label}: {last_error}"))
+}
+
+async fn prove_history(
+    client: &Client,
+    accounts: &[crm_chat_telegram::Account],
+) -> Result<(), String> {
+    for kind in [
+        crm_chat_telegram::ChatKind::Dialog,
+        crm_chat_telegram::ChatKind::Group,
+        crm_chat_telegram::ChatKind::Channel,
+    ] {
+        prove_kind(client, accounts, kind).await?;
+    }
+    Ok(())
+}
+
+/// Sends one marker between the two saved accounts.
+/// The peer is the other account's user id from getMe. When both directories
+/// are the same user, the marker goes to Saved Messages. Nothing else is messaged.
+async fn prove_live(
+    client: &Client,
+    accounts: &[crm_chat_telegram::Account],
+) -> Result<(), String> {
+    let Some(sender) = accounts.first() else {
+        println!("live update: skipped (one account)");
+        return Ok(());
+    };
+    let Some(other) = accounts.get(1) else {
+        println!("live update: skipped (one account)");
+        return Ok(());
+    };
+    let sender_user = client.self_user_id(&sender.id).await?;
+    let other_user = client.self_user_id(&other.id).await?;
+    let (recipient, peer_user) = if sender_user == other_user {
+        (sender, sender_user)
+    } else {
+        (other, other_user)
+    };
+    let sender_chat = client.create_private_chat(&sender.id, peer_user).await?;
+    let recipient_chat = if recipient.id == sender.id {
+        sender_chat.clone()
+    } else {
+        client
+            .create_private_chat(&recipient.id, sender_user)
+            .await?
+    };
+    client.open_chat(&sender.id, &sender_chat).await?;
+    if recipient.id != sender.id {
+        client.open_chat(&recipient.id, &recipient_chat).await?;
+    }
+    let marker = format!(
+        "kam44-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0)
+    );
+    client.send_text(&sender.id, &sender_chat, &marker).await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(25);
+    while tokio::time::Instant::now() < deadline {
+        if client
+            .take_incoming(&recipient.id)
+            .iter()
+            .any(|message| message.text == marker)
+        {
+            println!("live update: pass via update");
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    let history = client.messages(&recipient.id, &recipient_chat).await?;
+    if history.iter().any(|message| message.text == marker) {
+        println!("live update: pass via history");
+        return Ok(());
+    }
+    Err("live update: the marker did not arrive".into())
 }
 
 async fn login(slot: &str) -> Result<(), String> {

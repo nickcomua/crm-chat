@@ -62,6 +62,41 @@ pub struct Message {
     pub date: i32,
 }
 
+/// A message TDLib pushed after the chat was already open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveMessage {
+    pub chat_id: String,
+    pub id: String,
+    pub text: String,
+    pub outgoing: bool,
+    pub date: i32,
+}
+
+/// Sponsored messages TDLib returns for a channel. Third-party clients have to show them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SponsoredPage {
+    pub between: i32,
+    pub messages: Vec<SponsoredLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SponsoredLine {
+    pub id: String,
+    pub text: String,
+    pub title: String,
+    pub button: String,
+    pub recommended: bool,
+    pub info: String,
+}
+
+struct StoredLive {
+    account_id: String,
+    message: LiveMessage,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "_tag")]
 pub enum AuthStep {
@@ -99,6 +134,7 @@ struct Slot {
 struct Shared {
     slots: Mutex<std::collections::HashMap<i32, Slot>>,
     ids: Mutex<std::collections::HashMap<String, i32>>,
+    inbox: Mutex<Vec<StoredLive>>,
 }
 
 pub struct Client {
@@ -368,21 +404,27 @@ impl Client {
         let shared = Arc::new(Shared {
             slots: Mutex::new(std::collections::HashMap::new()),
             ids: Mutex::new(std::collections::HashMap::new()),
+            inbox: Mutex::new(Vec::new()),
         });
-        let (tx, mut rx) = mpsc::channel::<(Update, i32)>(256);
+        let (tx, mut rx) = mpsc::channel::<String>(256);
         let handler = Arc::clone(&shared);
         runtime.spawn(async move {
-            while let Some((update, client_id)) = rx.recv().await {
-                if let Update::AuthorizationState(update) = update {
+            while let Some(raw) = rx.recv().await {
+                if let Some((Update::AuthorizationState(update), client_id)) =
+                    tdlib_rs::decode_incoming(&raw)
+                {
                     apply_authorization(&handler, client_id, update.authorization_state).await;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                    note_live_update(&handler, &value);
                 }
             }
         });
         std::thread::Builder::new()
             .name("tdlib-receive".into())
             .spawn(move || loop {
-                if let Some(update) = tdlib_rs::receive() {
-                    if tx.blocking_send(update).is_err() {
+                if let Some(raw) = tdlib_rs::receive_payload() {
+                    if tx.blocking_send(raw).is_err() {
                         break;
                     }
                 }
@@ -562,6 +604,109 @@ impl Client {
             .collect::<Vec<_>>();
         parsed.reverse();
         Ok(parsed)
+    }
+
+    /// Supergroups and channels only deliver updates while the chat is open.
+    pub async fn open_chat(&self, id: &str, chat_id: &str) -> Result<(), String> {
+        self.chat_ok(id, chat_id, "openChat").await
+    }
+
+    pub async fn close_chat(&self, id: &str, chat_id: &str) -> Result<(), String> {
+        self.chat_ok(id, chat_id, "closeChat").await
+    }
+
+    async fn chat_ok(&self, id: &str, chat_id: &str, method: &str) -> Result<(), String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response =
+            tdlib_rs::send_json(client_id, json!({"@type": method, "chat_id": td_chat_id})).await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn take_incoming(&self, id: &str) -> Vec<LiveMessage> {
+        let mut inbox = self.shared.inbox.lock().expect("inbox");
+        let mut kept = Vec::new();
+        let mut taken = Vec::new();
+        for item in inbox.drain(..) {
+            if item.account_id == id {
+                taken.push(item.message);
+            } else {
+                kept.push(item);
+            }
+        }
+        *inbox = kept;
+        taken
+    }
+
+    pub async fn sponsored(&self, id: &str, chat_id: &str) -> Result<SponsoredPage, String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "getChatSponsoredMessages",
+                "chat_id": td_chat_id,
+            }),
+        )
+        .await;
+        sponsored_from_json(&response)
+    }
+
+    pub async fn self_user_id(&self, id: &str) -> Result<i64, String> {
+        let client_id = self.client_id(id)?;
+        let me = tdlib_rs::send_json(client_id, json!({"@type": "getMe"})).await;
+        if let Some(error) = public_error(&me) {
+            return Err(error);
+        }
+        me.get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "REQUEST_FAILED".to_owned())
+    }
+
+    /// Opens the private chat with `user_id` without sending a message.
+    pub async fn create_private_chat(&self, id: &str, user_id: i64) -> Result<String, String> {
+        let client_id = self.client_id(id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "createPrivateChat",
+                "user_id": user_id,
+                "force": false,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        let td_chat_id = response
+            .get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "REQUEST_FAILED".to_owned())?;
+        Ok(format!("{id}:{td_chat_id}"))
+    }
+
+    pub async fn send_text(&self, id: &str, chat_id: &str, text: &str) -> Result<(), String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "sendMessage",
+                "chat_id": td_chat_id,
+                "input_message_content": {
+                    "@type": "inputMessageText",
+                    "text": {"@type": "formattedText", "text": text},
+                },
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub async fn logout(&self, id: &str) -> Result<(), String> {
@@ -938,21 +1083,9 @@ fn chat_tdlib_id(account_id: &str, chat_id: &str) -> Result<i64, String> {
 fn message_from_json(value: &Value) -> Option<Message> {
     let id = value.get("id").and_then(Value::as_i64)?;
     let content = value.get("content")?;
-    let type_name = content.get("@type").and_then(Value::as_str).unwrap_or("");
-    let text = if type_name == "messageText" {
-        content
-            .pointer("/text/text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    } else if type_name.is_empty() {
-        String::new()
-    } else {
-        type_name.trim_start_matches("message").to_owned()
-    };
     Some(Message {
         id: id.to_string(),
-        text,
+        text: content_text(content),
         outgoing: value
             .get("is_outgoing")
             .and_then(Value::as_bool)
@@ -961,13 +1094,154 @@ fn message_from_json(value: &Value) -> Option<Message> {
     })
 }
 
+fn content_text(content: &Value) -> String {
+    let type_name = content.get("@type").and_then(Value::as_str).unwrap_or("");
+    if type_name == "messageText" {
+        return content
+            .pointer("/text/text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+    }
+    if type_name.is_empty() {
+        return String::new();
+    }
+    type_name.trim_start_matches("message").to_owned()
+}
+
+fn account_id_for(shared: &Shared, client_id: i32) -> Option<String> {
+    shared
+        .ids
+        .lock()
+        .expect("ids")
+        .iter()
+        .find(|(_, id)| **id == client_id)
+        .map(|(account_id, _)| account_id.clone())
+}
+
+fn json_i64(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+}
+
+const INBOX_LIMIT: usize = 200;
+
+/// Records `updateNewMessage` and `updateChatLastMessage`. Other payloads,
+/// including request responses, are ignored. Nothing from the payload is logged.
+fn note_live_update(shared: &Shared, value: &Value) {
+    if value.get("@extra").is_some() {
+        return;
+    }
+    let type_name = value.get("@type").and_then(Value::as_str).unwrap_or("");
+    let (message, fallback_chat) = match type_name {
+        "updateNewMessage" => (value.get("message"), None),
+        "updateChatLastMessage" => (value.get("last_message"), value.get("chat_id")),
+        _ => return,
+    };
+    let Some(message) = message else {
+        return;
+    };
+    if message.is_null() {
+        return;
+    }
+    let Some(client_id) = json_i64(value.get("@client_id")).and_then(|id| i32::try_from(id).ok())
+    else {
+        return;
+    };
+    let Some(account_id) = account_id_for(shared, client_id) else {
+        return;
+    };
+    let Some(parsed) = message_from_json(message) else {
+        return;
+    };
+    if parsed.text.is_empty() {
+        return;
+    }
+    let Some(td_chat) = json_i64(message.get("chat_id")).or_else(|| json_i64(fallback_chat)) else {
+        return;
+    };
+    let chat_id = format!("{account_id}:{td_chat}");
+    let mut inbox = shared.inbox.lock().expect("inbox");
+    let duplicate = inbox.iter().any(|item| {
+        item.account_id == account_id
+            && item.message.chat_id == chat_id
+            && item.message.id == parsed.id
+    });
+    if duplicate {
+        return;
+    }
+    inbox.push(StoredLive {
+        account_id,
+        message: LiveMessage {
+            chat_id,
+            id: parsed.id,
+            text: parsed.text,
+            outgoing: parsed.outgoing,
+            date: parsed.date,
+        },
+    });
+    if inbox.len() > INBOX_LIMIT {
+        let extra = inbox.len() - INBOX_LIMIT;
+        inbox.drain(0..extra);
+    }
+}
+
+fn sponsored_from_json(value: &Value) -> Result<SponsoredPage, String> {
+    if let Some(error) = public_error(value) {
+        return Err(error);
+    }
+    if value.get("@type").and_then(Value::as_str) != Some("sponsoredMessages") {
+        return Err("REQUEST_FAILED".into());
+    }
+    let between = value
+        .get("messages_between")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let messages = value
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| {
+                    let id = json_i64(message.get("message_id"))?;
+                    let content = message.get("content")?;
+                    let text = |key: &str| -> String {
+                        message
+                            .get(key)
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned()
+                    };
+                    Some(SponsoredLine {
+                        id: id.to_string(),
+                        text: content_text(content),
+                        title: text("title"),
+                        button: text("button_text"),
+                        recommended: message
+                            .get("is_recommended")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        info: text("additional_info"),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(SponsoredPage { between, messages })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         apply_authorization, apply_parameter_response, apply_refreshed_phase, chat_kind,
-        chat_tdlib_id, database_root_from, phase_from_update_json, public_error, publish,
-        publish_authorization, require_desktop_authorized, send_parameters, valid_account_id,
-        Account, AuthStep, Chat, ChatKind, Client, Phase, Shared, Slot, LOG_SILENCE_REQUESTS,
+        chat_tdlib_id, database_root_from, note_live_update, phase_from_update_json, public_error,
+        publish, publish_authorization, require_desktop_authorized, send_parameters,
+        sponsored_from_json, valid_account_id, Account, AuthStep, Chat, ChatKind, Client, Phase,
+        Shared, Slot, LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
@@ -980,6 +1254,7 @@ mod tests {
         Shared {
             slots: std::sync::Mutex::new(std::collections::HashMap::new()),
             ids: std::sync::Mutex::new(std::collections::HashMap::new()),
+            inbox: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1376,6 +1651,78 @@ mod tests {
         ));
         let logged = PAYLOAD_LOG.lines.lock().expect("log lines");
         assert!(logged.iter().all(|line| !line.contains(canary)));
+    }
+
+    #[test]
+    fn a_new_message_is_kept_once_and_a_response_is_ignored() {
+        let shared = test_shared();
+        shared.ids.lock().expect("ids").insert("acct".to_owned(), 4);
+        let update = json!({
+            "@type": "updateNewMessage",
+            "@client_id": 4,
+            "message": {
+                "id": 9,
+                "chat_id": 7,
+                "is_outgoing": false,
+                "date": 30,
+                "content": {"@type": "messageText", "text": {"text": "just arrived"}}
+            }
+        });
+        note_live_update(&shared, &update);
+        note_live_update(&shared, &update);
+        note_live_update(
+            &shared,
+            &json!({
+                "@extra": "q1",
+                "@type": "message",
+                "@client_id": 4,
+                "id": 10,
+                "chat_id": 7,
+                "content": {"@type": "messageText", "text": {"text": "not live"}}
+            }),
+        );
+        let client = Client {
+            root: Path::new("/tmp/crm-chat-tdlib-test").to_path_buf(),
+            shared: std::sync::Arc::new(shared),
+            _runtime: None,
+        };
+        let taken = client.take_incoming("acct");
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].chat_id, "acct:7");
+        assert_eq!(taken[0].id, "9");
+        assert_eq!(taken[0].text, "just arrived");
+        assert!(client.take_incoming("acct").is_empty());
+    }
+
+    #[test]
+    fn sponsored_messages_keep_their_label_fields() {
+        let page = sponsored_from_json(&json!({
+            "@type": "sponsoredMessages",
+            "messages_between": 0,
+            "messages": [{
+                "@type": "sponsoredMessage",
+                "message_id": 4,
+                "is_recommended": false,
+                "content": {"@type": "messageText", "text": {"text": "Ride the ferry."}},
+                "title": "Harbor",
+                "button_text": "Open",
+                "additional_info": "About this ad"
+            }]
+        }))
+        .expect("page");
+        assert_eq!(page.between, 0);
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].id, "4");
+        assert_eq!(page.messages[0].text, "Ride the ferry.");
+        assert_eq!(page.messages[0].title, "Harbor");
+        assert_eq!(page.messages[0].button, "Open");
+        assert!(!page.messages[0].recommended);
+        assert_eq!(page.messages[0].info, "About this ad");
+        assert_eq!(
+            sponsored_from_json(&json!({"@type": "error", "message": "CHAT_NOT_FOUND"}))
+                .expect_err("error"),
+            "CHAT_NOT_FOUND"
+        );
     }
 
     #[test]

@@ -4,7 +4,13 @@ import QRCode from 'qrcode'
 
 import { StoredFace } from './chatFace'
 import type { Chat } from './generated/core'
-import { type AuthStep, type ChatPreview, TdAccount } from './tdlibProtocol'
+import {
+  type AuthStep,
+  type ChatPreview,
+  type LiveItem,
+  type SponsoredPage,
+  TdAccount,
+} from './tdlibProtocol'
 import { browserRuntime } from './tdlibWasm'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -143,6 +149,113 @@ export const loadMessages = async (
     return Array.isArray(value) ? value : []
   }
   return sessionFor(id).messages(chatId)
+}
+
+const decodeLive = (value: unknown): Array<LiveItem> => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap(item => {
+    if (
+      !isRecord(item) ||
+      typeof item['chatId'] !== 'string' ||
+      typeof item['id'] !== 'string' ||
+      typeof item['text'] !== 'string' ||
+      typeof item['outgoing'] !== 'boolean' ||
+      typeof item['date'] !== 'number' ||
+      item['text'] === ''
+    ) {
+      return []
+    }
+    return [
+      {
+        chatId: item['chatId'],
+        id: item['id'],
+        text: item['text'],
+        outgoing: item['outgoing'],
+        date: item['date'],
+      },
+    ]
+  })
+}
+
+const decodeSponsored = (value: unknown): SponsoredPage => {
+  if (!isRecord(value) || !Array.isArray(value['messages'])) {
+    throw new Error('Telegram could not complete the request.')
+  }
+  const between = value['between']
+  return {
+    between: typeof between === 'number' && between > 0 ? between : 0,
+    messages: value['messages'].flatMap(item => {
+      if (
+        !isRecord(item) ||
+        typeof item['id'] !== 'string' ||
+        typeof item['text'] !== 'string' ||
+        typeof item['title'] !== 'string' ||
+        typeof item['button'] !== 'string' ||
+        typeof item['info'] !== 'string'
+      ) {
+        return []
+      }
+      return [
+        {
+          id: item['id'],
+          text: item['text'],
+          title: item['title'],
+          button: item['button'],
+          recommended: item['recommended'] === true,
+          info: item['info'],
+        },
+      ]
+    }),
+  }
+}
+
+export const takeIncoming = async (id: string): Promise<Array<LiveItem>> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return decodeLive(await invoke('telegram_incoming', { id }))
+  }
+  const session = sessions.get(id)
+  if (session === undefined) {
+    return []
+  }
+  return session.takeIncoming()
+}
+
+export const openTelegramChat = async (
+  id: string,
+  chatId: string,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_open_chat', { id, chatId })
+    return
+  }
+  await sessionFor(id).openChat(chatId)
+}
+
+export const closeTelegramChat = async (
+  id: string,
+  chatId: string,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_close_chat', { id, chatId })
+    return
+  }
+  await sessionFor(id).closeChat(chatId)
+}
+
+export const loadSponsored = async (
+  id: string,
+  chatId: string,
+): Promise<SponsoredPage> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    return decodeSponsored(await invoke('telegram_sponsored', { id, chatId }))
+  }
+  return sessionFor(id).sponsored(chatId)
 }
 
 export const restoreAccounts = async (

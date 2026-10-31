@@ -1,6 +1,8 @@
+import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import {
   Command,
+  Subscription,
   all,
   click,
   expect,
@@ -17,7 +19,9 @@ import { test } from 'vitest'
 import {
   BeginLogin,
   LoadHistory,
+  LoadSponsored,
   Message,
+  OpenChat,
   Refresh,
   SubmitAnswer,
   initialModel,
@@ -111,6 +115,7 @@ test('opening a chat loads its message history', () => {
       'Bring the notes.',
     ),
     click(nth(all.role('listitem'), 0)),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
     Command.resolve(
       LoadHistory,
       Message.LoadedHistory({
@@ -125,6 +130,164 @@ test('opening a chat loads its message history', () => {
     ),
     expect(role('region', { name: 'Open chat' })).not.toContainText(
       'No messages yet',
+    ),
+  )
+})
+
+const signedIn = modifyFields(initialModel, {
+  login: () => ({ _tag: 'Closed' }),
+  accounts: () => [account],
+  selectedAccountId: () => 'one',
+})
+
+test('a channel shows Telegram sponsored messages with their label', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(signedIn, {
+        faces: () => [
+          {
+            id: 'one:3',
+            time: '',
+            preview: '',
+            unread: 0,
+            receipt: 'none',
+            lines: [],
+          },
+        ],
+      }),
+    ),
+    click(nth(all.role('listitem'), 2)),
+    Command.resolve(OpenChat, Message.CompletedOpenChat()),
+    Command.resolve(
+      LoadHistory,
+      Message.LoadedHistory({
+        id: 'one:3',
+        lines: [
+          {
+            id: '9',
+            text: 'Harbor opens at dawn.',
+            mine: false,
+            time: '09:00',
+          },
+        ],
+      }),
+    ),
+    Command.resolve(
+      LoadSponsored,
+      Message.LoadedSponsored({
+        id: 'one:3',
+        between: 0,
+        lines: [
+          {
+            id: 'ad-1',
+            text: 'Ride the ferry.',
+            title: 'Harbor',
+            button: 'Open',
+            recommended: false,
+            info: 'About this ad',
+          },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'Harbor opens at dawn.',
+    ),
+    expect(role('note', { name: 'Sponsored' })).toContainText('Ride the ferry.'),
+    expect(role('note', { name: 'Sponsored' })).toContainText('Harbor'),
+    expect(role('note', { name: 'Sponsored' })).toContainText('Open'),
+    expect(role('note', { name: 'Sponsored' })).toContainText('About this ad'),
+  )
+})
+
+test('a recommended channel placement is labeled Recommended', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(signedIn, {
+        maybeOpenChatId: () => Option.some('one:3'),
+        faces: () => [
+          {
+            id: 'one:3',
+            time: '09:00',
+            preview: 'Harbor opens at dawn.',
+            unread: 0,
+            receipt: 'none',
+            historyLoaded: true,
+            sponsoredLoaded: true,
+            sponsoredBetween: 0,
+            lines: [
+              {
+                id: '9',
+                text: 'Harbor opens at dawn.',
+                mine: false,
+                time: '09:00',
+              },
+            ],
+            sponsored: [
+              {
+                id: 'ad-2',
+                text: 'A quieter pier.',
+                title: 'North dock',
+                button: 'See',
+                recommended: true,
+                info: '',
+              },
+            ],
+          },
+        ],
+      }),
+    ),
+    expect(role('note', { name: 'Recommended' })).toContainText('North dock'),
+    expect(role('note', { name: 'Sponsored' })).not.toExist(),
+  )
+})
+
+test('a new message appears in an open chat without a reload', () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(signedIn, {
+        maybeOpenChatId: () => Option.some('one:1'),
+        faces: () => [
+          {
+            id: 'one:1',
+            time: '12:04',
+            preview: 'See you at the station.',
+            unread: 0,
+            receipt: 'none',
+            historyLoaded: true,
+            lines: [
+              {
+                id: '1',
+                text: 'See you at the station.',
+                mine: false,
+                time: '12:04',
+              },
+            ],
+          },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'See you at the station.',
+    ),
+    Subscription.emit(
+      Message.ArrivedMessages({
+        accountId: 'one',
+        items: [
+          {
+            chatId: 'one:1',
+            id: '2',
+            text: 'The tram is here.',
+            outgoing: false,
+            date: 1_700_000_000,
+          },
+        ],
+      }),
+    ),
+    expect(role('region', { name: 'Open chat' })).toContainText(
+      'The tram is here.',
     ),
   )
 })
