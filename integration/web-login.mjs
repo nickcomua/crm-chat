@@ -882,6 +882,7 @@ try {
     recordQr,
     qrBudgetMs = 30_000,
     allowSignedIn = false,
+    confirmSlot = slot,
   ) => {
     const qr = page.locator('img[alt="Telegram login QR code"]')
     // The PR base says "Log in with QR". The current site says "Log in by QR code".
@@ -950,7 +951,7 @@ try {
     })
     await shot(page, shotName)
     return await new Promise((resolve, reject) => {
-      const child = spawn('python3', [tdqr, slot, 'confirm'], {
+      const child = spawn('python3', [tdqr, confirmSlot, 'confirm'], {
         env: { ...process.env, TDQR_LINK: link },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
@@ -1245,7 +1246,7 @@ try {
   let realPreview = ''
   while (Date.now() < deadline) {
     assertNoFaults()
-    const password = page.getByRole('textbox', { name: '2FA password' })
+    const password = page.getByRole('textbox', { name: 'Cloud password' })
     if ((await password.count()) > 0) {
       timing.approve_to_chats_ms = String(Date.now() - approvedAt)
       throw fail(
@@ -1397,6 +1398,92 @@ try {
     throw fail(`snapshot was not checkpointed (${skipped})`)
   }
   assertNoFaults()
+  const secondSlot = process.env.CRM_CHAT_TDQR_SLOT_2 ?? '2'
+  if (secondSlot === slot) {
+    note(
+      'NEEDS TEST ACCOUNTS: a second legacy account, different from the QR slot, is required to attach another login',
+    )
+  } else {
+    await reopened.getByRole('button', { name: 'Menu' }).click()
+    await reopened.getByRole('button', { name: 'Add account' }).click()
+    const secondApproved = await approveQr(
+      reopened,
+      '07-second-qr-blurred.png',
+      false,
+      60_000,
+      false,
+      secondSlot,
+    )
+    const secondDeadline = secondApproved + 60_000
+    let attached = false
+    let needsPassword = false
+    while (Date.now() < secondDeadline) {
+      assertNoFaults()
+      const password = reopened.getByRole('textbox', { name: 'Cloud password' })
+      if ((await password.count()) > 0) {
+        needsPassword = true
+        break
+      }
+      const shell = reopened.locator('[aria-label="Telegram chats"]')
+      if (
+        (await shell.count()) > 0 &&
+        (await reopened.locator('.chat-row').count()) > 0
+      ) {
+        attached = true
+        break
+      }
+      await delay(100)
+    }
+    if (needsPassword) {
+      note(
+        'NEEDS TEST ACCOUNTS: the second legacy account is waiting for a cloud password and none is stored',
+      )
+    } else if (!attached) {
+      throw fail('the second account did not reach the chat list')
+    } else {
+      await shot(reopened, '08-second-account.png')
+      await reopened.getByRole('button', { name: 'Menu' }).click()
+      const switcher = reopened.getByRole('button', { name: /^Switch to / })
+      if ((await switcher.count()) < 1) {
+        throw fail('the menu did not list the other account')
+      }
+      const switchName = await switcher.first().getAttribute('aria-label')
+      await switcher.first().click()
+      await reopened.getByRole('button', { name: 'Menu' }).click()
+      const switched = reopened.getByRole('button', { name: /^Switch to / })
+      const switchedName =
+        (await switched.count()) > 0
+          ? await switched.first().getAttribute('aria-label')
+          : ''
+      if (switchedName === '' || switchedName === switchName) {
+        throw fail('switching accounts left the same account selected')
+      }
+      await shot(reopened, '09-switched-account.png')
+      const sealedSecond = savedCount()
+      await sealPage(reopened)
+      await waitForSyncSaved(reopened, 'two accounts', sealedSecond)
+      await reopened.reload({ waitUntil: 'domcontentloaded' })
+      await stillLoggedIn(
+        reopened,
+        'two accounts',
+        '10-two-accounts-reload.png',
+      )
+      await reopened.getByRole('button', { name: 'Menu' }).click()
+      if (
+        (await reopened.getByRole('button', { name: /^Switch to / }).count()) <
+        1
+      ) {
+        throw fail('reload dropped the second account')
+      }
+      note('two accounts survived reload')
+    }
+  }
+  note(
+    'NEEDS TEST ACCOUNTS: phone-code login needs a login code delivered to a legacy account. The harness confirms QR instead.',
+  )
+  note(
+    'NEEDS TEST ACCOUNTS: cloud password login needs an account with two-step verification. The legacy accounts sign in without it.',
+  )
   note('PASS')
 } catch (error) {
   failed = true

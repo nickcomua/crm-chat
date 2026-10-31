@@ -56,16 +56,23 @@ test('phone login requests 2FA then loads distinct chat types', () => {
       }),
     ),
     type(role('textbox', { name: 'Login code' }), '12345'),
-    click(role('button', { name: 'Continue' })),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       SubmitAnswer,
       Message.SucceededAuthenticate({
-        result: AuthResult.Password({ id: 'one' }),
+        result: AuthResult.Password({ id: 'one', hint: 'birthday' }),
         sourceId: 'one',
       }),
     ),
-    type(role('textbox', { name: '2FA password' }), 'test password'),
-    click(role('button', { name: 'Continue' })),
+    expect(role('heading', { name: 'Enter Password' })).toExist(),
+    expect(role('region', { name: 'Telegram login' })).toContainText(
+      'cloud password',
+    ),
+    expect(role('region', { name: 'Telegram login' })).toContainText(
+      'Hint: birthday',
+    ),
+    type(role('textbox', { name: 'Cloud password' }), 'test password'),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       SubmitAnswer,
       Message.SucceededAuthenticate({
@@ -150,7 +157,12 @@ test('QR login displays a scannable image', () => {
       }),
     ),
     expect(role('img', { name: 'Telegram login QR code' })).toExist(),
-    expect(role('button', { name: 'Cancel' })).toExist(),
+    expect(role('heading', { name: 'Log in to Telegram by QR Code' })).toExist(),
+    expect(role('region', { name: 'Telegram login' })).toContainText(
+      'Link Desktop Device',
+    ),
+    expect(role('button', { name: 'Log in by phone number' })).toExist(),
+    expect(role('button', { name: 'Cancel' })).not.toExist(),
   )
 })
 
@@ -162,8 +174,8 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
         login: () => ({ _tag: 'Password', id: 'one' }),
       }),
     ),
-    type(role('textbox', { name: '2FA password' }), 'incorrect'),
-    click(role('button', { name: 'Continue' })),
+    type(role('textbox', { name: 'Cloud password' }), 'incorrect'),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       SubmitAnswer,
       Message.FailedAuthenticate({
@@ -172,8 +184,8 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
       }),
     ),
     expect(role('alert')).toContainText('The password is incorrect'),
-    type(role('textbox', { name: '2FA password' }), 'correct'),
-    click(role('button', { name: 'Continue' })),
+    type(role('textbox', { name: 'Cloud password' }), 'correct'),
+    click(role('button', { name: 'Next' })),
     Command.resolve(
       SubmitAnswer,
       Message.SucceededAuthenticate({

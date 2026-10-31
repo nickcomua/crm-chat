@@ -1,5 +1,6 @@
 import * as Option from 'effect/Option'
 import {
+  Command,
   all,
   click,
   expect,
@@ -14,7 +15,7 @@ import { modifyFields } from 'foldkit/struct'
 import { test } from 'vitest'
 
 import { fixtureChats, fixtureFaces } from './fixture'
-import { initialModel, update, view } from './main'
+import { LogOut, Message, initialModel, update, view } from './main'
 
 const signedIn = modifyFields(initialModel, {
   login: () => ({ _tag: 'Closed' }),
@@ -60,6 +61,38 @@ test('opens a fixture chat, shows a caption, and returns with back', () => {
   )
 })
 
+test('switches to another account and logs that account out', () => {
+  const other = {
+    id: 'other',
+    title: 'Other',
+    chats: [{ id: 'other:1', title: 'News desk', kind: 'Channel' as const }],
+  }
+  scene(
+    { update, view },
+    given(
+      modifyFields(signedIn, {
+        accounts: () => [
+          { id: 'preview', title: 'You', chats: [...fixtureChats] },
+          other,
+        ],
+      }),
+    ),
+    click(role('button', { name: 'Menu' })),
+    click(role('button', { name: 'Switch to Other' })),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(
+      'News desk',
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('channel'),
+    click(role('button', { name: 'Menu' })),
+    click(role('button', { name: 'Log out' })),
+    Command.resolve(LogOut, Message.CompletedLogOut({ id: 'other' })),
+    expect(role('region', { name: 'Telegram chats' })).toContainText('Ada'),
+    expect(role('region', { name: 'Telegram chats' })).not.toContainText(
+      'News desk',
+    ),
+  )
+})
+
 test('opens the menu and the more flyout', () => {
   scene(
     { update, view },
@@ -68,6 +101,7 @@ test('opens the menu and the more flyout', () => {
     click(role('button', { name: 'Menu' })),
     expect(role('menu', { name: 'Menu' })).toContainText('Saved messages'),
     expect(role('button', { name: 'Add account' })).toExist(),
+    expect(role('button', { name: 'Log out' })).toExist(),
     click(role('button', { name: 'More' })),
     expect(role('menu', { name: 'More menu' })).toContainText(
       'About this build',

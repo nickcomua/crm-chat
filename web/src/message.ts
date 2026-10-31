@@ -29,6 +29,8 @@ export const Message = defineMessageUnion({
   ClickedQrLogin: {},
   SubmittedAnswer: {},
   ClickedAddAccount: {},
+  ClickedQrForm: {},
+  ClickedLogOut: {},
   ClickedCancel: {},
   SelectedAccount: { id: Schema.String },
   ClickedRefresh: {},
@@ -62,5 +64,7 @@ export const Message = defineMessageUnion({
   LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
   FailedRefresh: {},
   CompletedDisconnect: {},
+  CompletedLogOut: { id: Schema.String },
+  FailedLogOut: {},
 })
 export type Message = typeof Message.Type

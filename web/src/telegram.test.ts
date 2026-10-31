@@ -25,6 +25,10 @@ vi.mock('./tdlibWasm', () => ({
     open: openAccount,
     restore: () => Promise.resolve([]),
     sync: () => Promise.resolve(),
+    detachSignedIn: () => Promise.resolve(),
+    hasLive: () => true,
+    revive: () => Promise.resolve(undefined),
+    logoutAccount: () => Promise.resolve([]),
   },
 }))
 
@@ -80,7 +84,15 @@ describe('TDLib browser protocol', () => {
     second.account.apply(authorization('authorizationStateWaitPhoneNumber'))
     await first.account.beginPhone('+100')
     await second.account.beginPhone('+200')
-    expect(first.sent[0]).toMatchObject({ phone_number: '+100' })
+    expect(first.sent[0]).toMatchObject({
+      '@type': 'setAuthenticationPhoneNumber',
+      phone_number: '+100',
+      settings: {
+        '@type': 'phoneNumberAuthenticationSettings',
+        allow_flash_call: false,
+        authentication_tokens: [],
+      },
+    })
     expect(second.sent[0]).toMatchObject({ phone_number: '+200' })
   })
 
@@ -100,6 +112,7 @@ describe('TDLib browser protocol', () => {
     await expect(coded.account.submitCode('11111')).resolves.toEqual({
       _tag: 'Password',
       id: 'one',
+      hint: '',
     })
     const unlocked = scripted([
       { update: authorization('authorizationStateReady') },
@@ -147,10 +160,15 @@ describe('TDLib browser protocol', () => {
       image: expect.stringContaining('data:image/png;base64,'),
     })
     expect(renderQr).toHaveBeenCalledWith('tg://login?token=abc')
-    account.apply(authorization('authorizationStateWaitPassword'))
+    account.apply(
+      authorization('authorizationStateWaitPassword', {
+        password_hint: 'pet name',
+      }),
+    )
     await expect(account.poll()).resolves.toEqual({
       _tag: 'Password',
       id: 'one',
+      hint: 'pet name',
     })
   })
 

@@ -169,21 +169,6 @@ const passkeyNote = (model: Model, h: HtmlBuilder<Message>) =>
       )
     : h.empty
 
-const phoneLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
-  action(
-    'Log in by phone number',
-    Message.ClickedPhoneForm(),
-    disabled,
-    linkClass,
-    h,
-  )
-
-const qrLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
-  action('Log in by QR code', Message.ClickedQrLogin(), disabled, linkClass, h)
-
-const passkeyLink = (disabled: boolean, h: HtmlBuilder<Message>) =>
-  action('Log in by passkey', Message.ClickedPasskey(), disabled, linkClass, h)
-
 const textLink = (
   label: string,
   message: Message,
@@ -196,7 +181,7 @@ const qrSteps = (h: HtmlBuilder<Message>) =>
     [h.Class('tg-steps')],
     [
       h.li([], ['Open Telegram on your phone']),
-      h.li([], ['Go to Settings → Devices → Add Device']),
+      h.li([], ['Go to Settings → Devices → Link Desktop Device']),
       h.li([], ['Point your phone at this screen to confirm login']),
     ],
   )
@@ -205,6 +190,7 @@ const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [h.Class('flex w-full flex-col gap-4')],
     [
+      textLink('Back', Message.ClickedQrForm(), model.status === 'Busy', h),
       h.p(
         [h.Class('tg-muted text-center text-[15px] leading-6')],
         ['Please confirm your country code and enter your phone number.'],
@@ -234,8 +220,18 @@ const credentialsView = (model: Model, h: HtmlBuilder<Message>) =>
         primaryClass,
         h,
       ),
-      qrLink(model.status === 'Busy', h),
-      passkeyLink(model.status === 'Busy', h),
+      textLink(
+        'Log in by QR code',
+        Message.ClickedQrLogin(),
+        model.status === 'Busy',
+        h,
+      ),
+      textLink(
+        'Log in by passkey',
+        Message.ClickedPasskey(),
+        model.status === 'Busy',
+        h,
+      ),
       passkeyNote(model, h),
     ],
   )
@@ -257,8 +253,18 @@ const qrEntry = (model: Model, h: HtmlBuilder<Message>) =>
         primaryClass,
         h,
       ),
-      phoneLink(model.status === 'Busy', h),
-      passkeyLink(model.status === 'Busy', h),
+      textLink(
+        'Log in by phone number',
+        Message.ClickedPhoneForm(),
+        model.status === 'Busy',
+        h,
+      ),
+      textLink(
+        'Log in by passkey',
+        Message.ClickedPasskey(),
+        model.status === 'Busy',
+        h,
+      ),
       passkeyNote(model, h),
     ],
   )
@@ -271,13 +277,22 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
         [h.Class('tg-muted text-center text-[15px] leading-6')],
         [
           password
-            ? 'Enter your Telegram two-step verification password.'
+            ? 'Your account is protected with an additional cloud password.'
             : 'Enter the login code Telegram sent to your app or phone.',
         ],
       ),
+      password &&
+      model.login._tag === 'Password' &&
+      model.login.hint !== undefined &&
+      model.login.hint !== ''
+        ? h.p(
+            [h.Class('tg-muted text-center text-[15px] leading-6')],
+            [`Hint: ${model.login.hint}`],
+          )
+        : h.empty,
       textField(model, h, {
         id: 'telegram-answer',
-        label: password ? '2FA password' : 'Login code',
+        label: password ? 'Cloud password' : 'Login code',
         value: Redacted.value(model.answer),
         placeholder: password ? 'Password' : 'Code',
         type: 'password',
@@ -285,7 +300,7 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
           Message.UpdatedAnswer({ value: Redacted.make(value) }),
       }),
       action(
-        'Continue',
+        'Next',
         Message.SubmittedAnswer(),
         model.status === 'Busy',
         primaryClass,
@@ -296,13 +311,13 @@ const answerView = (model: Model, password: boolean, h: HtmlBuilder<Message>) =>
 
 const headingFor = (model: Model): string => {
   if (model.login._tag === 'Code') {
-    return 'Enter code'
+    return 'Enter Code'
   }
   if (model.login._tag === 'Password') {
-    return 'Two-step verification'
+    return 'Enter Password'
   }
   if (model.login._tag === 'Qr' || model.authEntry === 'Qr') {
-    return 'Log in by QR Code'
+    return 'Log in to Telegram by QR Code'
   }
   return 'Sign in to Telegram'
 }
@@ -337,16 +352,20 @@ export const loginScreen = (model: Model, h: HtmlBuilder<Message>) => {
                     h.Alt('Telegram login QR code'),
                     h.Class('tg-qr'),
                   ]),
-                  h.h1([h.Class('tg-login-title')], ['Log in by QR Code']),
+                  h.h1(
+                    [h.Class('tg-login-title')],
+                    ['Log in to Telegram by QR Code'],
+                  ),
                   h.p(
                     [h.Class('tg-muted text-center text-[15px] leading-6')],
                     ['Scan with Telegram app on your phone'],
                   ),
                   qrSteps(h),
-                  textLink(
+                  action(
                     'Log in by phone number',
                     Message.ClickedPhoneForm(),
                     disabled,
+                    primaryClass,
                     h,
                   ),
                   textLink(
@@ -359,10 +378,18 @@ export const loginScreen = (model: Model, h: HtmlBuilder<Message>) => {
                 ],
               ),
           }),
-          model.login._tag !== 'Editing' ||
-          Array.isReadonlyArrayNonEmpty(model.accounts)
-            ? action('Cancel', Message.ClickedCancel(), disabled, linkClass, h)
-            : h.empty,
+          model.login._tag === 'Code' || model.login._tag === 'Password'
+            ? action('Back', Message.ClickedCancel(), disabled, linkClass, h)
+            : (model.login._tag === 'Qr' || model.login._tag === 'Editing') &&
+                Array.isReadonlyArrayNonEmpty(model.accounts)
+              ? action(
+                  'Cancel',
+                  Message.ClickedCancel(),
+                  disabled,
+                  linkClass,
+                  h,
+                )
+              : h.empty,
           disabled
             ? h.p(
                 [h.Role('status'), h.Class('tg-muted text-sm')],
