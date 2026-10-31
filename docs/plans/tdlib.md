@@ -26,8 +26,11 @@ this repo. `CRM_CHAT_TDLIB_DIR` overrides the directory for tests.
 TDLib and the SecretSpec application credentials (`TG_ID`, `TG_HASH`). It does
 not read BWS session entries and it does not write to the saved directory. A
 restored account must match the desktop `Authorized` shape: `_tag` is
-`Authorized`, and `account` holds the id, title, and chats. If the directory
-has no logged-in account, it prints `NEEDS TEST ACCOUNTS:` and exits 2.
+`Authorized`, and `account` holds the id, title, and chats. The chat list must
+contain at least one chat. One saved account approves a fresh QR login, and
+that session must list chats too. See `docs/secrets.md` for the skip when
+`TG_ID` and `TG_HASH` are both absent. If the directory has no logged-in
+account, it prints `NEEDS TEST ACCOUNTS:` and exits 2.
 `nix flake check` runs only the offline `shape` command. Log in once in the
 desktop shell, or with
 `nix run .#login-test-account --accept-flake-config -- <1|2>`. That command

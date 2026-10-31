@@ -502,6 +502,23 @@ impl Client {
         self.step_after_request(id, client_id, seen).await
     }
 
+    /// Confirms a QR login started on another client. The link is not logged.
+    pub async fn confirm_qr(&self, id: &str, link: &str) -> Result<(), String> {
+        if !link.starts_with("tg://login") {
+            return Err("QR login link was not accepted".into());
+        }
+        let client_id = self.client_id(id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({"@type": "confirmQrCodeAuthentication", "link": link}),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub async fn poll(&self, id: &str) -> Result<AuthStep, String> {
         let client_id = self.client_id(id)?;
         let _ = tokio::time::timeout(Duration::from_secs(2), self.refresh_phase(client_id)).await;

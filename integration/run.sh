@@ -3,6 +3,23 @@
 # Prints pass/skip lines and TDLib error codes only. Never print secret values.
 set -eu
 
+# Offline gate for `nix flake check`. It does not contact BWS or Telegram.
+# The live command leaves this unset and uses the SecretSpec gate below.
+if [ "${CRM_CHAT_SECRET_GATE:-}" = "env" ]; then
+  id=${TG_ID-}
+  hash=${TG_HASH-}
+  if [ -z "$id" ] && [ -z "$hash" ]; then
+    echo "integration-test: skip (TG_ID and TG_HASH are absent)"
+    exit 0
+  fi
+  if ! printf '%s' "$id" | grep -Eq '^[1-9][0-9]*$' || ! printf '%s' "$hash" | grep -Eq '^[a-fA-F0-9]{32}$'; then
+    echo "integration-test: TG_ID or TG_HASH is not in the shape the app accepts" >&2
+    exit 1
+  fi
+  echo "integration-test: CRM_CHAT_SECRET_GATE=env does not run the live check" >&2
+  exit 1
+fi
+
 if ! command -v secretspec >/dev/null 2>&1; then
   echo "integration-test: secretspec is not on PATH" >&2
   exit 1
@@ -99,11 +116,42 @@ target=${XDG_CACHE_HOME:-$HOME/.cache}/crm-chat/integration-target
 mkdir -p "$target"
 export PKG_CONFIG_PATH="$CRM_CHAT_TDLIB/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$CRM_CHAT_TDLIB/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+echo "integration-test: resolving SecretSpec scopes"
+gate=$(mktemp)
+set +e
+secretspec check -f "$CRM_CHAT_SECRETS" --provider bws --scope app --json --no-prompt >"$gate" 2>/dev/null
+set -e
+set +e
+node --input-type=module -e '
+import { readFileSync } from "node:fs"
+let data
+try {
+  data = JSON.parse(readFileSync(process.argv[1], "utf8"))
+} catch {
+  process.exit(2)
+}
+const want = ["TG_ID", "TG_HASH"]
+const found = new Map((data.secrets ?? []).map((item) => [item.name, item.status]))
+const missing = want.filter((name) => found.get(name) !== "resolved")
+if (missing.length === 0) process.exit(0)
+process.exit(missing.length === want.length ? 10 : 11)
+' "$gate"
+code=$?
+set -e
+rm -f "$gate"
+if [ "$code" -eq 10 ]; then
+  echo "integration-test: skip (TG_ID and TG_HASH are absent)"
+  exit 0
+fi
+if [ "$code" -ne 0 ]; then
+  echo "integration-test: could not resolve TG_ID and TG_HASH" >&2
+  exit 1
+fi
+
 echo "integration-test: building TDLib check"
 cargo build --release --manifest-path "$manifest" --target-dir "$target"
 desktop=$target/release/crm-chat-integration-desktop
 
-echo "integration-test: resolving SecretSpec scopes"
 scope_env app app
 scope_env integration integration
 
