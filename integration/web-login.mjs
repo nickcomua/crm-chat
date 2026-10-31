@@ -6,7 +6,7 @@
 // secrets.
 import { spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, openSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -805,6 +805,141 @@ const shot = async (page, name) => {
   }
   await page.screenshot({ path: join(shots, name), fullPage: true }).catch(() => undefined)
 }
+
+const GROUP_TITLE = 'crm-chat test group'
+const CHANNEL_TITLE = 'crm-chat test channel'
+
+const exactTitle = title =>
+  new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
+
+const titledRows = (page, title) =>
+  page.locator('.chat-row').filter({
+    has: page.locator('div.font-medium', { hasText: exactTitle(title) }),
+  })
+
+const signalRoom = async room => {
+  const bin = process.env.CRM_CHAT_INTEGRATION_BIN
+  if (bin === undefined || bin === '' || !existsSync(bin)) {
+    throw fail('integration binary is missing')
+  }
+  const errPath = `/tmp/kam-44-signal-${process.env.CRM_CHAT_CHROMIUM_NAME ?? 'web'}-${room}.err`
+  const child = spawn(bin, ['signal', room], {
+    stdio: ['ignore', 'pipe', openSync(errPath, 'w')],
+    env: process.env,
+  })
+  let stdout = ''
+  child.stdout.setEncoding('utf8')
+  child.stdout.on('data', chunk => {
+    stdout += chunk
+  })
+  const code = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM')
+      reject(fail(`signal ${room}: timed out`))
+    }, 120_000)
+    child.on('error', () => {
+      clearTimeout(timer)
+      reject(fail(`signal ${room}: could not start`))
+    })
+    child.on('close', status => {
+      clearTimeout(timer)
+      resolve(status)
+    })
+  })
+  const lines = stdout
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '')
+  const needs = lines.find(line => line.startsWith('NEEDS TEST ACCOUNTS:'))
+  if (needs !== undefined) {
+    throw fail(needs)
+  }
+  if (code !== 0 || !lines.includes(`signal ${room}: sent`)) {
+    throw fail(`signal ${room}: did not send`)
+  }
+}
+
+const waitForTitled = async (page, title) => {
+  const listedUntil = Date.now() + 30_000
+  while (Date.now() < listedUntil && (await titledRows(page, title).count()) < 1) {
+    await delay(250)
+  }
+  return titledRows(page, title).count()
+}
+
+const openRoom = async (page, title, room, shotName) => {
+  const listed = await waitForTitled(page, title)
+  if (listed !== 1) {
+    throw fail(listed === 0 ? `${room} was not listed` : `${room} was duplicated`)
+  }
+  await titledRows(page, title).first().click()
+  const header = page
+    .locator('header')
+    .locator('div.font-semibold', { hasText: exactTitle(title) })
+  try {
+    await header.waitFor({ state: 'visible', timeout: historyBudgetMs })
+  } catch {
+    throw fail(`${room} did not open`)
+  }
+  const thread = page.locator('[aria-label="Open chat"]')
+  const bubble = thread.locator('.tg-bubble').first()
+  try {
+    await bubble.waitFor({ state: 'visible', timeout: historyBudgetMs })
+  } catch {
+    throw fail(`${room} history did not render`)
+  }
+  if (room === 'channel') {
+    if ((await thread.getByText('Replies are off').count()) < 1) {
+      throw fail('channel is listed as a group')
+    }
+  }
+  const incoming = thread.locator('.tg-bubble-in')
+  const before = await incoming.count()
+  await signalRoom(room)
+  const liveUntil = Date.now() + 90_000
+  while (Date.now() < liveUntil && (await incoming.count()) <= before) {
+    await delay(250)
+  }
+  if ((await incoming.count()) <= before) {
+    throw fail(`${room} live message did not appear`)
+  }
+  await shot(page, shotName)
+  note(`${room} history and live update passed`)
+}
+
+const selectFolder = async (page, name) => {
+  const tab = page.getByRole('tab', { name, exact: true })
+  await tab.click()
+  const until = Date.now() + 5_000
+  while (Date.now() < until) {
+    if ((await tab.getAttribute('aria-selected')) === 'true') {
+      return
+    }
+    await delay(50)
+  }
+  throw fail(`${name} folder did not open`)
+}
+
+const proveRooms = async page => {
+  await selectFolder(page, 'Groups')
+  const groups = await waitForTitled(page, GROUP_TITLE)
+  if (groups !== 1) {
+    throw fail(groups === 0 ? 'group was not listed' : 'group was duplicated')
+  }
+  if ((await titledRows(page, CHANNEL_TITLE).count()) !== 0) {
+    throw fail('channel is listed as a group')
+  }
+  await openRoom(page, GROUP_TITLE, 'group', '07-group.png')
+  await selectFolder(page, 'Channels')
+  const channels = await waitForTitled(page, CHANNEL_TITLE)
+  if (channels !== 1) {
+    throw fail(channels === 0 ? 'channel was not listed' : 'channel was duplicated')
+  }
+  if ((await titledRows(page, GROUP_TITLE).count()) !== 0) {
+    throw fail('group is listed as a channel')
+  }
+  await openRoom(page, CHANNEL_TITLE, 'channel', '08-channel.png')
+}
 const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
   const deadline = Date.now() + reloadBudgetMs
   let preview = ''
@@ -1311,6 +1446,7 @@ try {
   timing.history_ms = String(Date.now() - historyStart)
   await shot(page, '03-open-chat.png')
   note(`history at ${timing.history_ms}ms bubble_chars=${bubbleText.length}`)
+  await proveRooms(page)
 
   // A real profile keeps every earlier login as its own directory. Copy the
   // open database, close TDLib, copy the checkpoint, then add a newer leftover

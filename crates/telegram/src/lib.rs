@@ -33,7 +33,7 @@ fn silence_tdlib_logs() -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ChatKind {
     Dialog,
     Group,
@@ -191,6 +191,65 @@ pub fn chat_kind(type_name: &str, is_channel: bool) -> Option<ChatKind> {
         "chatTypeSupergroup" => Some(ChatKind::Group),
         _ => None,
     }
+}
+
+/// Exact title and kind. A chat of another kind with the same title is not a match.
+pub fn chat_with_title<'a>(chats: &'a [Chat], title: &str, kind: ChatKind) -> Option<&'a Chat> {
+    chats
+        .iter()
+        .find(|chat| chat.title == title && chat.kind == kind)
+}
+
+/// `Ok(None)` when nothing has this title. The same title with another kind is an
+/// error so a caller does not create a second chat beside it.
+pub fn locate_chat<'a>(
+    chats: &'a [Chat],
+    title: &str,
+    kind: ChatKind,
+) -> Result<Option<&'a Chat>, String> {
+    if let Some(chat) = chat_with_title(chats, title, kind) {
+        return Ok(Some(chat));
+    }
+    if chats.iter().any(|chat| chat.title == title) {
+        return Err("listed as the wrong chat type".into());
+    }
+    Ok(None)
+}
+
+fn failed_add_count(value: &Value) -> usize {
+    value
+        .pointer("/failed_to_add_members/failed_to_add_members")
+        .or_else(|| value.get("failed_to_add_members"))
+        .and_then(Value::as_array)
+        .map(|members| members.len())
+        .unwrap_or(0)
+}
+
+fn chat_record(account_id: &str, value: &Value) -> Option<Chat> {
+    if public_error(value).is_some() {
+        return None;
+    }
+    let td_chat_id = value.get("id").and_then(Value::as_i64)?;
+    let type_value = value.get("type")?;
+    let kind = chat_kind(
+        type_value
+            .get("@type")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        type_value
+            .get("is_channel")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    )?;
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.is_empty())?;
+    Some(Chat {
+        id: format!("{account_id}:{td_chat_id}"),
+        title: title.to_owned(),
+        kind,
+    })
 }
 
 /// The desktop `Authorized` value is `{_tag: "Authorized", account}` with the
@@ -699,6 +758,198 @@ impl Client {
                 "input_message_content": {
                     "@type": "inputMessageText",
                     "text": {"@type": "formattedText", "text": text},
+                },
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Offline search, then a server search. Public-chat search is not used:
+    /// it excludes the account's own chats. A matching title of the wrong kind
+    /// is an error so the caller does not create a duplicate.
+    pub async fn find_titled(
+        &self,
+        id: &str,
+        title: &str,
+        kind: ChatKind,
+    ) -> Result<Option<Chat>, String> {
+        let client_id = self.client_id(id)?;
+        for method in ["searchChats", "searchChatsOnServer"] {
+            let response = tdlib_rs::send_json(
+                client_id,
+                json!({
+                    "@type": method,
+                    "query": title,
+                    "type_filter": null,
+                    "limit": 20,
+                }),
+            )
+            .await;
+            if let Some(error) = public_error(&response) {
+                return Err(error);
+            }
+            let ids = response
+                .get("chat_ids")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut wrong_kind = false;
+            for chat_id in ids {
+                let Some(td_chat_id) = chat_id.as_i64() else {
+                    continue;
+                };
+                let chat = tdlib_rs::send_json(
+                    client_id,
+                    json!({"@type": "getChat", "chat_id": td_chat_id}),
+                )
+                .await;
+                let Some(parsed) = chat_record(id, &chat) else {
+                    continue;
+                };
+                if parsed.title != title {
+                    continue;
+                }
+                if parsed.kind == kind {
+                    return Ok(Some(parsed));
+                }
+                wrong_kind = true;
+            }
+            if wrong_kind {
+                return Err("listed as the wrong chat type".into());
+            }
+        }
+        Ok(None)
+    }
+
+    /// Private basic group. The creator is a member; `user_ids` are the only
+    /// other members. A non-empty failure list is returned without those ids.
+    pub async fn create_basic_group(
+        &self,
+        id: &str,
+        user_ids: &[i64],
+        title: &str,
+    ) -> Result<String, String> {
+        let client_id = self.client_id(id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "createNewBasicGroupChat",
+                "user_ids": user_ids,
+                "title": title,
+                "message_auto_delete_time": 0,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        if failed_add_count(&response) > 0 {
+            return Err("could not add the other test account".into());
+        }
+        let td_chat_id = response
+            .get("chat_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "REQUEST_FAILED".to_owned())?;
+        Ok(format!("{id}:{td_chat_id}"))
+    }
+
+    /// Private channel. No username is set, so the chat stays private.
+    pub async fn create_channel(&self, id: &str, title: &str) -> Result<String, String> {
+        let client_id = self.client_id(id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "createNewSupergroupChat",
+                "title": title,
+                "is_forum": false,
+                "is_channel": true,
+                "description": "",
+                "location": null,
+                "message_auto_delete_time": 0,
+                "for_import": false,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            return Err(error);
+        }
+        let td_chat_id = response
+            .get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "REQUEST_FAILED".to_owned())?;
+        Ok(format!("{id}:{td_chat_id}"))
+    }
+
+    /// Adds one user. `USER_ALREADY_PARTICIPANT` is success. `forward_limit` is
+    /// 0 so earlier history is not copied to the new member.
+    pub async fn add_member(&self, id: &str, chat_id: &str, user_id: i64) -> Result<(), String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "addChatMember",
+                "chat_id": td_chat_id,
+                "user_id": user_id,
+                "forward_limit": 0,
+            }),
+        )
+        .await;
+        if let Some(error) = public_error(&response) {
+            if error == "USER_ALREADY_PARTICIPANT" {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        if failed_add_count(&response) > 0 {
+            return Err("could not add the other test account".into());
+        }
+        Ok(())
+    }
+
+    /// Lets one member post in a channel. Every other administrator right stays off.
+    pub async fn grant_channel_post(
+        &self,
+        id: &str,
+        chat_id: &str,
+        user_id: i64,
+    ) -> Result<(), String> {
+        let client_id = self.client_id(id)?;
+        let td_chat_id = chat_tdlib_id(id, chat_id)?;
+        let response = tdlib_rs::send_json(
+            client_id,
+            json!({
+                "@type": "setChatMemberStatus",
+                "chat_id": td_chat_id,
+                "member_id": {"@type": "messageSenderUser", "user_id": user_id},
+                "status": {
+                    "@type": "chatMemberStatusAdministrator",
+                    "can_be_edited": true,
+                    "rights": {
+                        "@type": "chatAdministratorRights",
+                        "can_manage_chat": true,
+                        "can_change_info": false,
+                        "can_post_messages": true,
+                        "can_edit_messages": false,
+                        "can_delete_messages": false,
+                        "can_invite_users": false,
+                        "can_restrict_members": false,
+                        "can_pin_messages": false,
+                        "can_manage_topics": false,
+                        "can_promote_members": false,
+                        "can_manage_video_chats": false,
+                        "can_post_stories": false,
+                        "can_edit_stories": false,
+                        "can_delete_stories": false,
+                        "can_manage_direct_messages": false,
+                        "can_manage_tags": false,
+                        "can_send_welcome_messages": false,
+                        "is_anonymous": false,
+                    },
                 },
             }),
         )
@@ -1238,10 +1489,10 @@ fn sponsored_from_json(value: &Value) -> Result<SponsoredPage, String> {
 mod tests {
     use super::{
         apply_authorization, apply_parameter_response, apply_refreshed_phase, chat_kind,
-        chat_tdlib_id, database_root_from, note_live_update, phase_from_update_json, public_error,
-        publish, publish_authorization, require_desktop_authorized, send_parameters,
-        sponsored_from_json, valid_account_id, Account, AuthStep, Chat, ChatKind, Client, Phase,
-        Shared, Slot, LOG_SILENCE_REQUESTS,
+        chat_tdlib_id, chat_with_title, database_root_from, failed_add_count, locate_chat,
+        note_live_update, phase_from_update_json, public_error, publish, publish_authorization,
+        require_desktop_authorized, send_parameters, sponsored_from_json, valid_account_id,
+        Account, AuthStep, Chat, ChatKind, Client, Phase, Shared, Slot, LOG_SILENCE_REQUESTS,
     };
     use serde_json::json;
     use std::path::Path;
@@ -1568,6 +1819,56 @@ mod tests {
             Some(ChatKind::Channel)
         );
         assert_eq!(chat_kind("chatTypeUnknown", false), None);
+    }
+
+    #[test]
+    fn a_titled_chat_matches_only_the_same_kind() {
+        let chats = vec![
+            Chat {
+                id: "a:1".to_owned(),
+                title: "crm-chat test group".to_owned(),
+                kind: ChatKind::Group,
+            },
+            Chat {
+                id: "a:2".to_owned(),
+                title: "crm-chat test channel".to_owned(),
+                kind: ChatKind::Channel,
+            },
+        ];
+        assert_eq!(
+            chat_with_title(&chats, "crm-chat test group", ChatKind::Group)
+                .map(|chat| chat.id.as_str()),
+            Some("a:1")
+        );
+        assert!(chat_with_title(&chats, "crm-chat test group", ChatKind::Channel).is_none());
+        assert!(locate_chat(&chats, "crm-chat test group", ChatKind::Channel).is_err());
+        assert!(
+            locate_chat(&chats, "crm-chat test channel", ChatKind::Channel)
+                .unwrap()
+                .is_some()
+        );
+        assert!(locate_chat(&chats, "missing", ChatKind::Group)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn failed_adds_count_nested_and_top_level_lists() {
+        let created = json!({
+            "@type": "createdBasicGroupChat",
+            "chat_id": 1,
+            "failed_to_add_members": {
+                "@type": "failedToAddMembers",
+                "failed_to_add_members": [{"@type": "failedToAddMember"}]
+            }
+        });
+        assert_eq!(failed_add_count(&created), 1);
+        let empty = json!({
+            "@type": "failedToAddMembers",
+            "failed_to_add_members": []
+        });
+        assert_eq!(failed_add_count(&empty), 0);
+        assert_eq!(failed_add_count(&json!({"@type": "ok"})), 0);
     }
 
     #[test]

@@ -315,6 +315,8 @@
           fi
           export CRM_CHAT_PLAYWRIGHT_CHROMIUM="$playwright_chrome"
           export CRM_CHAT_SYSTEM_CHROMIUM="$system_chrome"
+          export LD_LIBRARY_PATH=${tdlib}/lib:${pkgs.lib.makeLibraryPath [pkgs.openssl pkgs.zlib]}
+          export CRM_CHAT_INTEGRATION_BIN="''${XDG_CACHE_HOME:-$HOME/.cache}/crm-chat/integration-target/release/crm-chat-integration-desktop"
           exec secretspec run -f "$CRM_CHAT_SECRETS" --provider bws --scope app -- \
             ${pkgs.bash}/bin/bash -c ${pkgs.lib.escapeShellArg ''
             set -euo pipefail
