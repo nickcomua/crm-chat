@@ -322,11 +322,16 @@
               echo "integration-test-web: $1"
               CRM_CHAT_CHROMIUM_NAME=$1 \
               CHROMIUM=$2 \
-              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/fix-web-connect/$1" \
+              CRM_CHAT_WEB_SHOTS="''${CRM_CHAT_WEB_SHOTS_ROOT:-$HOME/.local/state/kam-t3/shots/fix-web-connect}/$1" \
                 ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
             }
-            run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM"
-            run system "$CRM_CHAT_SYSTEM_CHROMIUM"
+            playwright_status=0
+            run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM" || playwright_status=$?
+            echo "integration-test-web: playwright exit=$playwright_status"
+            system_status=0
+            run system "$CRM_CHAT_SYSTEM_CHROMIUM" || system_status=$?
+            echo "integration-test-web: system exit=$system_status"
+            test "$playwright_status" -eq 0 && test "$system_status" -eq 0
           ''}
         '';
         loginTestAccount = pkgs.writeShellScript "crm-chat-login-test-account" ''
@@ -454,6 +459,7 @@
                 grep -q createTdwebModule ${tdlibWasm}/td_wasm.js
                 grep -q IDBFS ${tdlibWasm}/td_wasm.js
                 grep -q ' 3.1.1 ' ${tdlibWasm}/emscripten-version.txt
+                ${pkgs.nodejs}/bin/node ${./integration/wasm-lifecycle.mjs} ${tdlibWasm}
                 touch $out
               ''
             else pkgs.runCommand "tdlib-wasm-skipped" {} "touch $out";

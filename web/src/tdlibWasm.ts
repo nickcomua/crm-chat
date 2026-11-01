@@ -209,12 +209,18 @@ const canSnapshot = (filesystem: SyncFs): boolean =>
 
 const copyNodeBytes = (node: MemNode): Uint8Array | undefined => {
   const contents = node.contents
+  if (contents == null && node.usedBytes === 0) {
+    return new Uint8Array()
+  }
   if (!(contents instanceof Uint8Array)) {
     return undefined
   }
   const used = node.usedBytes ?? contents.length
+  if (!Number.isSafeInteger(used) || used < 0 || used > contents.length) {
+    return undefined
+  }
   const copy = new Uint8Array(used)
-  copy.set(contents.subarray(0, Math.min(used, contents.length)))
+  copy.set(contents.subarray(0, used))
   return copy
 }
 
@@ -237,28 +243,18 @@ const captureTree = (filesystem: SyncFs): Array<SnapshotFile> | undefined => {
   const files: Array<SnapshotFile> = []
   const visit = (path: string, depth: number): void => {
     if (depth > 6) {
-      return
+      throw new Error('TDLib snapshot traversal limit exceeded')
     }
-    let names: Array<string> = []
-    try {
-      names = filesystem.readdir(path)
-    } catch {
-      return
-    }
+    const names = filesystem.readdir(path)
     for (const name of names) {
       if (name === '.' || name === '..' || name.endsWith('-shm')) {
         continue
       }
       const child = `${path}/${name}`
       if (lookup !== undefined) {
-        let node: MemNode | undefined
-        try {
-          node = lookup(child).node
-        } catch {
-          continue
-        }
+        const node = lookup(child).node
         if (node === undefined) {
-          continue
+          throw new Error('TDLib snapshot contains an unreadable node')
         }
         const mode = node.mode ?? FILE_MODE
         if ((mode & MODE_TYPE) === DIRECTORY_MODE) {
@@ -267,7 +263,7 @@ const captureTree = (filesystem: SyncFs): Array<SnapshotFile> | undefined => {
         }
         const copy = copyNodeBytes(node)
         if (copy === undefined) {
-          continue
+          throw new Error('TDLib snapshot contains unreadable file bytes')
         }
         files.push({
           path: child,
@@ -280,22 +276,12 @@ const captureTree = (filesystem: SyncFs): Array<SnapshotFile> | undefined => {
       if (readFile === undefined || stat === undefined) {
         continue
       }
-      let info: { mode?: number; mtime?: Date }
-      try {
-        info = stat(child)
-      } catch {
-        continue
-      }
+      const info = stat(child)
       if (((info.mode ?? 0) & MODE_TYPE) === DIRECTORY_MODE) {
         visit(child, depth + 1)
         continue
       }
-      let bytes: Uint8Array
-      try {
-        bytes = readFile(child)
-      } catch {
-        continue
-      }
+      const bytes = readFile(child)
       const copy = new Uint8Array(bytes.byteLength)
       copy.set(bytes)
       const mtime = info.mtime instanceof Date ? info.mtime.getTime() : 0
@@ -314,18 +300,9 @@ const captureTree = (filesystem: SyncFs): Array<SnapshotFile> | undefined => {
 const installSettled = (
   filesystem: SyncFs,
   files: ReadonlyArray<SnapshotFile>,
-  grow = true,
 ): { files: number; checkpointed: boolean; reason: string; detail: string } => {
-  const settled = settleSnapshotFiles(files, grow)
+  const settled = settleSnapshotFiles(files)
   materialize(filesystem, settled.files)
-  if (!settled.checkpointed) {
-    return {
-      files: settled.files.length,
-      checkpointed: false,
-      reason: settled.reason,
-      detail: settled.detail,
-    }
-  }
   const kept = new Set(settled.files.map(file => file.path))
   const unlink = filesystem.unlink
   if (unlink !== undefined) {
@@ -342,8 +319,8 @@ const installSettled = (
   }
   return {
     files: settled.files.length,
-    checkpointed: true,
-    reason: '',
+    checkpointed: settled.checkpointed,
+    reason: settled.reason,
     detail: settled.detail,
   }
 }
@@ -470,7 +447,7 @@ type ClientSlot = {
 }
 
 type SnapshotIO = {
-  commit: (snapshot: Snapshot) => Promise<void>
+  commit: (snapshot: Snapshot, forgetPrevious?: boolean) => Promise<void>
   load: () => Promise<Snapshot | undefined>
   legacyDirectories: () => Promise<Array<LegacyDirectory>>
 }
@@ -494,27 +471,15 @@ export class TdWasmRuntime {
   private opening: Promise<void> | undefined
   private receiveQueued = false
   private receiveTimer: ReturnType<typeof setTimeout> | undefined
-  // close() starts TDLib's destructor. A later receive() walks freed wasm
-  // memory ("memory access out of bounds") or re-enters the scheduler
-  // ("!scheduler_->has_guard_"). Stay paused until the next open().
   private receivePaused = false
-  // The newest wal commit sometimes appends a page that makes a receive
-  // trap in free() after Ready. The first open folds that page in. A trap
-  // before that open is published reopens once without growing. A later
-  // trap, after the chat list is up, is usually a corrupt malloc heap in
-  // the same instance, so it also reopens once on the same files. The
-  // second trap is logged.
-  private foldGrow = true
   private openSettled = false
   private recoveries = 0
   // Copied the moment Ready is confirmed, before a later receive can abort.
   // The reopen loads this instead of an empty IndexedDB.
   private hotFiles: Array<SnapshotFile> | undefined
   private reopenTail: Promise<void> | undefined
-  // Bytes copied before close. Used when the destructor receive traps, so the
-  // saved snapshot is not the half-destroyed filesystem.
-  private sealedFiles: Array<SnapshotFile> | undefined
   private closeClean = true
+  private retired = false
   syncError: unknown = undefined
 
   constructor(snapshots?: SnapshotIO) {
@@ -620,21 +585,25 @@ export class TdWasmRuntime {
     const snapshotCapable = canSnapshot(created.FS)
     const held = snapshotCapable ? this.hotFiles : undefined
     const snapshot =
-      held !== undefined && held.length > 0
+      held !== undefined
         ? { files: held }
         : snapshotCapable
           ? await this.snapshots.load().catch(() => undefined)
           : undefined
     const installed =
-      snapshot !== undefined && snapshot.files.length > 0
-        ? installSettled(created.FS, snapshot.files, this.foldGrow)
+      snapshot !== undefined
+        ? installSettled(created.FS, snapshot.files)
         : undefined
     console.info(
       installed !== undefined
         ? `tdlib snapshot files=${installed.files}${installed.checkpointed ? ' checkpointed' : ''}${installed.detail === '' ? '' : ` ${installed.detail}`}${installed.reason === '' ? '' : ` skip=${installed.reason}`}`
         : 'tdlib snapshot missing',
     )
-    if (installed !== undefined) {
+    if (
+      installed !== undefined &&
+      snapshot !== undefined &&
+      snapshot.files.length > 0
+    ) {
       const extras = await this.snapshots.legacyDirectories().catch(() => [])
       for (const extra of extras) {
         if (pathExists(created.FS, extra.path)) {
@@ -643,7 +612,7 @@ export class TdWasmRuntime {
         mkdirParents(created.FS, extra.path)
         created.FS.utime?.(extra.path, extra.mtime, extra.mtime)
       }
-    } else {
+    } else if (installed === undefined) {
       await this.enqueueSync(true)
       const captured = snapshotCapable ? captureTree(created.FS) : undefined
       const databases =
@@ -767,42 +736,71 @@ export class TdWasmRuntime {
     try {
       this.pumpReceive()
     } catch (error) {
-      // Before Ready is published, drop the appended wal page. Afterwards
-      // keep the bytes: the heap, not the fold, is what just faulted.
       if (this.recoveries < RECEIVE_RECOVERIES && this.slots.size > 0) {
         this.recoveries += 1
-        const keepGrow = this.openSettled
         this.haltReceive()
-        void this.reopenAfterFault(keepGrow)
+        void this.reopenAfterFault()
         return
       }
       this.reportReceiveError(error)
     }
   }
 
-  // td_send only queues close. The Td destructor, including the SQLite
-  // checkpoint, runs inside the td_receive that sees authorizationStateClosed.
-  // That call returns empty: ClientManager swallows the update and destroys
-  // the actor. The next receive walks the freed scheduler and traps in free().
-  private finishClose(): void {
+  private async finishClose(clientId: number): Promise<void> {
     const functions = this.functions()
     this.receivePaused = true
-    for (let step = 0; step < 64; step += 1) {
-      let raw = ''
-      try {
-        raw = functions.receive()
-      } catch {
-        // The destructor receive can trap after a folded database has already
-        // served the chat list. The page is going away. Keep the pre-close
-        // copy instead of logging a receive failure the reload would inherit.
-        this.closeClean = false
-        console.info('tdlib close stopped')
+    let expired = false
+    const timeout = setTimeout(() => {
+      expired = true
+    }, OPEN_TIMEOUT)
+    const poll = async (): Promise<void> => {
+      if (expired) {
+        throw new Error('TDLib close timed out before authorizationStateClosed')
+      }
+      const raw = functions.receive()
+      const value: unknown = raw === '' ? undefined : JSON.parse(raw)
+      if (isRecord(value)) {
+        this.deliverResponse(value)
+      }
+      if (
+        isRecord(value) &&
+        value['@client_id'] === clientId &&
+        value['@type'] === 'updateAuthorizationState' &&
+        isRecord(value['authorization_state']) &&
+        value['authorization_state']['@type'] === 'authorizationStateClosed'
+      ) {
         return
       }
-      if (raw === '') {
-        return
+      await new Promise<void>(resolve => {
+        setTimeout(
+          resolve,
+          raw === '' ? nextReceiveDelay(this.mainTimeout()) : 0,
+        )
+      })
+      return poll()
+    }
+    try {
+      await poll()
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  private deliverResponse(value: Record<string, unknown>): void {
+    const extra = value['@extra']
+    if (typeof extra === 'string') {
+      const waiter = this.pending.get(extra)
+      if (waiter !== undefined) {
+        this.pending.delete(extra)
+        waiter(value)
       }
     }
+    const clientId = value['@client_id']
+    this.slots.forEach(slot => {
+      if (slot.clientId === clientId) {
+        this.onUpdate(slot, value)
+      }
+    })
   }
 
   private pumpReceive(): void {
@@ -822,23 +820,7 @@ export class TdWasmRuntime {
       if (!isRecord(value)) {
         continue
       }
-      const extra = value['@extra']
-      if (typeof extra === 'string') {
-        const waiter = this.pending.get(extra)
-        if (waiter !== undefined) {
-          this.pending.delete(extra)
-          waiter(value)
-        }
-      }
-      const clientId = value['@client_id']
-      if (typeof clientId !== 'number') {
-        continue
-      }
-      for (const slot of this.slots.values()) {
-        if (slot.clientId === clientId) {
-          this.onUpdate(slot, value)
-        }
-      }
+      this.deliverResponse(value)
     }
     if (startedReady) {
       if (!this.openSettled) {
@@ -872,13 +854,11 @@ export class TdWasmRuntime {
   }
 
   // Drop this wasm instance and open the saved files on a new one.
-  // keepGrow is false only when Ready was not published yet: that trap is
-  // the appended wal page. A trap after the chat list is up keeps the fold.
-  private async reopenAfterFault(keepGrow: boolean): Promise<void> {
+  private async reopenAfterFault(): Promise<void> {
     if (this.reopenTail !== undefined) {
       return this.reopenTail
     }
-    const run = this.reopenNow(keepGrow)
+    const run = this.reopenNow()
     this.reopenTail = run
     try {
       await run
@@ -887,12 +867,9 @@ export class TdWasmRuntime {
     }
   }
 
-  private async reopenNow(keepGrow: boolean): Promise<void> {
+  private async reopenNow(): Promise<void> {
     this.openSettled = true
-    if (!keepGrow) {
-      this.foldGrow = false
-    }
-    console.info(keepGrow ? 'tdlib reopen' : 'tdlib reopen without growing')
+    console.info('tdlib reopen')
     const slots = [...this.slots.values()]
     for (const slot of slots) {
       slot.account.holdWaiters()
@@ -988,6 +965,12 @@ export class TdWasmRuntime {
       if (typeof name === 'string' && name.startsWith('authorizationState')) {
         console.info(`tdlib auth ${name}`)
       }
+      if (
+        name === 'authorizationStateReady' &&
+        slot.account.phase._tag !== 'Ready'
+      ) {
+        this.openSettled = false
+      }
     }
     if (
       value['@type'] === 'updateAuthorizationState' &&
@@ -1012,12 +995,26 @@ export class TdWasmRuntime {
     const extra = `q${this.extra}`
     this.extra += 1
     const functions = this.functions()
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       if (query['@type'] === 'close') {
         this.haltReceive()
-        functions.send(clientId, JSON.stringify({ ...query, '@extra': extra }))
-        this.finishClose()
-        resolve({ '@type': 'ok' })
+        try {
+          functions.send(
+            clientId,
+            JSON.stringify({ ...query, '@extra': extra }),
+          )
+        } catch (error) {
+          this.closeClean = false
+          reject(error)
+          return
+        }
+        void this.finishClose(clientId).then(
+          () => resolve({ '@type': 'ok' }),
+          error => {
+            this.closeClean = false
+            reject(error)
+          },
+        )
         return
       }
       this.pending.set(extra, resolve)
@@ -1041,6 +1038,12 @@ export class TdWasmRuntime {
     if (existing !== undefined) {
       return existing.account
     }
+    if (this.retired && this.slots.size === 0) {
+      await this.syncTail
+      this.rememberHotSnapshot()
+      this.releaseModule()
+      this.retired = false
+    }
     this.receivePaused = false
     await this.openModule()
     this.silenceLogs()
@@ -1052,11 +1055,28 @@ export class TdWasmRuntime {
         return this.dispatch(current?.clientId ?? clientId, query)
       },
       close: async () => {
+        const current = this.slots.get(id)
+        if (current !== undefined && current.account.phase._tag !== 'Closed') {
+          await this.dispatch(current.clientId, { '@type': 'close' })
+        }
+        const filesystem = this.module?.FS
+        if (filesystem !== undefined) {
+          removeTree(filesystem, directory)
+        }
         this.slots.delete(id)
-        await this.sync()
+        const empty = this.slots.size === 0
+        this.retired = empty
+        await this.enqueueSync(false, empty, true)
+        if (!empty) {
+          this.receivePaused = false
+          this.receiveSoon()
+        }
       },
       drop: async () => {
         this.slots.delete(id)
+        if (this.slots.size === 0) {
+          this.retired = true
+        }
       },
       sync: () => this.sync(),
     }
@@ -1073,27 +1093,6 @@ export class TdWasmRuntime {
     this.sendParameters(slot)
     this.receiveSoon()
     return account
-  }
-
-  // close() returns at authorizationStateClosing. The destructor keeps
-  // running on later receive() calls, so the next directory needs a new wasm
-  // instance. Receiving on the instance that just closed traps after Ready.
-  private discardModule(): void {
-    this.clearSyncTimer()
-    if (this.receiveTimer !== undefined) {
-      clearTimeout(this.receiveTimer)
-      this.receiveTimer = undefined
-      this.receiveQueued = false
-    }
-    for (const resolve of this.pending.values()) {
-      resolve({ '@type': 'error', message: 'REQUEST_FAILED' })
-    }
-    this.pending.clear()
-    this.slots.clear()
-    this.module = undefined
-    this.syncing = false
-    this.opening = undefined
-    this.receivePaused = false
   }
 
   async restore(apiId: number, apiHash: string): Promise<Array<TdAccount>> {
@@ -1119,24 +1118,24 @@ export class TdWasmRuntime {
         }
         return left < right ? -1 : left > right ? 1 : 0
       })
-    // Each login keeps its own directory. Opening a leftover and logging it
-    // out used to discard the signed-in database and return the page to the QR
-    // screen. Keep the newest one that is already authorized, and close the
-    // others without logOut so their files stay put.
-    for (const [index, id] of ids.entries()) {
+    const restored: Array<TdAccount> = []
+    for (const id of ids) {
       const account = await this.open(id, apiId, apiHash)
       const phase = await account
         .untilOpened(OPEN_TIMEOUT)
         .catch(() => account.phase)
       if (phase._tag === 'Ready') {
-        return [account]
+        restored.push(account)
+        continue
       }
       await account.release()
-      if (index < ids.length - 1) {
-        this.discardModule()
+      if (!this.closeClean) {
+        throw new Error('TDLib close did not complete during restore')
       }
     }
-    return []
+    this.receivePaused = false
+    this.receiveSoon()
+    return restored
   }
 
   private flushSoon(): void {
@@ -1161,28 +1160,18 @@ export class TdWasmRuntime {
   // call this while the page can still wait.
   async seal(): Promise<void> {
     this.haltReceive()
+    this.clearSyncTimer()
+    await this.syncTail
+    this.clearSyncTimer()
     this.closeClean = true
-    const filesystem = this.module?.FS
-    let before: Array<SnapshotFile> | undefined
-    if (filesystem !== undefined && canSnapshot(filesystem)) {
-      try {
-        before = captureTree(filesystem)
-      } catch {
-        before = undefined
-      }
-    }
     const accounts = [...this.slots.values()].map(slot => slot.account)
     for (const account of accounts) {
       await account.release()
     }
-    if (!this.closeClean && before !== undefined && before.length > 0) {
-      this.sealedFiles = before
+    if (!this.closeClean) {
+      throw new Error('TDLib close did not complete; snapshot not sealed')
     }
-    try {
-      await this.enqueueSync(false, true)
-    } finally {
-      this.sealedFiles = undefined
-    }
+    await this.enqueueSync(false, true)
   }
 
   private clearSyncTimer(): void {
@@ -1209,8 +1198,12 @@ export class TdWasmRuntime {
     }, 5000)
   }
 
-  private async persist(filesystem: SyncFs, closed: boolean): Promise<boolean> {
-    const captured = this.sealedFiles ?? captureTree(filesystem)
+  private async persist(
+    filesystem: SyncFs,
+    closed: boolean,
+    forgetPrevious: boolean,
+  ): Promise<boolean> {
+    const captured = captureTree(filesystem)
     // Folding the wal is pure JavaScript over a detached copy, but it is
     // slow enough to stall td_receive. The next load folds the pair before
     // any td_* call. Here, copy while receive is paused and release it
@@ -1232,7 +1225,7 @@ export class TdWasmRuntime {
       return true
     }
     const files = captured.filter(file => !file.path.endsWith('-shm'))
-    if (files.length === 0) {
+    if (files.length === 0 && !closed) {
       return false
     }
     const assessment = assessFiles(files)
@@ -1242,15 +1235,23 @@ export class TdWasmRuntime {
       }
       throw new Error(`could not sync the TDLib database: ${assessment.reason}`)
     }
-    await this.snapshots.commit({
-      id: 'pending',
-      closed,
-      files,
-    })
+    this.hotFiles = files
+    await this.snapshots.commit(
+      {
+        id: 'pending',
+        closed,
+        files,
+      },
+      forgetPrevious,
+    )
     return true
   }
 
-  private enqueueSync(populate: boolean, closed = false): Promise<void> {
+  private enqueueSync(
+    populate: boolean,
+    closed = false,
+    forgetPrevious = false,
+  ): Promise<void> {
     const run = this.syncTail.then(async () => {
       const filesystem = this.module?.FS
       if (filesystem === undefined) {
@@ -1262,7 +1263,7 @@ export class TdWasmRuntime {
       try {
         if (populate) {
           await syncFs(filesystem, true)
-        } else if (await this.persist(filesystem, closed)) {
+        } else if (await this.persist(filesystem, closed, forgetPrevious)) {
           this.syncError = undefined
           console.info('tdlib sync saved')
         }
@@ -1274,10 +1275,6 @@ export class TdWasmRuntime {
         this.syncing = false
         document.documentElement.dataset['tdlibSync'] = '0'
         if (closed) {
-          // Closing already finished the useful part of TDLib's shutdown.
-          // Pumping receive again after that destructor starts walks freed
-          // wasm state and traps with "memory access out of bounds". The
-          // snapshot is committed, and the page is about to go away.
           this.clearSyncTimer()
           if (this.receiveTimer !== undefined) {
             clearTimeout(this.receiveTimer)

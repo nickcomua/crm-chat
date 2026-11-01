@@ -131,3 +131,16 @@ test('the pointer keeps the previous snapshot when the new one is unusable', () 
   expect(secondSave.drop).toBeUndefined()
   expect(secondSave.stored.files[0]?.mtime).toBe(20)
 })
+
+test('an explicit empty closed snapshot prevents fallback to a logged-out session', () => {
+  const old = snapshot('old', [file('/tdlib/first/db.sqlite', sqlite())])
+  const empty = snapshot('empty', [], true)
+  expect(chooseSnapshot(empty, old)).toBe(empty)
+  expect(chooseSnapshot(snapshot('unfinished', []), old)).toBe(old)
+  const saved = assignSnapshot(
+    { current: 's7', previous: 's6', serial: 7 },
+    empty,
+    true,
+  )
+  expect(saved.pointer).toEqual({ current: 's8', serial: 8 })
+})

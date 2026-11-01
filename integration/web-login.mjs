@@ -5,7 +5,7 @@
 // redeploy from CRM_CHAT_WEBSITE_PREVIOUS onto CRM_CHAT_WEBSITE. Never prints
 // secrets.
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,6 +41,22 @@ const captureTdlibFilesystem = () => {
           return
         }
         keep(value.FS)
+        const cwrap = value.cwrap.bind(value)
+        value.cwrap = (name, ...args) => {
+          const wrapped = cwrap(name, ...args)
+          if (name !== 'td_emscripten_receive') {
+            return wrapped
+          }
+          return (...parameters) => {
+            try {
+              return wrapped(...parameters)
+            } catch (error) {
+              const frames = String(error?.stack ?? '').match(/wasm-function\[\d+\]:0x[0-9a-f]+/g) ?? []
+              console.error(`TDLib Wasm receive fault ${frames.join(' ')}`)
+              throw error
+            }
+          }
+        }
       }
       if (result !== undefined && result !== null && typeof result.then === 'function') {
         result.then(remember, () => undefined)
@@ -701,7 +717,7 @@ let browser
 let failed = false
 const faults = []
 const runtimeFault = text =>
-  /Aborted\(|RuntimeError|out of bounds|table index/i.test(text)
+  /Aborted\(|RuntimeError|out of bounds|table index|TDLib Wasm receive fault/i.test(text)
 const watch = page => {
   page.on('console', message => {
     const text = message.text()
@@ -847,13 +863,16 @@ const scriptNames = async page => {
 
 try {
   const { chromium: playwright } = await import(playwrightCore)
-  const launch = profileDir =>
-    playwright.launchPersistentContext(profileDir, {
+  const launch = async profileDir => {
+    const context = await playwright.launchPersistentContext(profileDir, {
       executablePath: chromium,
       headless: process.env.CRM_CHAT_WEB_HEADED !== '1',
       viewport: { width: 1440, height: 900 },
       args: ['--disable-dev-shm-usage'],
     })
+    await context.addInitScript(captureTdlibFilesystem)
+    return context
+  }
   const retarget = async next => {
     await unlink(serveLink)
     await symlink(next, serveLink)
@@ -882,6 +901,7 @@ try {
     recordQr,
     qrBudgetMs = 30_000,
     allowSignedIn = false,
+    accountSlot = slot,
   ) => {
     const qr = page.locator('img[alt="Telegram login QR code"]')
     // The PR base says "Log in with QR". The current site says "Log in by QR code".
@@ -950,7 +970,7 @@ try {
     })
     await shot(page, shotName)
     return await new Promise((resolve, reject) => {
-      const child = spawn('python3', [tdqr, slot, 'confirm'], {
+      const child = spawn('python3', [tdqr, accountSlot, 'confirm'], {
         env: { ...process.env, TDQR_LINK: link },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
@@ -993,7 +1013,6 @@ try {
   note(`redeploy previous=${previousBundle} next=${newBundle}`)
   browser = await launch(redeployProfile)
   // The base glue hides FS on the module argument. Capture it as the script loads.
-  await browser.addInitScript(captureTdlibFilesystem)
   let previousPage = browser.pages()[0] ?? (await browser.newPage())
   note(`browser ${browserName}`)
   // A wedged base renderer never answers Playwright. Give up and open a new
@@ -1021,7 +1040,6 @@ try {
       force: true,
     }).catch(() => undefined)
     browser = await launch(redeployProfile)
-    await browser.addInitScript(captureTdlibFilesystem)
     previousPage = browser.pages()[0] ?? (await browser.newPage())
     watch(previousPage)
     await previousPage.goto(pageUrl, { waitUntil: 'domcontentloaded' })
@@ -1374,12 +1392,7 @@ try {
 
   const reopenStart = Date.now()
   await browser.close()
-  browser = await playwright.launchPersistentContext(profile, {
-    executablePath: chromium,
-    headless: process.env.CRM_CHAT_WEB_HEADED !== '1',
-    viewport: { width: 1440, height: 900 },
-    args: ['--disable-dev-shm-usage'],
-  })
+  browser = await launch(profile)
   const reopened = browser.pages()[0] ?? (await browser.newPage())
   watch(reopened)
   await reopened.goto(pageUrl, { waitUntil: 'domcontentloaded' })
@@ -1392,6 +1405,129 @@ try {
   timing.reopen_ms = String(Date.now() - reopenStart)
   await shot(reopened, '05-reopened.png')
   note(`reopen persisted at ${timing.reopen_ms}ms`)
+  const accountMenu = reopened.getByRole('menu', { name: 'Menu', exact: true })
+  const openAccountMenu = async () => {
+    if (!(await accountMenu.isVisible())) {
+      await reopened.getByRole('button', { name: 'Menu', exact: true }).click()
+    }
+  }
+  const currentAccountTitle = async () => {
+    await openAccountMenu()
+    return accountMenu.locator('.font-medium').first().innerText()
+  }
+  const firstTitle = await currentAccountTitle()
+  await accountMenu
+    .getByRole('button', { name: 'Add account', exact: true })
+    .click()
+  await approveQr(
+    reopened,
+    '07-second-qr-blurred.png',
+    false,
+    30_000,
+    false,
+    process.env.CRM_CHAT_TDQR_SECOND_SLOT ?? '2',
+  )
+  await stillLoggedIn(reopened, 'second account', '08-second-account.png')
+  const secondTitle = await currentAccountTitle()
+  if (firstTitle === secondTitle) {
+    throw fail('second account did not change the selected account')
+  }
+  await accountMenu
+    .getByRole('button', { name: firstTitle, exact: true })
+    .click()
+  await accountMenu.waitFor({ state: 'hidden' })
+  if ((await currentAccountTitle()) !== firstTitle) {
+    throw fail('account switch did not select the first account')
+  }
+  await reopened.getByRole('button', { name: 'Menu', exact: true }).click()
+  await stillLoggedIn(reopened, 'switched account', '09-switched-account.png')
+  await sealPage(reopened)
+  await reopened.reload({ waitUntil: 'domcontentloaded' })
+  await stillLoggedIn(
+    reopened,
+    'two-account reload',
+    '10-two-account-reload.png',
+  )
+  const selectedTitle = await currentAccountTitle()
+  const otherTitle = selectedTitle === firstTitle ? secondTitle : firstTitle
+  if (selectedTitle !== firstTitle && selectedTitle !== secondTitle) {
+    throw fail('reload selected an unexpected account')
+  }
+  const otherAccount = accountMenu.getByRole('button', {
+    name: otherTitle,
+    exact: true,
+  })
+  if ((await otherAccount.count()) !== 1) {
+    throw fail('reload dropped the second account')
+  }
+  await otherAccount.click()
+  await accountMenu.waitFor({ state: 'hidden' })
+  await stillLoggedIn(
+    reopened,
+    'restored second account',
+    '11-restored-account.png',
+  )
+  if ((await currentAccountTitle()) !== otherTitle) {
+    throw fail('restored account switch did not change the selected account')
+  }
+  note('two accounts survived close, reload, and explicit account switches')
+  const rotatedRoot = join(work, 'rotated-website')
+  const rotatedBundle = newBundle.replace(/\.js$/, '-redeploy.js')
+  await cp(root, rotatedRoot, { recursive: true })
+  const writableDirectories = async directory => {
+    await chmod(directory, 0o700)
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        await writableDirectories(join(directory, entry.name))
+      }
+    }
+  }
+  await writableDirectories(rotatedRoot)
+  await chmod(join(rotatedRoot, 'index.html'), 0o600)
+  await rename(
+    join(rotatedRoot, 'assets', newBundle),
+    join(rotatedRoot, 'assets', rotatedBundle),
+  )
+  const rotatedHtml = await readFile(join(rotatedRoot, 'index.html'), 'utf8')
+  await writeFile(
+    join(rotatedRoot, 'index.html'),
+    rotatedHtml.replaceAll(newBundle, rotatedBundle),
+  )
+  await sealPage(reopened)
+  const redeployAuthFrom = timing.auth.length
+  await retarget(rotatedRoot)
+  await reopened.reload({ waitUntil: 'domcontentloaded' })
+  if (!(await scriptNames(reopened)).includes(rotatedBundle)) {
+    throw fail('two-account redeploy did not load the rotated asset')
+  }
+  await stillLoggedIn(reopened, 'two-account redeploy', '12-two-account-redeploy.png')
+  const redeployedTitle = await currentAccountTitle()
+  if (redeployedTitle !== firstTitle && redeployedTitle !== secondTitle) {
+    throw fail('two-account redeploy selected an unexpected account')
+  }
+  const remainingTitle = redeployedTitle === firstTitle ? secondTitle : firstTitle
+  const remainingAccount = accountMenu.getByRole('button', {
+    name: remainingTitle,
+    exact: true,
+  })
+  if ((await remainingAccount.count()) !== 1) {
+    throw fail('redeploy dropped an account')
+  }
+  await remainingAccount.click()
+  await accountMenu.waitFor({ state: 'hidden' })
+  await stillLoggedIn(reopened, 'redeployed other account', '13-redeployed-other-account.png')
+  if ((await currentAccountTitle()) !== remainingTitle) {
+    throw fail('redeployed account switch did not select the other account')
+  }
+  const redeployedSnapshots = timing.auth.slice(redeployAuthFrom)
+    .filter(line => line.startsWith('tdlib snapshot'))
+  if (
+    redeployedSnapshots.length === 0 ||
+    redeployedSnapshots.some(line => !line.includes(' checkpointed') || line.includes(' skip='))
+  ) {
+    throw fail('two-account redeploy snapshot was not checkpointed')
+  }
+  note('two accounts survived asset rotation and explicit account switching')
   const skipped = timing.auth.find(line => line.includes(' skip='))
   if (skipped !== undefined) {
     throw fail(`snapshot was not checkpointed (${skipped})`)
