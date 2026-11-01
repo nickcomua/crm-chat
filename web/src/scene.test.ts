@@ -18,6 +18,7 @@ import {
   BeginLogin,
   LoadHistory,
   Message,
+  OpenWorkspace,
   Refresh,
   SubmitAnswer,
   initialModel,
@@ -74,6 +75,10 @@ test('phone login requests 2FA then loads distinct chat types', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     expect(role('region', { name: 'Telegram login' })).not.toExist(),
     expectAll(all.role('listitem')).toHaveCount(3),
     expect(role('region', { name: 'Telegram chats' })).toContainText(
@@ -182,6 +187,10 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     expect(role('alert')).not.toExist(),
     expect(role('region', { name: 'Telegram chats' })).toExist(),
   )

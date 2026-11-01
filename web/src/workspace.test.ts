@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto'
-import { expect, test } from 'vitest'
+import { IDBOpenDBRequest } from 'fake-indexeddb'
+import { expect, test, vi } from 'vitest'
 
 import {
   type CaseDraft,
@@ -153,7 +154,8 @@ test('a reload keeps the person and a cleared origin starts empty', async () => 
     {
       api_hash: HASH,
       api_id: '42424242',
-      session: 'session-do-not-store',
+      session_string: 'session-do-not-store',
+      auth_key: 'auth-key-do-not-store',
       access_hash: '777000111',
       display_name: 'Olena',
     },
@@ -164,6 +166,7 @@ test('a reload keeps the person and a cleared origin starts empty', async () => 
   expect(text).not.toContain('42424242')
   expect(text).not.toContain('session-do-not-store')
   expect(text).not.toContain('777000111')
+  expect(text).not.toContain('auth-key-do-not-store')
   expect(text).toContain('Olena')
   expect(text).toContain('Work')
   expect(await store.schemaVersion()).toBe(1)
@@ -269,7 +272,7 @@ test('a newer schema is refused and the person row stays', async () => {
   await store.putRecord('people', 'person-olena', person())
   await closeWorkspace(name)
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open(name, 2)
+    const request = indexedDB.open(name, 3)
     request.addEventListener('upgradeneeded', () => {
       const database = request.result
       if (!database.objectStoreNames.contains('migration_probe')) {
@@ -313,3 +316,87 @@ test('a newer schema is refused and the person row stays', async () => {
   expect(text).toContain('Olena')
   await deleteWorkspace(name)
 })
+
+test('overlapping inserts allocate distinct consecutive numbers', async () => {
+  const name = 'crm-chat-concurrent'
+  const store = await openWorkspace(name)
+  const draft = olenaDraft()
+  const bundles = await Promise.all(
+    Array.from({ length: 8 }, (_, index) =>
+      store.insertCase(
+        {
+          ...draft,
+          id: 'concurrent-' + index,
+          chats: [],
+          participants: [],
+          messages: [],
+          notes: [],
+          files: [],
+          events: [],
+        },
+        index,
+      ),
+    ),
+  )
+  expect(
+    bundles.map(bundle => bundle.case.number).sort((a, b) => a - b),
+  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+  await deleteWorkspace(name)
+})
+
+test('a stalled open times out and closes a late connection', async () => {
+  vi.useFakeTimers()
+  const pending = pendingRequest()
+  const close = vi.fn()
+  Object.assign(pending, {
+    readyState: 'done',
+    result: { close, addEventListener: vi.fn() },
+  })
+  const open = vi.spyOn(indexedDB, 'open').mockReturnValue(pending)
+  try {
+    const opening = openWorkspace('crm-chat-stalled')
+    const rejected = expect(opening).rejects.toMatchObject({
+      _tag: 'Unavailable',
+    })
+    await vi.advanceTimersByTimeAsync(5000)
+    await rejected
+    pending.dispatchEvent(new Event('success'))
+    expect(close).toHaveBeenCalledOnce()
+  } finally {
+    open.mockRestore()
+    vi.useRealTimers()
+  }
+})
+
+test('a blocked open rejects immediately', async () => {
+  const pending = pendingRequest()
+  const open = vi.spyOn(indexedDB, 'open').mockReturnValue(pending)
+  try {
+    const opening = openWorkspace('crm-chat-blocked')
+    pending.dispatchEvent(new Event('blocked'))
+    await expect(opening).rejects.toMatchObject({ _tag: 'Unavailable' })
+  } finally {
+    open.mockRestore()
+  }
+})
+
+test('a blocked delete does not report completion', async () => {
+  const pending = pendingRequest()
+  const remove = vi.spyOn(indexedDB, 'deleteDatabase').mockReturnValue(pending)
+  try {
+    const deleting = deleteWorkspace('crm-chat-blocked-delete')
+    await Promise.resolve()
+    pending.dispatchEvent(new Event('blocked'))
+    await expect(deleting).rejects.toMatchObject({ _tag: 'Unavailable' })
+  } finally {
+    remove.mockRestore()
+  }
+})
+
+const pendingRequest = (): IDBOpenDBRequest => {
+  const target = new EventTarget()
+  return Object.assign(new IDBOpenDBRequest(), {
+    addEventListener: target.addEventListener.bind(target),
+    dispatchEvent: target.dispatchEvent.bind(target),
+  })
+}

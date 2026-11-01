@@ -233,15 +233,9 @@ export class Workspace {
       participant => participant.role,
       'a case has one primary participant',
     )
-    const existing = await getValues(this.database, 'cases')
-    const numbers: Array<number> = []
-    for (const value of existing) {
-      const row = decodeCase(value)
-      if (row !== null) numbers.push(row.number)
-    }
     const caseRow: Case = {
       id: draft.id,
-      number: nextCaseNumber(numbers),
+      number: 0,
       title,
       kind: draft.kind,
       status: 'Open',
@@ -309,7 +303,7 @@ export class Workspace {
     for (const event of events) {
       records.push({ store: 'case_events', value: event, key: event.id })
     }
-    await writeMany(this.database, records)
+    await writeMany(this.database, records, caseRow)
     const bundle = await this.caseBundle(draft.id)
     if (bundle === null) {
       throw new WorkspaceError('Missing', 'missing workspace row')
@@ -454,7 +448,9 @@ export const deleteWorkspace = async (
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(name)
     request.addEventListener('success', () => resolve())
-    request.addEventListener('blocked', () => resolve())
+    request.addEventListener('blocked', () => {
+      reject(new WorkspaceError('Unavailable', 'workspace delete blocked'))
+    })
     request.addEventListener('error', () => {
       reject(request.error ?? new Error('workspace delete failed'))
     })
@@ -525,9 +521,14 @@ const openNamed = async (name: string): Promise<Workspace> => {
   try {
     const database = await openDatabase(
       name,
-      SCHEMA_VERSION,
-      (store, oldVersion) => {
+      2,
+      (store, oldVersion, transaction) => {
         if (oldVersion < 1) createVersionOneStores(store)
+        if (oldVersion < 2) {
+          transaction
+            .objectStore('cases')
+            .createIndex('number', 'number', { unique: true })
+        }
       },
     )
     await seed(database)
@@ -1188,17 +1189,53 @@ const isVersionError = (error: unknown): boolean =>
 const openDatabase = (
   name: string,
   version: number,
-  upgrade?: (database: IDBDatabase, oldVersion: number) => void,
+  upgrade?: (
+    database: IDBDatabase,
+    oldVersion: number,
+    transaction: IDBTransaction,
+  ) => void,
 ): Promise<IDBDatabase> =>
   new Promise((resolve, reject) => {
+    let settled = false
+    const fail = (): void => {
+      settled = true
+      clearTimeout(timer)
+      reject(
+        new WorkspaceError(
+          'Unavailable',
+          'workspace open blocked or timed out',
+        ),
+      )
+    }
+    const timer = setTimeout(fail, 5000)
     const request = indexedDB.open(name, version)
+    request.addEventListener('blocked', fail)
     request.addEventListener('upgradeneeded', event => {
       const oldVersion =
         event instanceof IDBVersionChangeEvent ? event.oldVersion : 0
-      upgrade?.(request.result, oldVersion)
+      if (settled) {
+        request.transaction?.abort()
+        return
+      }
+      if (request.transaction !== null) {
+        upgrade?.(request.result, oldVersion, request.transaction)
+      }
     })
-    request.addEventListener('success', () => resolve(request.result))
+    request.addEventListener('success', () => {
+      clearTimeout(timer)
+      if (settled) {
+        request.result.close()
+        return
+      }
+      settled = true
+      request.result.addEventListener('versionchange', () =>
+        request.result.close(),
+      )
+      resolve(request.result)
+    })
     request.addEventListener('error', () => {
+      clearTimeout(timer)
+      settled = true
       reject(request.error ?? new Error('workspace open failed'))
     })
   })
@@ -1254,6 +1291,7 @@ const putValue = async (
 const writeMany = (
   database: IDBDatabase,
   records: ReadonlyArray<StoreRecord>,
+  caseRow?: Case,
 ): Promise<void> => {
   const names: Array<string> = []
   for (const record of records) {
@@ -1265,8 +1303,25 @@ const writeMany = (
     tx.addEventListener('abort', () => {
       reject(tx.error ?? new Error('workspace transaction aborted'))
     })
-    for (const record of records) {
-      tx.objectStore(record.store).add(record.value, record.key)
+    const write = (): void => {
+      for (const record of records) {
+        tx.objectStore(record.store).add(record.value, record.key)
+      }
+    }
+    if (caseRow === undefined) {
+      write()
+    } else {
+      const read = tx
+        .objectStore('cases')
+        .index('number')
+        .openCursor(null, 'prev')
+      read.addEventListener('success', () => {
+        const highest: unknown = read.result?.key
+        caseRow.number = nextCaseNumber(
+          typeof highest === 'number' ? [highest] : [],
+        )
+        write()
+      })
     }
   })
 }

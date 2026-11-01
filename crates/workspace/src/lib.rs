@@ -1110,12 +1110,16 @@ mod tests {
             ("api_hash".to_owned(), Payload::Text(hash.to_owned())),
             ("api_id".to_owned(), Payload::Text("42424242".to_owned())),
             (
-                "session".to_owned(),
+                "session_string".to_owned(),
                 Payload::Text("session-do-not-store".to_owned()),
             ),
             (
                 "access_hash".to_owned(),
                 Payload::Text("777000111".to_owned()),
+            ),
+            (
+                "auth_key".to_owned(),
+                Payload::Text("auth-key-do-not-store".to_owned()),
             ),
             ("display_name".to_owned(), Payload::Text("Olena".to_owned())),
         ]);
@@ -1134,6 +1138,7 @@ mod tests {
         assert!(!text.contains("42424242"));
         assert!(!text.contains("session-do-not-store"));
         assert!(!text.contains("777000111"));
+        assert!(!text.contains("auth-key-do-not-store"));
         assert!(text.contains("Olena"));
         assert!(text.contains("Work"));
         let store = Workspace::open(&path).unwrap();
@@ -1155,6 +1160,7 @@ mod tests {
         assert!(!text.contains("42424242"));
         assert!(!text.contains("session-do-not-store"));
         assert!(!text.contains("777000111"));
+        assert!(!text.contains("auth-key-do-not-store"));
         assert!(text.contains("Work"));
         let _ = std::fs::remove_dir_all(dir);
     }

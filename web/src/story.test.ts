@@ -48,6 +48,10 @@ test('attaching another account preserves the first account and switching select
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account: second })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     model(current => {
       expect(current.accounts).toEqual([first, second])
       expect(current.selectedAccountId).toBe('second')
@@ -166,6 +170,10 @@ test('a QR poll that reaches Ready opens the chat list', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account: first })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     model(current => {
       expect(current.login._tag).toBe('Closed')
       expect(current.accounts).toEqual([first])

@@ -157,7 +157,7 @@ export const restoreAccounts = async (
       apiHash,
     })
     const accounts = Array.isArray(value) ? value.map(decodeAccount) : []
-    await rememberAccounts(
+    void rememberAccounts(
       accounts.map(account => ({ id: account.id, title: account.title })),
     )
     return accounts
@@ -168,7 +168,7 @@ export const restoreAccounts = async (
     sessions.set(account.id, account)
     loaded.push(await account.readAccount())
   }
-  await rememberAccounts(
+  void rememberAccounts(
     loaded.map(account => ({ id: account.id, title: account.title })),
   )
   return loaded
@@ -202,7 +202,7 @@ export type AuthResult = typeof AuthResult.Type
 
 const rememberResult = async (result: AuthResult): Promise<AuthResult> => {
   if (result._tag === 'Authorized') {
-    await rememberAccounts([
+    void rememberAccounts([
       { id: result.account.id, title: result.account.title },
     ])
   }
@@ -230,7 +230,7 @@ export const loadAccount = async (id: string): Promise<Account> => {
   const invoke = tauriInvoke()
   if (invoke !== undefined) {
     const account = decodeAccount(await invoke('telegram_load_account', { id }))
-    await rememberAccounts([{ id: account.id, title: account.title }])
+    void rememberAccounts([{ id: account.id, title: account.title }])
     return account
   }
   const session = sessionFor(id)
@@ -238,7 +238,7 @@ export const loadAccount = async (id: string): Promise<Account> => {
   if (session.chatListError !== undefined) {
     throw new Error(session.chatListError)
   }
-  await rememberAccounts([{ id: account.id, title: account.title }])
+  void rememberAccounts([{ id: account.id, title: account.title }])
   return account
 }
 

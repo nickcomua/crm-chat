@@ -602,19 +602,19 @@ export const update = (model: Model, message: Message) =>
         : credentials._tag === 'Absent'
           ? { model, commands: [OpenWorkspace()] }
           : {
-            model: modifyFields(model, {
-              appCredentials: () => 'Supplied',
-              apiId: () => credentials.apiId,
-              apiHash: () => credentials.apiHash,
-              status: () => 'Busy',
-            }),
-            commands: [
-              Restore({
-                apiId: credentials.apiId,
-                apiHash: credentials.apiHash,
+              model: modifyFields(model, {
+                appCredentials: () => 'Supplied',
+                apiId: () => credentials.apiId,
+                apiHash: () => credentials.apiHash,
+                status: () => 'Busy',
               }),
-            ],
-          },
+              commands: [
+                Restore({
+                  apiId: credentials.apiId,
+                  apiHash: credentials.apiHash,
+                }),
+              ],
+            },
     CompletedRestore: ({ accounts, faces }) => {
       const first = accounts[0]
       // Open the CRM store after TDLib restore. Opening IndexedDB while a
@@ -655,7 +655,6 @@ export const update = (model: Model, message: Message) =>
               phone: phoneForLogin(model),
               qr: true,
             }),
-            OpenWorkspace(),
           ],
         }
       }
@@ -690,7 +689,7 @@ export const update = (model: Model, message: Message) =>
             maybeOpenChatId: () => Option.none(),
             ...closedMenus,
           }),
-          commands: [Refresh({ id: result.account.id })],
+          commands: [Refresh({ id: result.account.id }), OpenWorkspace()],
         }
       }
       if (result._tag === 'Qr') {
@@ -809,7 +808,7 @@ const storedTheme = (): Model['theme'] => {
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: modifyFields(initialModel, { theme: () => storedTheme() }),
-  commands: [LoadAppCredentials(), OpenWorkspace()],
+  commands: [LoadAppCredentials()],
 })
 
 const showLogin = (model: Model): boolean =>
