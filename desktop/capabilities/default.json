@@ -13,6 +13,8 @@
     "allow-telegram-load-account",
     "allow-telegram-messages",
     "allow-telegram-logout",
-    "allow-telegram-restore"
+    "allow-telegram-restore",
+    "allow-workspace-status",
+    "allow-workspace-remember-accounts"
   ]
 }

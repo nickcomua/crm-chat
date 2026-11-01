@@ -8,6 +8,7 @@ import {
   Disconnect,
   Message,
   type Model,
+  OpenWorkspace,
   Refresh,
   Restore,
   initialModel,
@@ -47,6 +48,10 @@ test('attaching another account preserves the first account and switching select
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account: second })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     model(current => {
       expect(current.accounts).toEqual([first, second])
       expect(current.selectedAccountId).toBe('second')
@@ -165,6 +170,10 @@ test('a QR poll that reaches Ready opens the chat list', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account: first })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     model(current => {
       expect(current.login._tag).toBe('Closed')
       expect(current.accounts).toEqual([first])
@@ -240,10 +249,18 @@ test('startup restores a saved account after credentials load', () => {
       expect(current.selectedAccountId).toBe('first')
       expect(current.faces[0]?.preview).toBe('joined Telegram')
     }),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     message(
       Message.CompletedLoadAppCredentials({
         credentials: { _tag: 'Absent' },
       }),
+    ),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
     ),
     model(current => {
       expect(current.accounts).toEqual([first])

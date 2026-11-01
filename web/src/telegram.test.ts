@@ -15,6 +15,7 @@ import {
   loadAccount,
   toAuthResult,
 } from './telegram'
+import * as Workspace from './workspace'
 
 const { openAccount } = vi.hoisted(() => ({
   openAccount: vi.fn(),
@@ -371,7 +372,10 @@ describe('TDLib browser protocol', () => {
     expect(sent.map(query => query['@type'])).not.toContain('logOut')
   })
 
-  test('a chat-list failure does not log out the browser session', async () => {
+  test('a stalled CRM write does not delay authorization or log out on chat-list failure', async () => {
+    vi.spyOn(Workspace, 'rememberAccounts').mockReturnValue(
+      new Promise(() => {}),
+    )
     const sent: Array<TdQuery> = []
     let closed = false
     const sink: TdSink = {

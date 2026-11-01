@@ -5,4 +5,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", default-features = false }

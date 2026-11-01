@@ -18,6 +18,7 @@ import {
   BeginLogin,
   LoadHistory,
   Message,
+  OpenWorkspace,
   Refresh,
   SubmitAnswer,
   initialModel,
@@ -74,6 +75,10 @@ test('phone login requests 2FA then loads distinct chat types', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     expect(role('region', { name: 'Telegram login' })).not.toExist(),
     expectAll(all.role('listitem')).toHaveCount(3),
     expect(role('region', { name: 'Telegram chats' })).toContainText(
@@ -182,8 +187,42 @@ test('invalid 2FA answers announce the error and allow another attempt', () => {
       }),
     ),
     Command.resolve(Refresh, Message.SucceededRefresh({ account })),
+    Command.resolve(
+      OpenWorkspace,
+      Message.CompletedOpenWorkspace({ notice: '' }),
+    ),
     expect(role('alert')).not.toExist(),
     expect(role('region', { name: 'Telegram chats' })).toExist(),
+  )
+})
+
+test('a workspace failure is one line and a healthy store adds none', () => {
+  const notice = 'Person notes are unavailable (https://crm-chat.example)'
+  scene(
+    { update, view },
+    given(initialModel),
+    expect(role('status', { name: 'Person notes' })).not.toExist(),
+    expect(role('region', { name: 'Telegram login' })).not.toContainText(
+      'Person notes are unavailable',
+    ),
+  )
+  scene(
+    { update, view },
+    given(modifyFields(initialModel, { workspaceNotice: () => notice })),
+    expect(role('status', { name: 'Person notes' })).toHaveText(notice),
+  )
+  scene(
+    { update, view },
+    given(
+      modifyFields(initialModel, {
+        login: () => ({ _tag: 'Closed' }),
+        accounts: () => [account],
+        selectedAccountId: () => account.id,
+        workspaceNotice: () => notice,
+      }),
+    ),
+    expect(role('region', { name: 'Telegram chats' })).toContainText(notice),
+    expect(role('status', { name: 'Person notes' })).toHaveText(notice),
   )
 })
 

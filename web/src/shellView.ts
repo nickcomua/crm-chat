@@ -23,6 +23,18 @@ const folderFor = (kind: Chat['kind']): 'Personal' | 'Groups' | 'Channels' =>
 
 const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
+export const personNotesNotice = (notice: string, h: HtmlBuilder<Message>) =>
+  notice === ''
+    ? h.empty
+    : h.p(
+        [
+          h.Role('status'),
+          h.AriaLabel('Person notes'),
+          h.Class('px-3 pt-2 text-left text-[13px] text-[#9a9aa8]'),
+        ],
+        [notice],
+      )
+
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 
 const isLastInGroup = (
@@ -153,6 +165,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
           ),
         ],
         [
+          personNotesNotice(model.workspaceNotice, h),
           h.div(
             [h.Class('flex items-center gap-2 px-3 pb-1 pt-3')],
             [

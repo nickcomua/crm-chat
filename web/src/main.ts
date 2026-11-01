@@ -33,6 +33,7 @@ import {
   submitCode,
   submitPassword,
 } from './telegram'
+import { readWorkspaceStatus } from './workspace'
 
 export { Message }
 
@@ -67,10 +68,26 @@ export const Model = Schema.Struct({
   mutedChatIds: Schema.Array(Schema.String),
   faces: Schema.Array(StoredFace),
   fixturePreview: Schema.Boolean,
+  workspaceNotice: Schema.String,
 })
 export type Model = typeof Model.Type
 
 const loginError = desktopFailure
+export const OpenWorkspace = Command.define('OpenWorkspace', {
+  messages: [Message.CompletedOpenWorkspace],
+  execute: Effect.tryPromise(() => readWorkspaceStatus()).pipe(
+    Effect.map(status =>
+      Message.CompletedOpenWorkspace({ notice: status.notice }),
+    ),
+    Effect.catch(() =>
+      Effect.succeed(
+        Message.CompletedOpenWorkspace({
+          notice: 'Person notes are unavailable (app data)',
+        }),
+      ),
+    ),
+  ),
+})
 export const LoadAppCredentials = Command.define('LoadAppCredentials', {
   messages: [Message.CompletedLoadAppCredentials],
   execute: Effect.tryPromise(() => readAppCredentials()).pipe(
@@ -576,25 +593,33 @@ export const update = (model: Model, message: Message) =>
     ClickedDismissMenu: () => ({
       model: modifyFields(model, closedMenus),
     }),
+    CompletedOpenWorkspace: ({ notice }) => ({
+      model: modifyFields(model, { workspaceNotice: () => notice }),
+    }),
     CompletedLoadAppCredentials: ({ credentials }) =>
-      model.status === 'Busy' || credentials._tag === 'Absent'
+      model.status === 'Busy'
         ? { model }
-        : {
-            model: modifyFields(model, {
-              appCredentials: () => 'Supplied',
-              apiId: () => credentials.apiId,
-              apiHash: () => credentials.apiHash,
-              status: () => 'Busy',
-            }),
-            commands: [
-              Restore({
-                apiId: credentials.apiId,
-                apiHash: credentials.apiHash,
+        : credentials._tag === 'Absent'
+          ? { model, commands: [OpenWorkspace()] }
+          : {
+              model: modifyFields(model, {
+                appCredentials: () => 'Supplied',
+                apiId: () => credentials.apiId,
+                apiHash: () => credentials.apiHash,
+                status: () => 'Busy',
               }),
-            ],
-          },
+              commands: [
+                Restore({
+                  apiId: credentials.apiId,
+                  apiHash: credentials.apiHash,
+                }),
+              ],
+            },
     CompletedRestore: ({ accounts, faces }) => {
       const first = accounts[0]
+      // Open the CRM store after TDLib restore. Opening IndexedDB while a
+      // folded session is still starting makes the next receive trap and
+      // the redeploy snapshot check fail.
       if (first !== undefined && model.login._tag === 'Editing') {
         return {
           model: modifyFields(model, {
@@ -609,6 +634,7 @@ export const update = (model: Model, message: Message) =>
             faces: current =>
               faces === undefined ? current : mergeFaces(current, faces),
           }),
+          commands: [OpenWorkspace()],
         }
       }
       if (
@@ -632,7 +658,10 @@ export const update = (model: Model, message: Message) =>
           ],
         }
       }
-      return { model: modifyFields(model, { status: () => 'Ready' }) }
+      return {
+        model: modifyFields(model, { status: () => 'Ready' }),
+        commands: [OpenWorkspace()],
+      }
     },
     SucceededAuthenticate: ({ result, sourceId }) => {
       if (
@@ -660,7 +689,7 @@ export const update = (model: Model, message: Message) =>
             maybeOpenChatId: () => Option.none(),
             ...closedMenus,
           }),
-          commands: [Refresh({ id: result.account.id })],
+          commands: [Refresh({ id: result.account.id }), OpenWorkspace()],
         }
       }
       if (result._tag === 'Qr') {
@@ -767,6 +796,7 @@ export const initialModel: Model = {
   mutedChatIds: [],
   faces: [],
   fixturePreview: false,
+  workspaceNotice: '',
 }
 const storedTheme = (): Model['theme'] => {
   try {
