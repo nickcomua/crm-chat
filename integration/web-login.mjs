@@ -841,8 +841,11 @@ const signalRoom = async room => {
       clearTimeout(timer)
       reject(fail(`signal ${room}: could not start`))
     })
-    child.on('close', status => {
+    child.on('close', (status, signal) => {
       clearTimeout(timer)
+      if (signal !== null) {
+        note(`signal ${room}: terminated by ${signal}`)
+      }
       resolve(status)
     })
   })
@@ -860,7 +863,7 @@ const signalRoom = async room => {
       .split('\n')
       .map(line => line.trim())
       .find(line => /^desktop tdlib: [A-Za-z][A-Za-z _:()-]{0,180}$/.test(line))
-    throw fail(reason ?? `signal ${room}: did not send`)
+    throw fail(reason ?? `signal ${room}: did not send (exit=${code}, confirmed=${lines.includes(`signal ${room}: sent`)})`)
   }
 }
 
@@ -898,14 +901,19 @@ const openRoom = async (page, title, room, shotName) => {
       throw fail('channel is listed as a group')
     }
   }
+  await thread.locator('[aria-busy="false"]').waitFor({ state: 'visible', timeout: historyBudgetMs })
   const incoming = thread.locator('.tg-bubble-in')
-  const before = await incoming.count()
+  const before = new Set(await incoming.allTextContents())
   await signalRoom(room)
   const liveUntil = Date.now() + 90_000
-  while (Date.now() < liveUntil && (await incoming.count()) <= before) {
+  const arrived = async () => (await incoming.allTextContents()).some(
+    text => text.includes(`crm-chat live ${room} `) && !before.has(text),
+  )
+  while (Date.now() < liveUntil && !(await arrived())) {
     await delay(250)
   }
-  if ((await incoming.count()) <= before) {
+  if (!(await arrived())) {
+    note(`${room} marker counts before=${before.size} after=${await incoming.count()}`)
     throw fail(`${room} live message did not appear`)
   }
   await shot(page, shotName)
@@ -944,69 +952,8 @@ const proveRooms = async page => {
     throw fail('group is listed as a channel')
   }
   await openRoom(page, CHANNEL_TITLE, 'channel', '08-channel.png')
-  await proveSponsored(page)
 }
 
-const proveSponsored = async page => {
-  // The Web K open-chat reference is a bot dialog: a private chat with an
-  // audience count, a composer, and the sponsored card under the header.
-  // It is not in the Channels folder. The private test rooms are skipped.
-  await selectFolder(page, 'All')
-  const rows = page.locator('.chat-row')
-  const count = await rows.count()
-  let opened = 0
-  for (let index = 0; index < count && opened < 8; index += 1) {
-    const row = rows.nth(index)
-    const title = (
-      (await row.locator('div.font-medium').first().textContent()) ?? ''
-    ).trim()
-    if (title === CHANNEL_TITLE || title === GROUP_TITLE || title === '') {
-      continue
-    }
-    await row.click()
-    opened += 1
-    const card = page.locator('[aria-label="Open chat"] .tg-sponsored')
-    const visible = await card
-      .first()
-      .waitFor({ state: 'visible', timeout: 12_000 })
-      .then(() => true)
-      .catch(() => false)
-    if (!visible) {
-      continue
-    }
-    const placed = await page.evaluate(() => {
-      const root = document.querySelector('[aria-label="Open chat"]')
-      const header = root?.querySelector('header')
-      const sponsored = root?.querySelector('.tg-sponsored')
-      if (header === null || header === undefined || sponsored === null || sponsored === undefined) {
-        return false
-      }
-      const headerBox = header.getBoundingClientRect()
-      const cardBox = sponsored.getBoundingClientRect()
-      const underHeader =
-        cardBox.top >= headerBox.bottom - 4 &&
-        cardBox.top <= headerBox.bottom + 80
-      const bubbles = [...root.querySelectorAll('.tg-bubble')]
-      const historyAbove = bubbles.some(bubble => {
-        const box = bubble.getBoundingClientRect()
-        const onScreen = box.bottom > headerBox.bottom && box.top < window.innerHeight
-        return onScreen && box.top + 4 < cardBox.top
-      })
-      const text = [...sponsored.querySelectorAll('.tg-sponsored-text')].some(node =>
-        ['Photo', 'Video', 'GIF'].includes((node.textContent ?? '').trim()),
-      )
-      const fakeButton = sponsored.querySelector('span.tg-sponsored-button') !== null
-      return underHeader && !historyAbove && !text && !fakeButton
-    })
-    if (!placed) {
-      throw fail('sponsored card is not under the header')
-    }
-    await shot(page, '09-sponsored.png')
-    note('sponsored card is under the header')
-    return
-  }
-  throw fail('sponsored card was not on screen')
-}
 const stillLoggedIn = async (nextPage, label, shotName, fatal = true) => {
   const deadline = Date.now() + reloadBudgetMs
   let preview = ''

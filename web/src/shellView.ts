@@ -4,13 +4,12 @@ import { HtmlBuilder } from 'foldkit/html'
 
 import {
   faceFor,
-  headerSponsored,
   kindStatus,
   markFor,
   threadEntries,
   tintFor,
 } from './chatFace'
-import type { SponsoredLine, ThreadEntry } from './chatFace'
+import type { ThreadEntry } from './chatFace'
 import type { Chat } from './generated/core'
 import {
   attachIcon,
@@ -41,7 +40,9 @@ const bubbleClass = (mine: boolean, tail: boolean): string =>
 const messageTail = <Message>(mine: boolean, h: HtmlBuilder<Message>) =>
   h.span([
     h.AriaHidden(true),
-    h.Class(mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in'),
+    h.Class(
+      mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in',
+    ),
   ])
 
 const menuItemClass = 'tg-menu-item'
@@ -83,12 +84,7 @@ const receipt = (
   h: HtmlBuilder<Message>,
 ) => {
   if (unread > 0) {
-    return h.div(
-      [
-        h.Class('tg-unread'),
-      ],
-      [String(unread)],
-    )
+    return h.div([h.Class('tg-unread')], [String(unread)])
   }
   if (mark === 'read') {
     return h.div(
@@ -133,91 +129,8 @@ const iconButton = (
     [icon],
   )
 
-const sponsoredCard = (
-  line: SponsoredLine,
-  chatId: string,
-  h: HtmlBuilder<Message>,
-) => {
-  const label = line.recommended ? 'Recommended' : 'Sponsored'
-  const source = line.mediaSrc
-  const image =
-    source !== undefined &&
-    (line.media === 'photo' || source.startsWith('data:image/'))
-  const media =
-    source === undefined || line.media === undefined
-      ? h.empty
-      : image
-        ? h.img([
-            h.Class('tg-sponsored-media'),
-            h.Src(source),
-            h.Alt(line.title === '' ? label : line.title),
-            h.OnClick(
-              Message.ClickedSponsored({
-                chatId,
-                messageId: line.id,
-                media: true,
-              }),
-            ),
-          ])
-        : h.video(
-            [
-              h.Class('tg-sponsored-media'),
-              h.Src(source),
-              h.Muted(true),
-              h.Loop(true),
-              h.Autoplay(true),
-              h.Playsinline(true),
-              h.OnClick(
-                Message.ClickedSponsored({
-                  chatId,
-                  messageId: line.id,
-                  media: true,
-                }),
-              ),
-            ],
-          )
-  return h.div(
-    [h.Class('tg-sponsored-slot shrink-0 px-4 pt-3')],
-    [
-      h.div(
-        [h.Class('tg-sponsored'), h.Role('note'), h.AriaLabel(label)],
-        [
-          h.p([h.Class('tg-sponsored-label')], [label]),
-          media,
-          line.title === ''
-            ? h.empty
-            : h.p([h.Class('tg-sponsored-title')], [line.title]),
-          line.text === ''
-            ? h.empty
-            : h.p([h.Class('tg-sponsored-text')], [line.text]),
-          line.button === ''
-            ? h.empty
-            : h.button(
-                [
-                  h.Type('button'),
-                  h.Class('tg-sponsored-button'),
-                  h.OnClick(
-                    Message.ClickedSponsored({
-                      chatId,
-                      messageId: line.id,
-                      media: false,
-                    }),
-                  ),
-                ],
-                [line.button],
-              ),
-          line.info === ''
-            ? h.empty
-            : h.p([h.Class('tg-sponsored-info')], [line.info]),
-        ],
-      ),
-    ],
-  )
-}
-
 const messageColumn = (
   entries: ReadonlyArray<ThreadEntry>,
-  chatId: string,
   h: HtmlBuilder<Message>,
 ) => {
   if (entries.length === 0) {
@@ -237,50 +150,6 @@ const messageColumn = (
       ),
     ],
     entries.map((entry, index) => {
-      if (entry.kind === 'sponsored') {
-        const label = entry.line.recommended ? 'Recommended' : 'Sponsored'
-        return h.keyed('div')(
-          entry.key,
-          [
-            h.Class(
-              `flex justify-center ${index === entries.length - 1 ? '' : 'mb-2'}`,
-            ),
-          ],
-          [
-            h.div(
-              [h.Class('tg-sponsored'), h.Role('note'), h.AriaLabel(label)],
-              [
-                h.p([h.Class('tg-sponsored-label')], [label]),
-                entry.line.title === ''
-                  ? h.empty
-                  : h.p([h.Class('tg-sponsored-title')], [entry.line.title]),
-                entry.line.text === ''
-                  ? h.empty
-                  : h.p([h.Class('tg-sponsored-text')], [entry.line.text]),
-                entry.line.button === ''
-                  ? h.empty
-                  : h.button(
-                      [
-                        h.Type('button'),
-                        h.Class('tg-sponsored-button'),
-                        h.OnClick(
-                          Message.ClickedSponsored({
-                            chatId,
-                            messageId: entry.line.id,
-                            media: false,
-                          }),
-                        ),
-                      ],
-                      [entry.line.button],
-                    ),
-                entry.line.info === ''
-                  ? h.empty
-                  : h.p([h.Class('tg-sponsored-info')], [entry.line.info]),
-              ],
-            ),
-          ],
-        )
-      }
       const line = entry.line
       const following = entries[index + 1]
       const tail =
@@ -301,11 +170,7 @@ const messageColumn = (
           h.div(
             [h.Class(bubbleClass(line.mine, tail))],
             line.caption === undefined
-              ? [
-                  line.text,
-                  time,
-                  tail ? messageTail(line.mine, h) : h.empty,
-                ]
+              ? [line.text, time, tail ? messageTail(line.mine, h) : h.empty]
               : [
                   h.div(
                     [h.Class('mb-1.5 overflow-hidden rounded-xl')],
@@ -380,9 +245,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             [h.Class('flex items-center gap-3 px-3 py-2')],
                             [
                               h.div(
-                                [
-                                  h.Class('tg-avatar-button size-9 text-sm'),
-                                ],
+                                [h.Class('tg-avatar-button size-9 text-sm')],
                                 [
                                   Option.match(account, {
                                     onNone: () => 'Y',
@@ -438,9 +301,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                           ),
                           h.button(
                             [
-                              h.Class(
-                                'tg-menu-item justify-between',
-                              ),
+                              h.Class('tg-menu-item justify-between'),
                               h.AriaLabel('Add account'),
                               h.Disabled(model.status === 'Busy'),
                               h.OnClick(Message.ClickedAddAccount()),
@@ -508,7 +369,11 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
             ],
           ),
           h.div(
-            [h.Class('tg-folders'), h.Role('tablist'), h.AriaLabel('Chat folders')],
+            [
+              h.Class('tg-folders'),
+              h.Role('tablist'),
+              h.AriaLabel('Chat folders'),
+            ],
             folders.map(folder =>
               h.keyed('button')(
                 folder,
@@ -599,9 +464,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             ],
                             [
                               h.div(
-                                [
-                                  h.Class('chat-row-meta truncate text-[13px]'),
-                                ],
+                                [h.Class('chat-row-meta truncate text-[13px]')],
                                 [preview],
                               ),
                               receipt(face.unread, face.receipt, h),
@@ -635,17 +498,18 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
               ),
             onSome: chat => {
               const stored = model.faces.find(item => item.id === chat.id)
-              const sponsored = stored?.sponsored ?? []
-              const pinned = headerSponsored(sponsored)
               const entries = threadEntries(
                 stored?.lines ?? [],
                 stored?.pending ?? [],
-                sponsored,
-                stored?.sponsoredBetween ?? 0,
               )
               const muted = model.mutedChatIds.includes(chat.id)
               return h.div(
-                [h.Class('flex h-full w-full flex-col')],
+                [
+                  h.Class('flex h-full w-full flex-col'),
+                  h.AriaBusy(
+                    stored?.historyLoaded !== true && !model.fixturePreview,
+                  ),
+                ],
                 [
                   h.header(
                     [
@@ -798,10 +662,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         : h.empty,
                     ],
                   ),
-                  pinned === undefined
-                    ? h.empty
-                    : sponsoredCard(pinned, chat.id, h),
-                  messageColumn(entries, chat.id, h),
+                  messageColumn(entries, h),
                   chat.kind === 'Channel'
                     ? h.div(
                         [

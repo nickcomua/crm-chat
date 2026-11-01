@@ -619,9 +619,7 @@ export class TdWasmRuntime {
     // the live file buffers and the next receive faults.
     const snapshotCapable = canSnapshot(created.FS)
     const held =
-      snapshotCapable &&
-      this.hotFiles !== undefined &&
-      this.hotFiles.length > 0
+      snapshotCapable && this.hotFiles !== undefined && this.hotFiles.length > 0
         ? this.hotFiles
         : undefined
     let chosen = held
@@ -654,6 +652,9 @@ export class TdWasmRuntime {
         ? `tdlib snapshot files=${installed.files}${installed.checkpointed ? ' checkpointed' : ''}${installed.detail === '' ? '' : ` ${installed.detail}`}${installed.reason === '' ? '' : ` skip=${installed.reason}`}`
         : 'tdlib snapshot missing',
     )
+    if (installed?.checkpointed === true && snapshot !== undefined) {
+      this.hotFiles = settleSnapshotFiles(snapshot.files, this.foldGrow).files
+    }
     if (installed !== undefined) {
       const extras = await this.snapshots.legacyDirectories().catch(() => [])
       for (const extra of extras) {
@@ -883,7 +884,10 @@ export class TdWasmRuntime {
     }
     try {
       const captured = captureTree(filesystem)
-      if (captured !== undefined && captured.length > 0) {
+      if (
+        captured !== undefined &&
+        settleSnapshotFiles(captured, this.foldGrow).checkpointed
+      ) {
         this.hotFiles = captured
       }
     } catch {
@@ -1079,16 +1083,6 @@ export class TdWasmRuntime {
         this.slots.delete(id)
       },
       sync: () => this.sync(),
-      readFile: async path => {
-        const read = this.module?.FS.readFile
-        if (read === undefined || !path.startsWith('/tdlib/')) {
-          return new Uint8Array()
-        }
-        const bytes = read(path)
-        const copy = new Uint8Array(bytes.byteLength)
-        copy.set(bytes)
-        return copy
-      },
     }
     const account = new TdAccount(sink, id)
     const slot: ClientSlot = {

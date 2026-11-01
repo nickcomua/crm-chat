@@ -324,7 +324,7 @@
               echo "integration-test-web: $1"
               CRM_CHAT_CHROMIUM_NAME=$1 \
               CHROMIUM=$2 \
-              CRM_CHAT_WEB_SHOTS="$HOME/.local/state/kam-t3/shots/fix-web-connect/$1" \
+              CRM_CHAT_WEB_SHOTS="''${CRM_CHAT_WEB_SHOTS_ROOT:-$HOME/.local/state/kam-t3/shots/fix-web-connect}/$1" \
                 ${pkgs.nodejs}/bin/node ${./integration/web-login.mjs}
             }
             run playwright "$CRM_CHAT_PLAYWRIGHT_CHROMIUM"

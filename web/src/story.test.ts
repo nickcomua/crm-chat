@@ -5,11 +5,11 @@ import { modifyFields } from 'foldkit/struct'
 import { expect, test } from 'vitest'
 
 import {
+  AcknowledgeIncoming,
   BeginLogin,
   CloseChat,
   Disconnect,
   LoadHistory,
-  LoadSponsored,
   Message,
   type Model,
   OpenChat,
@@ -111,7 +111,7 @@ test('a chat-list failure keeps the authenticated account available for retry', 
   )
 })
 
-test('opening a group loads history and a failed sponsored response stays quiet', () => {
+test('opening a group and channel loads history', () => {
   const grouped = {
     id: 'first',
     title: 'First',
@@ -138,9 +138,9 @@ test('opening a group loads history and a failed sponsored response stays quiet'
       }),
     ),
     model(current => {
-      expect(current.faces.find(item => item.id === 'first:2')?.historyLoaded).toBe(
-        true,
-      )
+      expect(
+        current.faces.find(item => item.id === 'first:2')?.historyLoaded,
+      ).toBe(true)
     }),
     message(Message.ClickedBack()),
     Command.resolve(CloseChat, Message.CompletedCloseChat()),
@@ -150,14 +150,9 @@ test('opening a group loads history and a failed sponsored response stays quiet'
       LoadHistory,
       Message.LoadedHistory({ id: 'first:3', lines: [] }),
     ),
-    Command.resolve(
-      LoadSponsored,
-      Message.FailedSponsored({ id: 'first:3' }),
-    ),
     model(current => {
       const channel = current.faces.find(item => item.id === 'first:3')
       expect(channel?.historyLoaded).toBe(true)
-      expect(channel?.sponsoredLoaded).toBeUndefined()
       expect(current.error).toBe('')
     }),
   )
@@ -170,10 +165,6 @@ test('a failed history load can be opened again', () => {
     message(Message.ClickedChat({ id: 'first:1' })),
     Command.resolve(OpenChat, Message.CompletedOpenChat()),
     Command.resolve(LoadHistory, Message.FailedHistory({ id: 'first:1' })),
-    Command.resolve(
-      LoadSponsored,
-      Message.FailedSponsored({ id: 'first:1' }),
-    ),
     model(current => {
       expect(
         current.faces.find(item => item.id === 'first:1')?.historyLoaded,
@@ -187,10 +178,6 @@ test('a failed history load can be opened again', () => {
         id: 'first:1',
         lines: [{ id: '1', text: 'hello', mine: false, time: '09:00' }],
       }),
-    ),
-    Command.resolve(
-      LoadSponsored,
-      Message.FailedSponsored({ id: 'first:1' }),
     ),
     model(current => {
       expect(
@@ -235,6 +222,10 @@ test('a history row that is already open does not rewrite the preview', () => {
           },
         ],
       }),
+    ),
+    Command.resolve(
+      AcknowledgeIncoming,
+      Message.CompletedAcknowledgeIncoming(),
     ),
     model(current => {
       expect(current.faces[0]?.preview).toBe('newer')
@@ -283,9 +274,9 @@ test('opening another chat closes the one Telegram had open', () => {
     ),
     model(current => {
       expect(Option.isSome(current.maybeOpenChatId)).toBe(true)
-      expect(current.faces.find(item => item.id === 'first:2')?.lines[0]?.text).toBe(
-        'I can host.',
-      )
+      expect(
+        current.faces.find(item => item.id === 'first:2')?.lines[0]?.text,
+      ).toBe('I can host.')
     }),
   )
 })
@@ -321,6 +312,10 @@ test('a message that arrives before history is kept when history loads', () => {
           },
         ],
       }),
+    ),
+    Command.resolve(
+      AcknowledgeIncoming,
+      Message.CompletedAcknowledgeIncoming(),
     ),
     model(current => {
       expect(current.faces[0]?.lines).toEqual([])
@@ -373,6 +368,10 @@ test('a message that arrives before history is kept when history loads', () => {
           },
         ],
       }),
+    ),
+    Command.resolve(
+      AcknowledgeIncoming,
+      Message.CompletedAcknowledgeIncoming(),
     ),
     model(current => {
       expect(current.faces[0]?.lines.map(item => item.text)).toEqual([
@@ -554,6 +553,49 @@ test('startup restores a saved account after credentials load', () => {
     ),
     model(current => {
       expect(current.accounts).toEqual([first])
+    }),
+  )
+})
+
+test('history reconciliation keeps more than 500 known rows and leaves the preview alone', () => {
+  const lines = globalThis.Array.from({ length: 600 }, (_, index) => ({
+    id: String(index + 1),
+    text: `row ${index + 1}`,
+    mine: false,
+    time: '09:00',
+  }))
+  story(
+    update,
+    given(
+      modifyFields(signedIn, {
+        faces: () => [
+          {
+            id: 'first:1',
+            time: '09:01',
+            preview: 'latest preview',
+            unread: 0,
+            receipt: 'none',
+            historyLoaded: true,
+            lines,
+          },
+        ],
+      }),
+    ),
+    message(
+      Message.ReconciledHistory({
+        accountId: 'first',
+        id: 'first:1',
+        lines: [
+          { id: '1', text: 'row 1', mine: false, time: '09:00' },
+          { id: '601', text: 'recovered', mine: false, time: '09:01' },
+        ],
+      }),
+    ),
+    model(current => {
+      expect(current.faces[0]?.lines).toHaveLength(601)
+      expect(current.faces[0]?.lines[0]?.id).toBe('1')
+      expect(current.faces[0]?.lines[600]?.text).toBe('recovered')
+      expect(current.faces[0]?.preview).toBe('latest preview')
     }),
   )
 })

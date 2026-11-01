@@ -13,18 +13,6 @@ export const ChatLine = Schema.Struct({
 })
 export type ChatLine = typeof ChatLine.Type
 
-export const SponsoredLine = Schema.Struct({
-  id: Schema.String,
-  text: Schema.String,
-  title: Schema.String,
-  button: Schema.String,
-  recommended: Schema.Boolean,
-  info: Schema.String,
-  media: Schema.optional(Schema.Literals(['photo', 'video', 'animation'])),
-  mediaSrc: Schema.optional(Schema.String),
-})
-export type SponsoredLine = typeof SponsoredLine.Type
-
 export const StoredFace = Schema.Struct({
   id: Schema.String,
   time: Schema.String,
@@ -33,10 +21,7 @@ export const StoredFace = Schema.Struct({
   receipt: Schema.Literals(['none', 'sent', 'read']),
   lines: Schema.Array(ChatLine),
   pending: Schema.optional(Schema.Array(ChatLine)),
-  sponsored: Schema.optional(Schema.Array(SponsoredLine)),
-  sponsoredBetween: Schema.optional(Schema.Number),
   historyLoaded: Schema.optional(Schema.Boolean),
-  sponsoredLoaded: Schema.optional(Schema.Boolean),
 })
 export type StoredFace = typeof StoredFace.Type
 
@@ -87,13 +72,11 @@ export const kindStatus: Record<ChatKind, string> = {
   Channel: 'channel',
 }
 
-export type ThreadEntry =
-  | { readonly kind: 'message'; readonly key: string; readonly line: ChatLine }
-  | {
-      readonly kind: 'sponsored'
-      readonly key: string
-      readonly line: SponsoredLine
-    }
+export type ThreadEntry = {
+  readonly kind: 'message'
+  readonly key: string
+  readonly line: ChatLine
+}
 
 const messageEntry = (line: ChatLine, index: number): ThreadEntry => ({
   kind: 'message',
@@ -101,56 +84,10 @@ const messageEntry = (line: ChatLine, index: number): ThreadEntry => ({
   line,
 })
 
-const visibleAd = (ad: SponsoredLine): boolean =>
-  ad.title !== '' ||
-  ad.text !== '' ||
-  ad.button !== '' ||
-  ad.media !== undefined
-
-// The open-chat card sits under the header. messages_between of 0 shows
-// only that card. A positive gap inserts each later ad after a full group.
-export const headerSponsored = (
-  sponsored: ReadonlyArray<SponsoredLine>,
-): SponsoredLine | undefined => sponsored.find(visibleAd)
-
 export const threadEntries = (
   lines: ReadonlyArray<ChatLine>,
   pending: ReadonlyArray<ChatLine>,
-  sponsored: ReadonlyArray<SponsoredLine>,
-  between: number,
-): ReadonlyArray<ThreadEntry> => {
-  const messages = [...lines, ...pending].map(messageEntry)
-  const pinned = headerSponsored(sponsored)
-  const ads = sponsored.filter(
-    ad => ad !== pinned && (ad.title !== '' || ad.text !== ''),
-  )
-  const first = ads[0]
-  if (first === undefined || between <= 0) {
-    return messages
-  }
-  const entries: Array<ThreadEntry> = []
-  let adIndex = 0
-  messages.forEach((entry, index) => {
-    entries.push(entry)
-    if ((index + 1) % between !== 0) {
-      return
-    }
-    const ad = ads[adIndex]
-    if (ad === undefined) {
-      return
-    }
-    entries.push({
-      kind: 'sponsored',
-      key: `ad-${ad.id}-${index}`,
-      line: ad,
-    })
-    adIndex += 1
-  })
-  if (adIndex === 0) {
-    entries.push({ kind: 'sponsored', key: `ad-${first.id}`, line: first })
-  }
-  return entries
-}
+): ReadonlyArray<ThreadEntry> => [...lines, ...pending].map(messageEntry)
 
 export const appendLines = (
   current: ReadonlyArray<ChatLine>,

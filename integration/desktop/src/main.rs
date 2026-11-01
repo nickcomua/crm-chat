@@ -537,20 +537,6 @@ async fn prove_kind(
                     continue;
                 }
             };
-            if kind == crm_chat_telegram::ChatKind::Channel {
-                match client.sponsored(&account.id, &chat.id).await {
-                    Ok(page) => {
-                        println!(
-                            "history channel: pass (messages={}, sponsored={})",
-                            messages.len(),
-                            page.messages.len()
-                        );
-                        return Ok(());
-                    }
-                    Err(error) => last_error = error,
-                }
-                continue;
-            }
             println!("history {label}: pass (messages={})", messages.len());
             return Ok(());
         }
@@ -589,23 +575,8 @@ async fn prove_titled(
             last_error = "no messages".to_owned();
             continue;
         }
-        if kind == ChatKind::Channel {
-            match client.sponsored(&account.id, &chat.id).await {
-                Ok(page) => {
-                    println!("kind channel: pass");
-                    println!(
-                        "history channel: pass (messages={}, sponsored={})",
-                        messages.len(),
-                        page.messages.len()
-                    );
-                    return Ok(());
-                }
-                Err(error) => last_error = error,
-            }
-            continue;
-        }
-        println!("kind group: pass");
-        println!("history group: pass (messages={})", messages.len());
+        println!("kind {label}: pass");
+        println!("history {label}: pass (messages={})", messages.len());
         return Ok(());
     }
     if !found {

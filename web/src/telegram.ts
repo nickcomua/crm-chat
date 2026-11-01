@@ -8,7 +8,6 @@ import {
   type AuthStep,
   type ChatPreview,
   type LiveItem,
-  type SponsoredPage,
   TdAccount,
 } from './tdlibProtocol'
 import { browserRuntime } from './tdlibWasm'
@@ -179,56 +178,35 @@ const decodeLive = (value: unknown): Array<LiveItem> => {
   })
 }
 
-const decodeSponsored = (value: unknown): SponsoredPage => {
-  if (!isRecord(value) || !Array.isArray(value['messages'])) {
-    throw new Error('Telegram could not complete the request.')
-  }
-  const between = value['between']
-  return {
-    between: typeof between === 'number' && between > 0 ? between : 0,
-    messages: value['messages'].flatMap(item => {
-      if (
-        !isRecord(item) ||
-        typeof item['id'] !== 'string' ||
-        typeof item['text'] !== 'string' ||
-        typeof item['title'] !== 'string' ||
-        typeof item['button'] !== 'string' ||
-        typeof item['info'] !== 'string'
-      ) {
-        return []
-      }
-      const media = item['media']
-      const mediaSrc = item['mediaSrc']
-      return [
-        {
-          id: item['id'],
-          text: item['text'],
-          title: item['title'],
-          button: item['button'],
-          recommended: item['recommended'] === true,
-          info: item['info'],
-          ...(media === 'photo' || media === 'video' || media === 'animation'
-            ? { media }
-            : {}),
-          ...(typeof mediaSrc === 'string' && mediaSrc !== ''
-            ? { mediaSrc }
-            : {}),
-        },
-      ]
-    }),
-  }
+const pendingIncoming = new Map<string, Array<LiveItem>>()
+
+export const acknowledgeIncoming = (
+  id: string,
+  delivered: ReadonlyArray<{ chatId: string; id: string }>,
+): void => {
+  const keys = new Set(delivered.map(item => `${item.chatId}/${item.id}`))
+  pendingIncoming.set(
+    id,
+    (pendingIncoming.get(id) ?? []).filter(
+      item => !keys.has(`${item.chatId}/${item.id}`),
+    ),
+  )
 }
 
 export const takeIncoming = async (id: string): Promise<Array<LiveItem>> => {
   const invoke = tauriInvoke()
-  if (invoke !== undefined) {
-    return decodeLive(await invoke('telegram_incoming', { id }))
-  }
-  const session = sessions.get(id)
-  if (session === undefined) {
-    return []
-  }
-  return session.takeIncoming()
+  const incoming =
+    invoke !== undefined
+      ? decodeLive(await invoke('telegram_incoming', { id }))
+      : (sessions.get(id)?.takeIncoming() ?? [])
+  const pending = pendingIncoming.get(id) ?? []
+  const keys = new Set(pending.map(item => `${item.chatId}/${item.id}`))
+  const next = [
+    ...pending,
+    ...incoming.filter(item => !keys.has(`${item.chatId}/${item.id}`)),
+  ]
+  pendingIncoming.set(id, next)
+  return next
 }
 
 export const openTelegramChat = async (
@@ -253,49 +231,6 @@ export const closeTelegramChat = async (
     return
   }
   await sessionFor(id).closeChat(chatId)
-}
-
-export const loadSponsored = async (
-  id: string,
-  chatId: string,
-): Promise<SponsoredPage> => {
-  const invoke = tauriInvoke()
-  if (invoke !== undefined) {
-    return decodeSponsored(await invoke('telegram_sponsored', { id, chatId }))
-  }
-  return sessionFor(id).sponsored(chatId)
-}
-
-export const viewSponsored = async (
-  id: string,
-  chatId: string,
-  messageIds: ReadonlyArray<string>,
-): Promise<void> => {
-  const invoke = tauriInvoke()
-  if (invoke !== undefined) {
-    await invoke('telegram_view_sponsored', { id, chatId, messageIds })
-    return
-  }
-  await sessionFor(id).viewSponsored(chatId, messageIds)
-}
-
-export const clickSponsored = async (
-  id: string,
-  chatId: string,
-  messageId: string,
-  media: boolean,
-): Promise<void> => {
-  const invoke = tauriInvoke()
-  if (invoke !== undefined) {
-    await invoke('telegram_click_sponsored', {
-      id,
-      chatId,
-      messageId,
-      media,
-    })
-    return
-  }
-  await sessionFor(id).clickSponsored(chatId, messageId, media)
 }
 
 export const restoreAccounts = async (
