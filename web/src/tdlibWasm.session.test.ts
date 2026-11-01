@@ -331,8 +331,29 @@ test('restore keeps the signed-in database and does not log another one out', as
   const sent = harness.sent.map(query => query['@type'])
   expect(sent).toContain('close')
   expect(sent).not.toContain('logOut')
-  // The closed directory's destructor must not share the next wasm instance.
   expect(harness.modules.current).toBe(2)
+})
+
+test('restore returns both saved accounts, including the inactive account', async () => {
+  vi.useFakeTimers()
+  const harness = install(
+    ['first', 'second'],
+    { '@type': 'authorizationStateReady' },
+    {
+      states: [
+        { '@type': 'authorizationStateReady' },
+        { '@type': 'authorizationStateReady' },
+      ],
+    },
+  )
+  harness.deliverAuth.current = true
+  const pending = harness.runtime.restore(1, HASH)
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect((await pending).map(account => account.id)).toEqual([
+    'first',
+    'second',
+  ])
+  expect(harness.sent.map(query => query['@type'])).not.toContain('close')
 })
 
 test('restore skips a directory that has no database files', async () => {

@@ -81,19 +81,16 @@ test('a committed wal is folded into the database and the wal is dropped', () =>
       ])
       grownDb.close()
     }
-    const refit = settleSnapshotFiles(
-      [
-        file('/tdlib/acct/db.sqlite', short),
-        file('/tdlib/acct/db.sqlite-wal', wal),
-      ],
-      false,
-    )
+    const refit = settleSnapshotFiles([
+      file('/tdlib/acct/db.sqlite', short),
+      file('/tdlib/acct/db.sqlite-wal', wal),
+    ])
     expect(refit.checkpointed).toBe(true)
     expect(refit.files.map(item => item.path)).toEqual([
       '/tdlib/acct/db.sqlite',
     ])
-    expect(refit.files[0]?.bytes.length).toBe(short.length)
-    expect(refit.detail).toContain('inplace')
+    expect(refit.files[0]?.bytes).toEqual(grown)
+    expect(refit.detail).not.toContain('inplace')
 
     const idle = settleSnapshotFiles([
       file('/tdlib/acct/db.sqlite', database),
@@ -108,7 +105,7 @@ test('a committed wal is folded into the database and the wal is dropped', () =>
       file('/tdlib/acct/db.sqlite', database),
       file('/tdlib/acct/db.sqlite-wal', new Uint8Array()),
     ])
-    expect(emptyWal.checkpointed).toBe(false)
+    expect(emptyWal.checkpointed).toBe(true)
     expect(emptyWal.reason).toBe('')
     expect(emptyWal.files.map(item => item.path)).toEqual([
       '/tdlib/acct/db.sqlite',
@@ -143,4 +140,63 @@ test('a committed wal is folded into the database and the wal is dropped', () =>
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('checkpoint status survives a reopen without a WAL', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'crm-checkpoint-reopen-'))
+  const path = join(directory, 'db.sqlite')
+  try {
+    const database = new DatabaseSync(path)
+    database.exec(
+      'PRAGMA journal_mode=WAL; CREATE TABLE authorization(id INTEGER)',
+    )
+    database.exec('INSERT INTO authorization VALUES (42)')
+    database.close()
+    const settled = settleSnapshotFiles([
+      file('/tdlib/account/db.sqlite', new Uint8Array(readFileSync(path))),
+    ])
+    expect(settled.checkpointed).toBe(true)
+    expect(settleSnapshotFiles(settled.files)).toEqual(settled)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('one checkpointed account cannot hide another account with an invalid WAL', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'crm-checkpoint-accounts-'))
+  const path = join(directory, 'db.sqlite')
+  try {
+    const database = new DatabaseSync(path)
+    database.exec(
+      'PRAGMA journal_mode=WAL; CREATE TABLE authorization(id INTEGER)',
+    )
+    const bytes = new Uint8Array(readFileSync(path))
+    const wal = new Uint8Array(readFileSync(`${path}-wal`))
+    database.close()
+    const invalidWal = wal.slice()
+    invalidWal[24] = (invalidWal[24] ?? 0) ^ 1
+    const settled = settleSnapshotFiles([
+      file('/tdlib/first/db.sqlite', bytes),
+      file('/tdlib/first/db.sqlite-wal', wal),
+      file('/tdlib/second/db.sqlite', bytes),
+      file('/tdlib/second/db.sqlite-wal', invalidWal),
+    ])
+    expect(settled.checkpointed).toBe(false)
+    expect(settled.reason).toBe('wal-header')
+    expect(
+      settled.files.find(item => item.path === '/tdlib/second/db.sqlite-wal')
+        ?.bytes,
+    ).toEqual(invalidWal)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('an empty WAL does not make a malformed database checkpointed', () => {
+  const settled = settleSnapshotFiles([
+    file('/tdlib/account/db.sqlite', new Uint8Array(17)),
+    file('/tdlib/account/db.sqlite-wal', new Uint8Array()),
+  ])
+  expect(settled.checkpointed).toBe(false)
+  expect(settled.reason).not.toBe('')
 })

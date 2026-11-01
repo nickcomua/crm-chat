@@ -710,9 +710,6 @@ export class TdAccount {
   }
 
   async release(): Promise<void> {
-    // Do not receive after close. The destructor traps on the next
-    // td_receive ("memory access out of bounds", scheduler has_guard_).
-    // The files stay put; drop() does not log out.
     await this.send({ '@type': 'close' }).catch(() => undefined)
     if (this.sink.drop !== undefined) {
       await this.sink.drop()

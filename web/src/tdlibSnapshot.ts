@@ -245,13 +245,10 @@ const isPointer = (value: unknown): value is Pointer => {
 // a new wasm instance opens the files. Replaying the wal inside Emscripten
 // comes back as a new login. A checksum that stops early leaves the original
 // pair untouched. Never rewrite header bytes: on an encrypted page that
-// destroys the salt. `grow` false keeps an earlier commit that fits the
-// file when the newest commit would append pages. That appended page has
-// faulted in free() after Ready.
+// destroys the salt.
 const checkpointDatabase = (
   database: Uint8Array,
   wal: Uint8Array,
-  grow = true,
 ): { bytes: Uint8Array; detail: string } | { reason: string } => {
   const db = new Uint8Array(database)
   const log = new Uint8Array(wal)
@@ -302,8 +299,6 @@ const checkpointDatabase = (
   const frame = 24 + page
   const pending: Array<{ pageNo: number; bytes: Uint8Array }> = []
   const committed = new Map<number, Uint8Array>()
-  let fit = new Map<number, Uint8Array>()
-  let fitCommit = 0
   let lastCommit = 0
   let frames = 0
   let stop = 'end'
@@ -346,10 +341,6 @@ const checkpointDatabase = (
         }
       }
       pending.length = 0
-      if (size * page === db.length) {
-        fitCommit = size
-        fit = new Map(committed)
-      }
     }
   }
   const filePages = db.length / page
@@ -365,27 +356,8 @@ const checkpointDatabase = (
     return { reason: 'uncommitted' }
   }
   const bytesNeeded = lastCommit * page
-  // Folding a commit smaller than the file drops pages the binlog still
-  // expects, and the next open comes back as a new login.
-  if (bytesNeeded < db.length) {
-    return { reason: 'torn' }
-  }
-  let pages = committed
-  let outLength = bytesNeeded
-  let note = ''
-  if (!grow && bytesNeeded > db.length) {
-    if (fitCommit > 0) {
-      pages = fit
-      outLength = db.length
-      note = 'fit'
-    } else {
-      // No commit matches the file. Keep the pages that fit and let TDLib
-      // treat the missing tail as unread, instead of appending a page that
-      // has faulted in free() after Ready.
-      outLength = db.length
-      note = 'inplace'
-    }
-  }
+  const pages = committed
+  const outLength = bytesNeeded
   if (outLength > db.length + log.length) {
     return { reason: 'gap' }
   }
@@ -410,17 +382,12 @@ const checkpointDatabase = (
   }
   return {
     bytes: settled,
-    detail: describe(
-      note === 'fit' ? fitCommit : lastCommit,
-      outLength / page,
-      note,
-    ),
+    detail: describe(lastCommit, outLength / page, ''),
   }
 }
 
 export const settleSnapshotFiles = (
   files: ReadonlyArray<SnapshotFile>,
-  grow = true,
 ): {
   files: Array<SnapshotFile>
   checkpointed: boolean
@@ -432,19 +399,24 @@ export const settleSnapshotFiles = (
   const replaced = new Map<string, Uint8Array>()
   let reason = ''
   let detail = ''
+  let databases = 0
   for (const file of files) {
     if (!file.path.endsWith('.sqlite') || file.path.endsWith('.sqlite-wal')) {
       continue
     }
+    databases += 1
     const wal = byPath.get(`${file.path}-wal`)
-    if (wal === undefined) {
+    if (wal === undefined || wal.bytes.length === 0) {
+      const assessment = databaseOk(file.bytes, undefined)
+      if (assessment !== undefined && reason === '') {
+        reason = assessment.reason
+      }
+      if (wal !== undefined) {
+        dropped.add(wal.path)
+      }
       continue
     }
-    if (wal.bytes.length === 0) {
-      dropped.add(wal.path)
-      continue
-    }
-    const settled = checkpointDatabase(file.bytes, wal.bytes, grow)
+    const settled = checkpointDatabase(file.bytes, wal.bytes)
     if (!('bytes' in settled)) {
       if (reason === '') {
         reason = settled.reason
@@ -460,7 +432,7 @@ export const settleSnapshotFiles = (
       files: files.filter(
         file => !file.path.endsWith('-shm') && !dropped.has(file.path),
       ),
-      checkpointed: false,
+      checkpointed: databases > 0 && reason === '',
       reason,
       detail,
     }
@@ -477,12 +449,20 @@ export const settleSnapshotFiles = (
     }
     next.push({ path: file.path, bytes, mtime: file.mtime, mode: file.mode })
   }
-  return { files: next, checkpointed: true, reason: '', detail }
+  return {
+    files: next,
+    checkpointed: databases > 0 && reason === '',
+    reason,
+    detail,
+  }
 }
 
 export const usableSnapshot = (value: unknown): value is Snapshot => {
-  if (!isSnapshot(value) || value.files.length === 0) {
+  if (!isSnapshot(value)) {
     return false
+  }
+  if (value.files.length === 0) {
+    return value.closed
   }
   const kept = value.files.filter(file => !file.path.endsWith('-shm'))
   return assessFiles(kept).ok
@@ -525,6 +505,7 @@ export const nextPointer = (
 export const assignSnapshot = (
   existing: Pointer | undefined,
   snapshot: Snapshot,
+  forgetPrevious = false,
 ): { stored: Snapshot; pointer: Pointer; drop?: string } => {
   const serial = (existing?.serial ?? 0) + 1
   const stored: Snapshot = {
@@ -532,7 +513,7 @@ export const assignSnapshot = (
     closed: snapshot.closed,
     files: snapshot.files.filter(file => !file.path.endsWith('-shm')),
   }
-  const next = nextPointer(existing, stored.id)
+  const next = nextPointer(forgetPrevious ? undefined : existing, stored.id)
   const pointer: Pointer = { ...next.pointer, serial }
   if (next.drop === undefined) {
     return { stored, pointer }
@@ -573,7 +554,10 @@ const finish = (db: IDBDatabase, tx: IDBTransaction): Promise<void> =>
     }
   })
 
-export const commitSnapshot = async (snapshot: Snapshot): Promise<void> => {
+export const commitSnapshot = async (
+  snapshot: Snapshot,
+  forgetPrevious = false,
+): Promise<void> => {
   if (!usableSnapshot(snapshot)) {
     throw new Error('could not sync the TDLib database: snapshot is incomplete')
   }
@@ -586,9 +570,16 @@ export const commitSnapshot = async (snapshot: Snapshot): Promise<void> => {
     const existing = isPointer(existingRequest.result)
       ? existingRequest.result
       : undefined
-    const assigned = assignSnapshot(existing, snapshot)
+    const assigned = assignSnapshot(existing, snapshot, forgetPrevious)
     store.put(assigned.stored, `snap:${assigned.stored.id}`)
     store.put(assigned.pointer, 'pointer')
+    if (forgetPrevious) {
+      for (const id of [existing?.current, existing?.previous]) {
+        if (id !== undefined && id !== assigned.stored.id) {
+          store.delete(`snap:${id}`)
+        }
+      }
+    }
     if (assigned.drop !== undefined) {
       store.delete(`snap:${assigned.drop}`)
     }
