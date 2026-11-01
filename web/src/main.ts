@@ -13,25 +13,29 @@ import { modifyFields } from 'foldkit/struct'
 import * as BrowserCrypto from '@effect/platform-browser/BrowserCrypto'
 
 import { readAppCredentials } from './appCredentials'
-import { StoredFace } from './chatFace'
+import { type ChatLine, StoredFace, appendLines, deliverLive } from './chatFace'
 import { countryByIso, defaultCountryIso, dialFor } from './countries'
 import { Login } from './login'
 import { loginScreen } from './loginView'
 import { Message, RuntimeCredentials, Secret } from './message'
 import { chatShell } from './shellView'
-import { clockTime } from './tdlibProtocol'
+import { type LiveItem, clockTime } from './tdlibProtocol'
 import {
   Account,
   accountFaces,
+  acknowledgeIncoming,
   beginLogin,
+  closeTelegramChat,
   desktopFailure,
   loadAccount,
   loadMessages,
+  openTelegramChat,
   pollAccount,
   removeConnection,
   restoreAccounts,
   submitCode,
   submitPassword,
+  takeIncoming,
 } from './telegram'
 
 export { Message }
@@ -188,7 +192,7 @@ export const Refresh = Command.define('Refresh', {
 })
 export const LoadHistory = Command.define('LoadHistory', {
   args: { accountId: Schema.String, chatId: Schema.String },
-  messages: [Message.LoadedHistory],
+  messages: [Message.LoadedHistory, Message.FailedHistory],
   execute: ({ accountId, chatId }) =>
     Effect.tryPromise(() => loadMessages(accountId, chatId)).pipe(
       Effect.map(messages =>
@@ -199,6 +203,7 @@ export const LoadHistory = Command.define('LoadHistory', {
               ? []
               : [
                   {
+                    id: message.id,
                     text: message.text,
                     mine: message.outgoing,
                     time: clockTime(message.date),
@@ -207,9 +212,46 @@ export const LoadHistory = Command.define('LoadHistory', {
           ),
         }),
       ),
-      Effect.catch(() =>
-        Effect.succeed(Message.LoadedHistory({ id: chatId, lines: [] })),
-      ),
+      Effect.catch(() => Effect.succeed(Message.FailedHistory({ id: chatId }))),
+    ),
+})
+export const AcknowledgeIncoming = Command.define('AcknowledgeIncoming', {
+  args: {
+    accountId: Schema.String,
+    items: Schema.Array(
+      Schema.Struct({ chatId: Schema.String, id: Schema.String }),
+    ),
+  },
+  messages: [Message.CompletedAcknowledgeIncoming],
+  execute: ({ accountId, items }) =>
+    Effect.sync(() => {
+      acknowledgeIncoming(accountId, items)
+      return Message.CompletedAcknowledgeIncoming()
+    }),
+})
+
+// openChat is required because supergroup and channel updates arrive only
+// for chats TDLib considers open.
+export const OpenChat = Command.define('OpenChat', {
+  args: { accountId: Schema.String, chatId: Schema.String },
+  messages: [Message.CompletedOpenChat],
+  execute: ({ accountId, chatId }) =>
+    Effect.tryPromise(() => openTelegramChat(accountId, chatId)).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedOpenChat(),
+        onFailure: () => Message.CompletedOpenChat(),
+      }),
+    ),
+})
+export const CloseChat = Command.define('CloseChat', {
+  args: { accountId: Schema.String, chatId: Schema.String },
+  messages: [Message.CompletedCloseChat],
+  execute: ({ accountId, chatId }) =>
+    Effect.tryPromise(() => closeTelegramChat(accountId, chatId)).pipe(
+      Effect.match({
+        onSuccess: () => Message.CompletedCloseChat(),
+        onFailure: () => Message.CompletedCloseChat(),
+      }),
     ),
 })
 export const Disconnect = Command.define('Disconnect', {
@@ -236,12 +278,89 @@ const mergeFaces = (
       continue
     }
     next[index] = {
+      ...previous,
       ...face,
       lines: face.lines.length > 0 ? face.lines : previous.lines,
     }
   }
   return next
 }
+const blankFace = (id: string): StoredFace => ({
+  id,
+  time: '',
+  preview: '',
+  unread: 0,
+  receipt: 'none',
+  lines: [],
+})
+
+const mergeLoaded = (
+  face: StoredFace,
+  lines: ReadonlyArray<ChatLine>,
+): StoredFace => {
+  const fetched = new Set(
+    lines.flatMap(line => (line.id === undefined ? [] : [line.id])),
+  )
+  const extras = (face.pending ?? []).filter(
+    line => line.id === undefined || !fetched.has(line.id),
+  )
+  return {
+    id: face.id,
+    time: face.time,
+    preview: face.preview,
+    unread: face.unread,
+    receipt: face.receipt,
+    lines: [...lines, ...extras],
+    historyLoaded: true,
+  }
+}
+
+const withArrival = (
+  face: StoredFace,
+  incoming: ReadonlyArray<ChatLine>,
+  open: boolean,
+): StoredFace => {
+  const delivered = deliverLive(face, incoming)
+  const latest = incoming[incoming.length - 1]
+  const unreadAdded = open ? 0 : incoming.filter(line => !line.mine).length
+  return {
+    id: face.id,
+    time: latest !== undefined && latest.time !== '' ? latest.time : face.time,
+    preview: latest === undefined ? face.preview : latest.text,
+    unread: face.unread + unreadAdded,
+    receipt: face.receipt,
+    lines: delivered.lines,
+    ...(delivered.pending.length > 0 ? { pending: delivered.pending } : {}),
+    ...(face.historyLoaded === undefined
+      ? {}
+      : { historyLoaded: face.historyLoaded }),
+  }
+}
+
+const realOpenChat = (
+  model: Model,
+): { accountId: string; chatId: string } | undefined => {
+  if (model.fixturePreview || model.selectedAccountId === '') {
+    return undefined
+  }
+  const chatId = Option.match(model.maybeOpenChatId, {
+    onNone: () => '',
+    onSome: id => id,
+  })
+  if (chatId === '') {
+    return undefined
+  }
+  const face = model.faces.find(item => item.id === chatId)
+  if (
+    face !== undefined &&
+    face.lines.length > 0 &&
+    face.historyLoaded !== true
+  ) {
+    return undefined
+  }
+  return { accountId: model.selectedAccountId, chatId }
+}
+
 const closedMenus = {
   menuOpen: () => false,
   moreOpen: () => false,
@@ -428,15 +547,19 @@ export const update = (model: Model, message: Message) =>
       }
       return { model: next }
     },
-    SelectedAccount: ({ id }) => ({
-      model: modifyFields(model, {
-        selectedAccountId: () => id,
-        query: () => '',
-        draft: () => '',
-        maybeOpenChatId: () => Option.none(),
-        ...closedMenus,
-      }),
-    }),
+    SelectedAccount: ({ id }) => {
+      const closing = realOpenChat(model)
+      return {
+        model: modifyFields(model, {
+          selectedAccountId: () => id,
+          query: () => '',
+          draft: () => '',
+          maybeOpenChatId: () => Option.none(),
+          ...closedMenus,
+        }),
+        ...(closing === undefined ? {} : { commands: [CloseChat(closing)] }),
+      }
+    },
     ClickedRefresh: () =>
       model.fixturePreview ||
       model.status === 'Busy' ||
@@ -451,31 +574,59 @@ export const update = (model: Model, message: Message) =>
           },
     ClickedChat: ({ id }) => {
       const face = model.faces.find(item => item.id === id)
-      const known = face !== undefined && face.lines.length > 0
+      const fixtureLines =
+        face !== undefined &&
+        face.lines.length > 0 &&
+        face.historyLoaded !== true
+      const previous = realOpenChat(model)
+      const closePrevious =
+        previous !== undefined && previous.chatId !== id
+          ? CloseChat(previous)
+          : undefined
+      const next = modifyFields(model, {
+        maybeOpenChatId: () => Option.some(id),
+        draft: () => '',
+        ...closedMenus,
+      })
+      if (
+        model.fixturePreview ||
+        model.selectedAccountId === '' ||
+        fixtureLines
+      ) {
+        return {
+          model: next,
+          ...(closePrevious === undefined ? {} : { commands: [closePrevious] }),
+        }
+      }
       return {
-        model: modifyFields(model, {
-          maybeOpenChatId: () => Option.some(id),
-          draft: () => '',
-          ...closedMenus,
-        }),
-        ...(model.fixturePreview || model.selectedAccountId === '' || known
-          ? {}
-          : {
-              commands: [
+        model: next,
+        commands: [
+          ...(closePrevious === undefined ? [] : [closePrevious]),
+          OpenChat({
+            accountId: model.selectedAccountId,
+            chatId: id,
+          }),
+          ...(face?.historyLoaded === true
+            ? []
+            : [
                 LoadHistory({
                   accountId: model.selectedAccountId,
                   chatId: id,
                 }),
-              ],
-            }),
+              ]),
+        ],
       }
     },
-    ClickedBack: () => ({
-      model: modifyFields(model, {
-        maybeOpenChatId: () => Option.none(),
-        ...closedMenus,
-      }),
-    }),
+    ClickedBack: () => {
+      const closing = realOpenChat(model)
+      return {
+        model: modifyFields(model, {
+          maybeOpenChatId: () => Option.none(),
+          ...closedMenus,
+        }),
+        ...(closing === undefined ? {} : { commands: [CloseChat(closing)] }),
+      }
+    },
     ClickedMenu: () => ({
       model: modifyFields(model, {
         menuOpen: () => !model.menuOpen,
@@ -558,21 +709,25 @@ export const update = (model: Model, message: Message) =>
         headerMenuOpen: () => false,
       }),
     }),
-    ClickedDeleteChat: () => ({
-      model: modifyFields(model, {
-        hiddenChatIds: () =>
-          Option.match(model.maybeOpenChatId, {
-            onNone: () => model.hiddenChatIds,
-            onSome: id =>
-              model.hiddenChatIds.includes(id)
-                ? model.hiddenChatIds
-                : Array.append(model.hiddenChatIds, id),
-          }),
-        maybeOpenChatId: () => Option.none(),
-        headerMenuOpen: () => false,
-        autoDeleteOpen: () => false,
-      }),
-    }),
+    ClickedDeleteChat: () => {
+      const closing = realOpenChat(model)
+      return {
+        model: modifyFields(model, {
+          hiddenChatIds: () =>
+            Option.match(model.maybeOpenChatId, {
+              onNone: () => model.hiddenChatIds,
+              onSome: id =>
+                model.hiddenChatIds.includes(id)
+                  ? model.hiddenChatIds
+                  : Array.append(model.hiddenChatIds, id),
+            }),
+          maybeOpenChatId: () => Option.none(),
+          headerMenuOpen: () => false,
+          autoDeleteOpen: () => false,
+        }),
+        ...(closing === undefined ? {} : { commands: [CloseChat(closing)] }),
+      }
+    },
     ClickedDismissMenu: () => ({
       model: modifyFields(model, closedMenus),
     }),
@@ -709,25 +864,105 @@ export const update = (model: Model, message: Message) =>
       model: modifyFields(model, {
         faces: current => {
           const index = current.findIndex(face => face.id === id)
-          if (index < 0) {
-            return [
-              ...current,
-              {
-                id,
-                time: '',
-                preview: '',
-                unread: 0,
-                receipt: 'none' as const,
-                lines,
-              },
-            ]
+          const previous = index < 0 ? blankFace(id) : current[index]
+          if (previous === undefined) {
+            return current
           }
-          return current.map(face =>
-            face.id === id ? { ...face, lines } : face,
-          )
+          const merged = mergeLoaded(previous, lines)
+          if (index < 0) {
+            return [...current, merged]
+          }
+          return current.map(face => (face.id === id ? merged : face))
         },
       }),
     }),
+    ReconciledHistory: ({ accountId, id, lines }) => ({
+      model:
+        accountId !== model.selectedAccountId
+          ? model
+          : modifyFields(model, {
+              faces: Array.map(face =>
+                face.id !== id || face.historyLoaded !== true
+                  ? face
+                  : modifyFields(face, {
+                      lines: current =>
+                        appendLines(current, lines).sort((left, right) => {
+                          if (left.id === undefined || right.id === undefined) {
+                            return 0
+                          }
+                          const first = BigInt(left.id)
+                          const second = BigInt(right.id)
+                          return first < second ? -1 : first > second ? 1 : 0
+                        }),
+                    }),
+              ),
+            }),
+    }),
+    FailedHistory: () => ({ model }),
+    ArrivedMessages: ({ accountId, items }) => {
+      if (accountId !== model.selectedAccountId || items.length === 0) {
+        return { model }
+      }
+      const openId = Option.match(model.maybeOpenChatId, {
+        onNone: () => '',
+        onSome: id => id,
+      })
+      const grouped = new Map<string, Array<ChatLine>>()
+      for (const item of items) {
+        if (item.text === '') {
+          continue
+        }
+        const line: ChatLine = {
+          id: item.id,
+          text: item.text,
+          mine: item.outgoing,
+          time: clockTime(item.date),
+        }
+        const list = grouped.get(item.chatId)
+        if (list === undefined) {
+          grouped.set(item.chatId, [line])
+        } else if (!list.some(current => current.id === line.id)) {
+          list.push(line)
+        }
+      }
+      if (grouped.size === 0) {
+        return { model }
+      }
+      let changed = false
+      const faces = model.faces.map(face => face)
+      for (const [chatId, lines] of grouped) {
+        const index = faces.findIndex(face => face.id === chatId)
+        const previous = index < 0 ? blankFace(chatId) : faces[index]
+        if (previous === undefined) {
+          continue
+        }
+        const known = new Set(
+          [...previous.lines, ...(previous.pending ?? [])].flatMap(line =>
+            line.id === undefined ? [] : [line.id],
+          ),
+        )
+        const novel = lines.filter(
+          line => line.id === undefined || !known.has(line.id),
+        )
+        if (novel.length === 0) {
+          continue
+        }
+        changed = true
+        const updated = withArrival(previous, novel, chatId === openId)
+        if (index < 0) {
+          faces.push(updated)
+        } else {
+          faces[index] = updated
+        }
+      }
+      return {
+        model: changed ? modifyFields(model, { faces: () => faces }) : model,
+        commands: [AcknowledgeIncoming({ accountId, items })],
+      }
+    },
+    CompletedAcknowledgeIncoming: () => ({ model }),
+    CompletedOpenChat: () => ({ model }),
+    CompletedCloseChat: () => ({ model }),
     FailedRefresh: () => ({
       model: modifyFields(model, {
         status: () => 'Ready',
@@ -853,6 +1088,81 @@ export const subscriptions = Subscription.make<Model, Message>()(entry => ({
                 ),
               ),
               Schedule.spaced('200 millis'),
+            ),
+    },
+  ),
+  history: entry(
+    { accountId: Schema.String, chatId: Schema.String },
+    {
+      modelToDependencies: model => ({
+        accountId:
+          model.fixturePreview || model.login._tag !== 'Closed'
+            ? ''
+            : model.selectedAccountId,
+        chatId: Option.match(model.maybeOpenChatId, {
+          onNone: () => '',
+          onSome: id =>
+            model.faces.some(
+              face => face.id === id && face.historyLoaded === true,
+            )
+              ? id
+              : '',
+        }),
+      }),
+      dependenciesToStream: ({ accountId, chatId }) =>
+        accountId === '' || chatId === ''
+          ? Stream.empty
+          : Stream.fromEffectSchedule(
+              Effect.sleep('2250 millis').pipe(
+                Effect.andThen(
+                  Effect.tryPromise(() => loadMessages(accountId, chatId)),
+                ),
+                Effect.map(messages =>
+                  Message.ReconciledHistory({
+                    accountId,
+                    id: chatId,
+                    lines: messages
+                      .filter(item => item.text !== '')
+                      .map(item => ({
+                        id: item.id,
+                        text: item.text,
+                        mine: item.outgoing,
+                        time: clockTime(item.date),
+                      })),
+                  }),
+                ),
+                Effect.catch(() =>
+                  Effect.succeed(Message.FailedHistory({ id: chatId })),
+                ),
+              ),
+              Schedule.spaced('2250 millis'),
+            ),
+    },
+  ),
+  live: entry(
+    { accountId: Schema.String },
+    {
+      modelToDependencies: model => ({
+        accountId:
+          model.fixturePreview ||
+          model.login._tag !== 'Closed' ||
+          model.selectedAccountId === ''
+            ? ''
+            : model.selectedAccountId,
+      }),
+      dependenciesToStream: ({ accountId }) =>
+        accountId === ''
+          ? Stream.empty
+          : Stream.fromEffectSchedule(
+              Effect.tryPromise(() => takeIncoming(accountId)).pipe(
+                Effect.catch(() => Effect.succeed<Array<LiveItem>>([])),
+              ),
+              Schedule.spaced('750 millis'),
+            ).pipe(
+              Stream.filter(items => items.length > 0),
+              Stream.map(items =>
+                Message.ArrivedMessages({ accountId, items }),
+              ),
             ),
     },
   ),

@@ -121,6 +121,32 @@ async fn telegram_messages(
 }
 
 #[tauri::command]
+async fn telegram_open_chat(
+    app: tauri::AppHandle,
+    id: String,
+    chat_id: String,
+) -> Result<(), String> {
+    client(&app)?.open_chat(&id, &chat_id).await
+}
+
+#[tauri::command]
+async fn telegram_close_chat(
+    app: tauri::AppHandle,
+    id: String,
+    chat_id: String,
+) -> Result<(), String> {
+    client(&app)?.close_chat(&id, &chat_id).await
+}
+
+#[tauri::command]
+fn telegram_incoming(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<Vec<crm_chat_telegram::LiveMessage>, String> {
+    Ok(client(&app)?.take_incoming(&id))
+}
+
+#[tauri::command]
 async fn telegram_logout(app: tauri::AppHandle, id: String) -> Result<(), String> {
     client(&app)?.logout(&id).await
 }
@@ -149,6 +175,9 @@ pub fn run() {
             telegram_poll,
             telegram_load_account,
             telegram_messages,
+            telegram_open_chat,
+            telegram_close_chat,
+            telegram_incoming,
             telegram_logout,
             telegram_restore
         ])

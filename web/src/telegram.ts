@@ -4,7 +4,12 @@ import QRCode from 'qrcode'
 
 import { StoredFace } from './chatFace'
 import type { Chat } from './generated/core'
-import { type AuthStep, type ChatPreview, TdAccount } from './tdlibProtocol'
+import {
+  type AuthStep,
+  type ChatPreview,
+  type LiveItem,
+  TdAccount,
+} from './tdlibProtocol'
 import { browserRuntime } from './tdlibWasm'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -143,6 +148,89 @@ export const loadMessages = async (
     return Array.isArray(value) ? value : []
   }
   return sessionFor(id).messages(chatId)
+}
+
+const decodeLive = (value: unknown): Array<LiveItem> => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap(item => {
+    if (
+      !isRecord(item) ||
+      typeof item['chatId'] !== 'string' ||
+      typeof item['id'] !== 'string' ||
+      typeof item['text'] !== 'string' ||
+      typeof item['outgoing'] !== 'boolean' ||
+      typeof item['date'] !== 'number' ||
+      item['text'] === ''
+    ) {
+      return []
+    }
+    return [
+      {
+        chatId: item['chatId'],
+        id: item['id'],
+        text: item['text'],
+        outgoing: item['outgoing'],
+        date: item['date'],
+      },
+    ]
+  })
+}
+
+const pendingIncoming = new Map<string, Array<LiveItem>>()
+
+export const acknowledgeIncoming = (
+  id: string,
+  delivered: ReadonlyArray<{ chatId: string; id: string }>,
+): void => {
+  const keys = new Set(delivered.map(item => `${item.chatId}/${item.id}`))
+  pendingIncoming.set(
+    id,
+    (pendingIncoming.get(id) ?? []).filter(
+      item => !keys.has(`${item.chatId}/${item.id}`),
+    ),
+  )
+}
+
+export const takeIncoming = async (id: string): Promise<Array<LiveItem>> => {
+  const invoke = tauriInvoke()
+  const incoming =
+    invoke !== undefined
+      ? decodeLive(await invoke('telegram_incoming', { id }))
+      : (sessions.get(id)?.takeIncoming() ?? [])
+  const pending = pendingIncoming.get(id) ?? []
+  const keys = new Set(pending.map(item => `${item.chatId}/${item.id}`))
+  const next = [
+    ...pending,
+    ...incoming.filter(item => !keys.has(`${item.chatId}/${item.id}`)),
+  ]
+  pendingIncoming.set(id, next)
+  return next
+}
+
+export const openTelegramChat = async (
+  id: string,
+  chatId: string,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_open_chat', { id, chatId })
+    return
+  }
+  await sessionFor(id).openChat(chatId)
+}
+
+export const closeTelegramChat = async (
+  id: string,
+  chatId: string,
+): Promise<void> => {
+  const invoke = tauriInvoke()
+  if (invoke !== undefined) {
+    await invoke('telegram_close_chat', { id, chatId })
+    return
+  }
+  await sessionFor(id).closeChat(chatId)
 }
 
 export const restoreAccounts = async (

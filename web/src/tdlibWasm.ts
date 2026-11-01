@@ -618,10 +618,28 @@ export class TdWasmRuntime {
     // Populate before any td_* call. syncfs while TDLib is running replaces
     // the live file buffers and the next receive faults.
     const snapshotCapable = canSnapshot(created.FS)
-    const held = snapshotCapable ? this.hotFiles : undefined
+    const held =
+      snapshotCapable && this.hotFiles !== undefined && this.hotFiles.length > 0
+        ? this.hotFiles
+        : undefined
+    let chosen = held
+    if (
+      chosen !== undefined &&
+      !settleSnapshotFiles(chosen, this.foldGrow).checkpointed
+    ) {
+      const stored = await this.snapshots.load().catch(() => undefined)
+      if (
+        stored !== undefined &&
+        stored.files.length > 0 &&
+        settleSnapshotFiles(stored.files, this.foldGrow).checkpointed
+      ) {
+        chosen = stored.files
+        this.hotFiles = stored.files
+      }
+    }
     const snapshot =
-      held !== undefined && held.length > 0
-        ? { files: held }
+      chosen !== undefined
+        ? { files: chosen }
         : snapshotCapable
           ? await this.snapshots.load().catch(() => undefined)
           : undefined
@@ -634,6 +652,9 @@ export class TdWasmRuntime {
         ? `tdlib snapshot files=${installed.files}${installed.checkpointed ? ' checkpointed' : ''}${installed.detail === '' ? '' : ` ${installed.detail}`}${installed.reason === '' ? '' : ` skip=${installed.reason}`}`
         : 'tdlib snapshot missing',
     )
+    if (installed?.checkpointed === true && snapshot !== undefined) {
+      this.hotFiles = settleSnapshotFiles(snapshot.files, this.foldGrow).files
+    }
     if (installed !== undefined) {
       const extras = await this.snapshots.legacyDirectories().catch(() => [])
       for (const extra of extras) {
@@ -655,7 +676,7 @@ export class TdWasmRuntime {
         const settled = settleSnapshotFiles(captured)
         if (!assessFiles(settled.files).ok) {
           removeTree(created.FS, '/tdlib')
-        } else if (settled.checkpointed) {
+        } else if (settled.checkpointed && settled.folded) {
           installSettled(created.FS, captured)
         }
       }
@@ -863,7 +884,10 @@ export class TdWasmRuntime {
     }
     try {
       const captured = captureTree(filesystem)
-      if (captured !== undefined && captured.length > 0) {
+      if (
+        captured !== undefined &&
+        settleSnapshotFiles(captured, this.foldGrow).checkpointed
+      ) {
         this.hotFiles = captured
       }
     } catch {

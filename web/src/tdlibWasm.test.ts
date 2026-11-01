@@ -676,11 +676,36 @@ describe('TDLib wasm reopen', () => {
             callback(null)
           },
           readdir: () => [],
+          readFile: () => database,
+          writeFile: () => undefined,
+          stat: () => ({ mode: 33188, mtime: new Date(1) }),
+          unlink: () => undefined,
           filesystems: { IDBFS: {} },
         },
       })
     })
-    const runtime = new TdWasmRuntime()
+    const database = new Uint8Array(512)
+    const snapshot = {
+      id: 'installed',
+      closed: true,
+      files: [
+        {
+          path: '/tdlib/one/db.sqlite',
+          bytes: database,
+          mtime: 1,
+          mode: 33188,
+        },
+      ],
+    }
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValue(undefined)
+    const runtime = new TdWasmRuntime({
+      load,
+      commit: async () => undefined,
+      legacyDirectories: async () => [],
+    })
     const account = await runtime.open('one', 1, 'a'.repeat(32))
     let opened: string | undefined
     const pending = account.untilOpened(30_000).then(phase => {
@@ -715,6 +740,12 @@ describe('TDLib wasm reopen', () => {
       'tdlib reopen',
     ])
     expect(receiveFailures()).toHaveLength(1)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(notes.filter(line => line.startsWith('tdlib snapshot'))).toEqual([
+      'tdlib snapshot files=1 checkpointed',
+      'tdlib snapshot files=1 checkpointed',
+      'tdlib snapshot files=1 checkpointed',
+    ])
   })
 
   test('a trap after Ready was published reopens twice on the same files', async () => {

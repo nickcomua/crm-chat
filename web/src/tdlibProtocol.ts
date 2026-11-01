@@ -19,6 +19,14 @@ export type Message = {
   date: number
 }
 
+export type LiveItem = {
+  chatId: string
+  id: string
+  text: string
+  outgoing: boolean
+  date: number
+}
+
 export type ChatPreview = {
   id: string
   time: string
@@ -324,6 +332,29 @@ const messageFrom = (value: unknown): Message | undefined => {
   }
 }
 
+// `fallbackChat` covers updateChatLastMessage, whose last_message can omit chat_id.
+export const liveMessageFrom = (
+  accountId: string,
+  value: unknown,
+  fallbackChat?: unknown,
+): LiveItem | undefined => {
+  const message = messageFrom(value)
+  if (message === undefined || message.text === '') {
+    return undefined
+  }
+  const raw = idValue(field(value, 'chat_id')) ?? idValue(fallbackChat)
+  if (raw === undefined) {
+    return undefined
+  }
+  return {
+    chatId: `${accountId}:${raw}`,
+    id: message.id,
+    text: message.text,
+    outgoing: message.outgoing,
+    date: message.date,
+  }
+}
+
 const STEP_TIMEOUT = 60_000
 const DISCARD_TIMEOUT = 2_000
 
@@ -331,6 +362,7 @@ export class TdAccount {
   phase: Phase = { _tag: 'Opening' }
   chatListError: string | undefined = undefined
   previews: Array<ChatPreview> = []
+  private live: Array<LiveItem> = []
   private readonly waiters: Array<() => void> = []
   private foldersReady = false
   private readonly folderWaiters: Array<() => void> = []
@@ -347,6 +379,7 @@ export class TdAccount {
   private readyHeld = false
 
   apply(value: unknown): void {
+    this.rememberLive(value)
     if (typeName(value) === 'updateChatFolders') {
       this.foldersReady = true
       for (const waiter of this.folderWaiters.splice(0)) {
@@ -369,6 +402,41 @@ export class TdAccount {
         waiter()
       }
     })
+  }
+
+  // New messages are queued until the page drains them. A request response
+  // carries @extra and is not an update, so it never lands here.
+  private rememberLive(value: unknown): void {
+    const name = typeName(value)
+    const message =
+      name === 'updateNewMessage'
+        ? field(value, 'message')
+        : name === 'updateChatLastMessage'
+          ? field(value, 'last_message')
+          : undefined
+    const live = liveMessageFrom(
+      this.id,
+      message,
+      name === 'updateChatLastMessage' ? field(value, 'chat_id') : undefined,
+    )
+    if (live === undefined) {
+      return
+    }
+    if (
+      this.live.some(item => item.chatId === live.chatId && item.id === live.id)
+    ) {
+      return
+    }
+    this.live.push(live)
+    if (this.live.length > 200) {
+      this.live.splice(0, this.live.length - 200)
+    }
+  }
+
+  takeIncoming(): Array<LiveItem> {
+    const items = this.live
+    this.live = []
+    return items
   }
 
   holdWaiters(): void {
@@ -675,12 +743,9 @@ export class TdAccount {
   }
 
   async messages(chatId: string): Promise<Array<Message>> {
-    const raw = chatId.startsWith(`${this.id}:`)
-      ? chatId.slice(this.id.length + 1)
-      : chatId
     const response = await this.send({
       '@type': 'getChatHistory',
-      chat_id: chatIdArgument(raw),
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
       from_message_id: 0,
       limit: 40,
       offset: 0,
@@ -696,6 +761,26 @@ export class TdAccount {
         return message === undefined ? [] : [message]
       })
       .reverse()
+  }
+
+  private rawChatId(chatId: string): string {
+    return chatId.startsWith(`${this.id}:`)
+      ? chatId.slice(this.id.length + 1)
+      : chatId
+  }
+
+  async openChat(chatId: string): Promise<void> {
+    await this.send({
+      '@type': 'openChat',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+    })
+  }
+
+  async closeChat(chatId: string): Promise<void> {
+    await this.send({
+      '@type': 'closeChat',
+      chat_id: chatIdArgument(this.rawChatId(chatId)),
+    })
   }
 
   async logout(): Promise<void> {

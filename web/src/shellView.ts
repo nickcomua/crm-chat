@@ -2,7 +2,14 @@ import * as Array from 'effect/Array'
 import * as Option from 'effect/Option'
 import { HtmlBuilder } from 'foldkit/html'
 
-import { faceFor, kindStatus, markFor, tintFor } from './chatFace'
+import {
+  faceFor,
+  kindStatus,
+  markFor,
+  threadEntries,
+  tintFor,
+} from './chatFace'
+import type { ThreadEntry } from './chatFace'
 import type { Chat } from './generated/core'
 import {
   attachIcon,
@@ -25,18 +32,6 @@ const listHidden = (open: boolean): string => (open ? 'hidden md:flex' : 'flex')
 
 const paneHidden = (open: boolean): string => (open ? 'flex' : 'hidden md:flex')
 
-const isLastInGroup = (
-  lines: ReadonlyArray<{ readonly mine: boolean }>,
-  index: number,
-): boolean => {
-  const line = lines[index]
-  const next = lines[index + 1]
-  if (line === undefined) {
-    return false
-  }
-  return next === undefined || next.mine !== line.mine
-}
-
 const bubbleClass = (mine: boolean, tail: boolean): string =>
   `tg-bubble ${mine ? 'tg-bubble-out' : 'tg-bubble-in'} ${
     tail ? (mine ? 'tg-bubble-tail-out' : 'tg-bubble-tail-in') : ''
@@ -45,7 +40,9 @@ const bubbleClass = (mine: boolean, tail: boolean): string =>
 const messageTail = <Message>(mine: boolean, h: HtmlBuilder<Message>) =>
   h.span([
     h.AriaHidden(true),
-    h.Class(mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in'),
+    h.Class(
+      mine ? 'bubble-tail bubble-tail-out' : 'bubble-tail bubble-tail-in',
+    ),
   ])
 
 const menuItemClass = 'tg-menu-item'
@@ -87,12 +84,7 @@ const receipt = (
   h: HtmlBuilder<Message>,
 ) => {
   if (unread > 0) {
-    return h.div(
-      [
-        h.Class('tg-unread'),
-      ],
-      [String(unread)],
-    )
+    return h.div([h.Class('tg-unread')], [String(unread)])
   }
   if (mark === 'read') {
     return h.div(
@@ -136,6 +128,73 @@ const iconButton = (
     ],
     [icon],
   )
+
+const messageColumn = (
+  entries: ReadonlyArray<ThreadEntry>,
+  h: HtmlBuilder<Message>,
+) => {
+  if (entries.length === 0) {
+    return h.div(
+      [
+        h.Class(
+          'flex min-h-0 flex-1 items-center justify-center text-sm text-[#9a9aa8]',
+        ),
+      ],
+      ['No messages yet'],
+    )
+  }
+  return h.div(
+    [
+      h.Class(
+        'flex min-h-0 flex-1 flex-col justify-end overflow-y-auto px-4 py-3',
+      ),
+    ],
+    entries.map((entry, index) => {
+      const line = entry.line
+      const following = entries[index + 1]
+      const tail =
+        following === undefined ||
+        following.kind !== 'message' ||
+        following.line.mine !== line.mine
+      const time = h.span([h.Class('bubble-time')], [line.time])
+      return h.keyed('div')(
+        entry.key,
+        [
+          h.Class(
+            `flex ${line.mine ? 'justify-end' : 'justify-start'} ${
+              index === entries.length - 1 ? '' : tail ? 'mb-2' : 'mb-0.5'
+            }`,
+          ),
+        ],
+        [
+          h.div(
+            [h.Class(bubbleClass(line.mine, tail))],
+            line.caption === undefined
+              ? [line.text, time, tail ? messageTail(line.mine, h) : h.empty]
+              : [
+                  h.div(
+                    [h.Class('mb-1.5 overflow-hidden rounded-xl')],
+                    [
+                      h.div(
+                        [
+                          h.Class(
+                            'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
+                          ),
+                        ],
+                        [line.caption],
+                      ),
+                    ],
+                  ),
+                  h.div([h.Class('px-0.5')], [line.text]),
+                  time,
+                  tail ? messageTail(line.mine, h) : h.empty,
+                ],
+          ),
+        ],
+      )
+    }),
+  )
+}
 
 export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
   const opened = openChat(model)
@@ -186,9 +245,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             [h.Class('flex items-center gap-3 px-3 py-2')],
                             [
                               h.div(
-                                [
-                                  h.Class('tg-avatar-button size-9 text-sm'),
-                                ],
+                                [h.Class('tg-avatar-button size-9 text-sm')],
                                 [
                                   Option.match(account, {
                                     onNone: () => 'Y',
@@ -244,9 +301,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                           ),
                           h.button(
                             [
-                              h.Class(
-                                'tg-menu-item justify-between',
-                              ),
+                              h.Class('tg-menu-item justify-between'),
                               h.AriaLabel('Add account'),
                               h.Disabled(model.status === 'Busy'),
                               h.OnClick(Message.ClickedAddAccount()),
@@ -314,7 +369,11 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
             ],
           ),
           h.div(
-            [h.Class('tg-folders'), h.Role('tablist'), h.AriaLabel('Chat folders')],
+            [
+              h.Class('tg-folders'),
+              h.Role('tablist'),
+              h.AriaLabel('Chat folders'),
+            ],
             folders.map(folder =>
               h.keyed('button')(
                 folder,
@@ -405,9 +464,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                             ],
                             [
                               h.div(
-                                [
-                                  h.Class('chat-row-meta truncate text-[13px]'),
-                                ],
+                                [h.Class('chat-row-meta truncate text-[13px]')],
                                 [preview],
                               ),
                               receipt(face.unread, face.receipt, h),
@@ -440,10 +497,19 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                 ],
               ),
             onSome: chat => {
-              const face = faceFor(model.faces, chat.id)
+              const stored = model.faces.find(item => item.id === chat.id)
+              const entries = threadEntries(
+                stored?.lines ?? [],
+                stored?.pending ?? [],
+              )
               const muted = model.mutedChatIds.includes(chat.id)
               return h.div(
-                [h.Class('flex h-full w-full flex-col')],
+                [
+                  h.Class('flex h-full w-full flex-col'),
+                  h.AriaBusy(
+                    stored?.historyLoaded !== true && !model.fixturePreview,
+                  ),
+                ],
                 [
                   h.header(
                     [
@@ -596,84 +662,7 @@ export const chatShell = (model: Model, h: HtmlBuilder<Message>) => {
                         : h.empty,
                     ],
                   ),
-                  Array.match(face.lines, {
-                    onEmpty: () =>
-                      h.div(
-                        [
-                          h.Class(
-                            'flex min-h-0 flex-1 items-center justify-center text-sm text-[#9a9aa8]',
-                          ),
-                        ],
-                        ['No messages yet'],
-                      ),
-                    onNonEmpty: lines =>
-                      h.div(
-                        [
-                          h.Class(
-                            'flex min-h-0 flex-1 flex-col justify-end overflow-y-auto px-4 py-3',
-                          ),
-                        ],
-                        lines.map((line, index) => {
-                          const tail = isLastInGroup(lines, index)
-                          const time = h.span(
-                            [
-                              h.Class('bubble-time'),
-                            ],
-                            [line.time],
-                          )
-                          return h.div(
-                            [
-                              h.Class(
-                                `flex ${line.mine ? 'justify-end' : 'justify-start'} ${
-                                  index === lines.length - 1
-                                    ? ''
-                                    : tail
-                                      ? 'mb-2'
-                                      : 'mb-0.5'
-                                }`,
-                              ),
-                            ],
-                            [
-                              h.div(
-                                [h.Class(bubbleClass(line.mine, tail))],
-                                line.caption === undefined
-                                  ? [
-                                      line.text,
-                                      time,
-                                      tail
-                                        ? messageTail(line.mine, h)
-                                        : h.empty,
-                                    ]
-                                  : [
-                                      h.div(
-                                        [
-                                          h.Class(
-                                            'mb-1.5 overflow-hidden rounded-xl',
-                                          ),
-                                        ],
-                                        [
-                                          h.div(
-                                            [
-                                              h.Class(
-                                                'flex h-36 items-end bg-gradient-to-br from-[#3a2f63] to-[#1c2438] px-3 py-2 text-sm text-white/80',
-                                              ),
-                                            ],
-                                            [line.caption],
-                                          ),
-                                        ],
-                                      ),
-                                      h.div([h.Class('px-0.5')], [line.text]),
-                                      time,
-                                      tail
-                                        ? messageTail(line.mine, h)
-                                        : h.empty,
-                                    ],
-                              ),
-                            ],
-                          )
-                        }),
-                      ),
-                  }),
+                  messageColumn(entries, h),
                   chat.kind === 'Channel'
                     ? h.div(
                         [

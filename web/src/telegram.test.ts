@@ -599,6 +599,103 @@ describe('TDLib browser protocol', () => {
     )
   })
 
+  test('queues one live message', async () => {
+    const { account } = scripted([])
+    const update = {
+      '@type': 'updateNewMessage',
+      message: {
+        id: 9,
+        chat_id: 7,
+        is_outgoing: false,
+        date: 30,
+        content: { '@type': 'messageText', text: { text: 'just arrived' } },
+      },
+    }
+    account.apply(update)
+    account.apply(update)
+    account.apply({
+      '@extra': 'response',
+      '@type': 'message',
+      id: 10,
+      chat_id: 7,
+      content: { '@type': 'messageText', text: { text: 'not live' } },
+    })
+    expect(account.takeIncoming()).toEqual([
+      {
+        chatId: 'one:7',
+        id: '9',
+        text: 'just arrived',
+        outgoing: false,
+        date: 30,
+      },
+    ])
+    expect(account.takeIncoming()).toEqual([])
+    const opened = scripted([{}, {}])
+    await opened.account.openChat('one:8')
+    await opened.account.closeChat('one:8')
+    expect(opened.sent.map(query => query['@type'])).toEqual([
+      'openChat',
+      'closeChat',
+    ])
+  })
+
+  test('an interrupted incoming poll replays until the applied batch is acknowledged', async () => {
+    const item = {
+      chatId: 'replay:7',
+      id: '9',
+      text: 'arrived',
+      outgoing: false,
+      date: 30,
+    }
+    let drained = false
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {
+      invoke: () => {
+        const batch = drained ? [] : [item]
+        drained = true
+        return Promise.resolve(batch)
+      },
+    })
+    const { takeIncoming, acknowledgeIncoming } = await import('./telegram')
+    try {
+      await takeIncoming('replay')
+      expect(await takeIncoming('replay')).toEqual([item])
+      acknowledgeIncoming('replay', [item])
+      expect(await takeIncoming('replay')).toEqual([])
+    } finally {
+      Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+    }
+  })
+
+  test('desktop live commands use Tauri camelCase argument names', async () => {
+    const calls: Array<{
+      command: string
+      args: Record<string, unknown> | undefined
+    }> = []
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {
+      invoke: (command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args })
+        return Promise.resolve([])
+      },
+    })
+    const { closeTelegramChat, openTelegramChat, takeIncoming } =
+      await import('./telegram')
+    await openTelegramChat('acct', 'acct:7')
+    await takeIncoming('acct')
+    await closeTelegramChat('acct', 'acct:7')
+    Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+    expect(calls).toEqual([
+      {
+        command: 'telegram_open_chat',
+        args: { id: 'acct', chatId: 'acct:7' },
+      },
+      { command: 'telegram_incoming', args: { id: 'acct' } },
+      {
+        command: 'telegram_close_chat',
+        args: { id: 'acct', chatId: 'acct:7' },
+      },
+    ])
+  })
+
   test('reads message text and drops free-text errors', async () => {
     expect(
       publicError({ '@type': 'error', message: 'PHONE_CODE_INVALID' }),

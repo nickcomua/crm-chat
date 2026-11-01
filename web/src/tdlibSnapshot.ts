@@ -424,6 +424,7 @@ export const settleSnapshotFiles = (
 ): {
   files: Array<SnapshotFile>
   checkpointed: boolean
+  folded: boolean
   reason: string
   detail: string
 } => {
@@ -432,20 +433,25 @@ export const settleSnapshotFiles = (
   const replaced = new Map<string, Uint8Array>()
   let reason = ''
   let detail = ''
+  let settledDatabases = 0
+  let pendingWals = 0
   for (const file of files) {
     if (!file.path.endsWith('.sqlite') || file.path.endsWith('.sqlite-wal')) {
       continue
     }
     const wal = byPath.get(`${file.path}-wal`)
-    if (wal === undefined) {
-      continue
-    }
-    if (wal.bytes.length === 0) {
-      dropped.add(wal.path)
+    // No wal, or a wal with no frames, means the sqlite file is already the
+    // checkpoint. An empty wal is dropped so the next open does not see it.
+    if (wal === undefined || wal.bytes.length === 0) {
+      if (wal !== undefined) {
+        dropped.add(wal.path)
+      }
+      settledDatabases += 1
       continue
     }
     const settled = checkpointDatabase(file.bytes, wal.bytes, grow)
     if (!('bytes' in settled)) {
+      pendingWals += 1
       if (reason === '') {
         reason = settled.reason
       }
@@ -454,17 +460,9 @@ export const settleSnapshotFiles = (
     replaced.set(file.path, settled.bytes)
     dropped.add(wal.path)
     detail = settled.detail
+    settledDatabases += 1
   }
-  if (replaced.size === 0) {
-    return {
-      files: files.filter(
-        file => !file.path.endsWith('-shm') && !dropped.has(file.path),
-      ),
-      checkpointed: false,
-      reason,
-      detail,
-    }
-  }
+  const checkpointed = settledDatabases > 0 && pendingWals === 0
   const next: Array<SnapshotFile> = []
   for (const file of files) {
     if (dropped.has(file.path) || file.path.endsWith('-shm')) {
@@ -477,7 +475,13 @@ export const settleSnapshotFiles = (
     }
     next.push({ path: file.path, bytes, mtime: file.mtime, mode: file.mode })
   }
-  return { files: next, checkpointed: true, reason: '', detail }
+  return {
+    files: next,
+    checkpointed,
+    folded: replaced.size > 0 || dropped.size > 0,
+    reason: checkpointed ? '' : reason,
+    detail,
+  }
 }
 
 export const usableSnapshot = (value: unknown): value is Snapshot => {

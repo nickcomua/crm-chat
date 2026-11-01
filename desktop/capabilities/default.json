@@ -12,6 +12,9 @@
     "allow-telegram-poll",
     "allow-telegram-load-account",
     "allow-telegram-messages",
+    "allow-telegram-open-chat",
+    "allow-telegram-close-chat",
+    "allow-telegram-incoming",
     "allow-telegram-logout",
     "allow-telegram-restore"
   ]

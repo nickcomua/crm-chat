@@ -60,6 +60,27 @@ export const Message = defineMessageUnion({
     faces: Schema.optional(Schema.Array(StoredFace)),
   },
   LoadedHistory: { id: Schema.String, lines: Schema.Array(ChatLine) },
+  ReconciledHistory: {
+    accountId: Schema.String,
+    id: Schema.String,
+    lines: Schema.Array(ChatLine),
+  },
+  FailedHistory: { id: Schema.String },
+  ArrivedMessages: {
+    accountId: Schema.String,
+    items: Schema.Array(
+      Schema.Struct({
+        chatId: Schema.String,
+        id: Schema.String,
+        text: Schema.String,
+        outgoing: Schema.Boolean,
+        date: Schema.Number,
+      }),
+    ),
+  },
+  CompletedAcknowledgeIncoming: {},
+  CompletedOpenChat: {},
+  CompletedCloseChat: {},
   FailedRefresh: {},
   CompletedDisconnect: {},
 })
