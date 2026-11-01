@@ -297,7 +297,15 @@ impl Workspace {
         bundle.case.outcome_note = outcome_note;
         bundle.case.closed_at = Some(at);
         bundle.case.updated_at = at;
-        write_case(&self.conn, &bundle.case)?;
+        self.conn.execute(
+            "UPDATE cases SET status = ?1, updated_at = ?2, body = ?3 WHERE id = ?4",
+            params![
+                status_name(bundle.case.status),
+                bundle.case.updated_at.0,
+                serde_json::to_string(&bundle.case)?,
+                id
+            ],
+        )?;
         Ok(bundle.case)
     }
 
@@ -409,12 +417,38 @@ impl Workspace {
             }
         }
         let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "DELETE")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
         let current = user_version(&conn)?;
         if current > supported {
             return Err(StoreError::NewerSchema { found: current });
         }
+        let has_metadata: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_metadata {
+            let logical: Option<u32> = conn
+                .query_row(
+                    "SELECT schema_version FROM schema_meta WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(found) = logical {
+                if found > supported {
+                    return Err(StoreError::NewerSchema { found });
+                }
+            }
+            if logical != Some(current) {
+                return Err(StoreError::Invalid(
+                    "workspace schema metadata does not match user_version",
+                ));
+            }
+        } else if current != 0 {
+            return Err(StoreError::Invalid("workspace schema metadata is missing"));
+        }
+        conn.pragma_update(None, "journal_mode", "DELETE")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         apply_pending(&conn, steps)?;
         seed(&conn)?;
         Ok(Self {
@@ -557,13 +591,7 @@ fn write_case(conn: &Connection, case: &Case) -> Result<(), StoreError> {
     let follow_up = case.follow_up_at.map(|at| at.0);
     conn.execute(
         "INSERT INTO cases (id, number, status, updated_at, follow_up_at, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(id) DO UPDATE SET
-           number = excluded.number,
-           status = excluded.status,
-           updated_at = excluded.updated_at,
-           follow_up_at = excluded.follow_up_at,
-           body = excluded.body",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             case.id.0,
             case.number,
@@ -1312,6 +1340,68 @@ mod tests {
         }
         assert!(file_text(&path).contains("Olena"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn creating_an_existing_case_keeps_its_number_and_closed_state() {
+        let dir = temp_dir();
+        let path = install_path(&dir);
+        let mut store = Workspace::open(&path).unwrap();
+        let mut draft = olena_draft();
+        draft.chats.clear();
+        draft.participants.clear();
+        draft.messages.clear();
+        draft.notes.clear();
+        draft.files.clear();
+        draft.events.clear();
+        store.insert_case(draft.clone(), UnixMillis(100)).unwrap();
+        store
+            .close_case("case-olena", CaseOutcome::Won, "shipped", UnixMillis(200))
+            .unwrap();
+        let original = store.case_bundle("case-olena").unwrap().unwrap();
+        assert!(store.insert_case(draft.clone(), UnixMillis(300)).is_err());
+        assert_eq!(store.case_bundle("case-olena").unwrap().unwrap(), original);
+        draft.id = CaseId("case-next".to_owned());
+        assert_eq!(
+            store
+                .insert_case(draft, UnixMillis(400))
+                .unwrap()
+                .case
+                .number,
+            2
+        );
+        drop(store);
+        let store = Workspace::open(&path).unwrap();
+        assert_eq!(store.case_bundle("case-olena").unwrap().unwrap(), original);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn logical_schema_is_checked_before_seeding() {
+        for version in [0, 2] {
+            let dir = temp_dir();
+            let path = install_path(&dir);
+            let store = Workspace::open(&path).unwrap();
+            store
+                .put_record("people", "person-olena", &sample_person())
+                .unwrap();
+            store
+                .conn
+                .execute("UPDATE schema_meta SET schema_version = ?1", [version])
+                .unwrap();
+            store.conn.execute("DELETE FROM stages", []).unwrap();
+            store.conn.execute("DELETE FROM members", []).unwrap();
+            drop(store);
+            let before = std::fs::read(&path).unwrap();
+            match Workspace::open(&path) {
+                Err(StoreError::NewerSchema { found: 2 }) if version == 2 => {}
+                Err(StoreError::Invalid(_)) if version == 0 => {}
+                Err(error) => panic!("unexpected schema error: {error}"),
+                Ok(_) => panic!("opened an unsupported logical schema"),
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     fn sample_snapshot() -> MessageSnapshot {

@@ -266,6 +266,85 @@ test('the fixture case round-trips and numbers are not reused', async () => {
   await deleteWorkspace(name)
 })
 
+test('creating an existing case preserves its number and closed state', async () => {
+  const name = 'crm-chat-duplicate-case'
+  const store = await openWorkspace(name)
+  const draft: CaseDraft = {
+    ...olenaDraft(),
+    chats: [],
+    participants: [],
+    messages: [],
+    notes: [],
+    files: [],
+    events: [],
+  }
+  await store.insertCase(draft, 100)
+  await store.closeCase(draft.id, 'Won', 'shipped', 200)
+  const original = await store.caseBundle(draft.id)
+  await expect(store.insertCase(draft, 300)).rejects.toBeDefined()
+  expect(await store.caseBundle(draft.id)).toEqual(original)
+  const next = await store.insertCase({ ...draft, id: 'case-next' }, 400)
+  expect(next.case.number).toBe(2)
+  await closeWorkspace(name)
+  const reopened = await openWorkspace(name)
+  expect(await reopened.caseBundle(draft.id)).toEqual(original)
+  await closeWorkspace(name)
+  await deleteWorkspace(name)
+})
+
+test.each([
+  { version: 2, tag: 'NewerSchema' },
+  { version: 0, tag: 'Invalid' },
+  { version: -1, tag: 'Invalid' },
+  { version: 0.5, tag: 'Invalid' },
+  { version: '1', tag: 'Invalid' },
+  { version: null, tag: 'Invalid' },
+])(
+  'logical schema $version is refused before seeding',
+  async ({ version, tag }) => {
+    const name = `crm-chat-logical-${String(version)}`
+    const store = await openWorkspace(name)
+    await store.putRecord('people', 'person-olena', person())
+    await closeWorkspace(name)
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const opened = indexedDB.open(name)
+      opened.onsuccess = () => resolve(opened.result)
+      opened.onerror = () => reject(opened.error)
+    })
+    expect(database.version).toBe(2)
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(
+        ['schema_meta', 'stages', 'members'],
+        'readwrite',
+      )
+      transaction.objectStore('schema_meta').put({ schema_version: version }, 1)
+      transaction.objectStore('stages').clear()
+      transaction.objectStore('members').clear()
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => reject(transaction.error)
+    })
+    await expect(openWorkspace(name)).rejects.toMatchObject({ _tag: tag })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(
+        ['people', 'stages', 'members'],
+        'readonly',
+      )
+      const people = transaction.objectStore('people').get('person-olena')
+      const stages = transaction.objectStore('stages').count()
+      const members = transaction.objectStore('members').count()
+      transaction.oncomplete = () => {
+        expect(people.result).toEqual(person())
+        expect(stages.result).toBe(0)
+        expect(members.result).toBe(0)
+        resolve()
+      }
+      transaction.onabort = () => reject(transaction.error)
+    })
+    database.close()
+    await deleteWorkspace(name)
+  },
+)
+
 test('a newer schema is refused and the person row stays', async () => {
   const name = 'crm-chat-migrate'
   const store = await openWorkspace(name)

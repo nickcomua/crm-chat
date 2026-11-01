@@ -531,8 +531,13 @@ const openNamed = async (name: string): Promise<Workspace> => {
         }
       },
     )
-    await seed(database)
-    return new Workspace(database, name)
+    try {
+      await seed(database)
+      return new Workspace(database, name)
+    } catch (error) {
+      database.close()
+      throw error
+    }
   } catch (error) {
     if (isVersionError(error)) {
       throw new WorkspaceError(
@@ -554,6 +559,21 @@ const createVersionOneStores = (database: IDBDatabase): void => {
 
 const seed = async (database: IDBDatabase): Promise<void> => {
   const version = await getValue(database, 'schema_meta', 1)
+  if (version !== undefined) {
+    const logical = isRecord(version) ? version['schema_version'] : undefined
+    if (typeof logical === 'number' && logical > SCHEMA_VERSION) {
+      throw new WorkspaceError(
+        'NewerSchema',
+        'workspace schema is newer than this build',
+      )
+    }
+    if (logical !== SCHEMA_VERSION) {
+      throw new WorkspaceError(
+        'Invalid',
+        'unsupported workspace schema metadata',
+      )
+    }
+  }
   if (version === undefined) {
     await putValue(
       database,
